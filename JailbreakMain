@@ -4,6 +4,7 @@ local player = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local PlayerGui = player:WaitForChild("PlayerGui")
 
 -- ======================
@@ -14,7 +15,7 @@ screenGui.Name = "JailbreakUI"
 screenGui.Parent = PlayerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 350, 0, 400)
+mainFrame.Size = UDim2.new(0, 350, 0, 450)
 mainFrame.Position = UDim2.new(0, 50, 0, 50)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderColor3 = Color3.fromRGB(128, 0, 128)
@@ -135,10 +136,8 @@ local function createToggle(name, default, callback)
 	end)
 end
 
--- ======================
--- Slider helper
--- ======================
-function createSlider(name, min, max, default, callback)
+-- Slider helper (mobile-friendly)
+local function createSlider(name, min, max, default, callback)
 	local frame = Instance.new("Frame")
 	frame.Size = UDim2.new(1,0,0,30)
 	frame.BackgroundTransparency = 1
@@ -167,24 +166,31 @@ function createSlider(name, min, max, default, callback)
 
 	local dragging = false
 
+	local function updateSlider(inputPos)
+		local localX = math.clamp(inputPos.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
+		local percent = localX / slider.AbsoluteSize.X
+		local value = math.floor(min + percent * (max - min))
+		sliderFill.Size = UDim2.new(percent,0,1,0)
+		label.Text = name..": "..value
+		callback(value)
+	end
+
 	slider.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
+			local conn
+			conn = UserInputService.InputChanged:Connect(function(moveInput)
+				if dragging then
+					updateSlider(moveInput.Position)
+				else
+					conn:Disconnect()
+				end
+			end)
 		end
 	end)
 	slider.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
-		end
-	end)
-	slider.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
-			local localX = math.clamp(input.Position.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
-			local percent = localX / slider.AbsoluteSize.X
-			local value = math.floor(min + percent * (max - min))
-			sliderFill.Size = UDim2.new(percent,0,1,0)
-			label.Text = name..": "..value
-			callback(value)
 		end
 	end)
 end
@@ -209,22 +215,26 @@ end)
 -- ======================
 getgenv().killAuraEnabled = false
 local KILL_RANGE = 2500
-local killAuraCharacter = nil
-
+local KillAuraLoopActive = false
 createToggle("Killaura (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
-	killAuraCharacter = player.Character
+	KillAuraLoopActive = state
+	if state and player.Character then
+		runKillAura(player.Character)
+	end
 end)
 
-createSlider("Killaura Range", 500, 5000, KILL_RANGE, function(value)
+createSlider("KillAura Range", 100, 5000, KILL_RANGE, function(value)
 	KILL_RANGE = value
 end)
 
--- Central Kill Aura Loop
-spawn(function()
-	while true do
-		task.wait(0.3)
-		if getgenv().killAuraEnabled and killAuraCharacter and killAuraCharacter:FindFirstChild("HumanoidRootPart") then
+local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
+
+function runKillAura(character)
+	KillAuraLoopActive = true
+	spawn(function()
+		while KillAuraLoopActive and getgenv().killAuraEnabled and character and character:FindFirstChild("HumanoidRootPart") do
+			task.wait(0.5)
 			local nearestEnemy = nil
 			local nearestDistance = KILL_RANGE
 			local myTeam = tostring(player.Team)
@@ -233,7 +243,7 @@ spawn(function()
 				if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
 					local theirTeam = tostring(v.Team)
 					if ((myTeam == "Police" and theirTeam == "Criminal") or (myTeam ~= "Police" and theirTeam == "Police")) then
-						local dist = (v.Character.HumanoidRootPart.Position - killAuraCharacter.HumanoidRootPart.Position).Magnitude
+						local dist = (v.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude
 						if dist < nearestDistance then
 							nearestDistance, nearestEnemy = dist, v
 						end
@@ -242,38 +252,48 @@ spawn(function()
 			end
 
 			if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
-				player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
-				local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
-				if currentGun then
-					require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
+				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
+					local args = {oldRayIgnore(...)}
+					local envScript = tostring(getfenv(2).script)
+					if (envScript == "BulletEmitter" or envScript == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
+						args[1] = nearestEnemy.Character.HumanoidRootPart
+						args[2] = nearestEnemy.Character.HumanoidRootPart.Position
+					end
+					return unpack(args)
 				end
-				player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+
+				while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
+					  and nearestEnemy.Character.Humanoid.Health > 0 
+					  and (nearestEnemy.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude < KILL_RANGE
+					  and player.Folder:FindFirstChild("Pistol") do
+					player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+					local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
+					if currentGun then
+						require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
+					end
+					task.wait()
+				end
+
+				if player.Folder:FindFirstChild("Pistol") then
+					player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+				end
+			else
+				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
 			end
 		end
-	end
-end)
+	end)
+end
 
--- ======================
 -- Character respawn handling
--- ======================
 player.CharacterAdded:Connect(function(char)
-	-- Reapply Kill Aura
 	if getgenv().killAuraEnabled then
 		runKillAura(char)
 	end
-	-- Reapply Keycard bypass
-	if keyEnabled then
-		require(plrUtils).hasKey = function() return true end
-	end
 end)
 
--- Initialize for current character
 if player.Character then
 	if getgenv().killAuraEnabled then
 		runKillAura(player.Character)
-	end
-	if keyEnabled then
-		require(plrUtils).hasKey = function() return true end
 	end
 end
 
@@ -433,8 +453,8 @@ giveButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- All Jailbreak Item IDs (expanded)
-local allItemIDs = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20} -- add more if needed
+-- All Jailbreak Item IDs (example)
+local allItemIDs = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20}
 for _,id in pairs(allItemIDs) do
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1,-10,0,30)
