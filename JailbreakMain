@@ -171,7 +171,7 @@ spawn(function()
 
 		-- Find nearest enemy (Police if prisoner, Criminal if police)
 		local nearestEnemy = nil
-		local nearestDistance = 1000
+		local nearestDistance = 2500
 		for _, v in pairs(Players:GetPlayers()) do
 			if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
 				local theirTeam = tostring(v.Team)
@@ -199,7 +199,7 @@ spawn(function()
 			-- Shoot loop
 			while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
 				  and nearestEnemy.Character.Humanoid.Health > 0 
-				  and (nearestEnemy.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude < 600 
+				  and (nearestEnemy.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude < 2500 
 				  and player.Folder:FindFirstChild("Pistol") do
 
 				player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
