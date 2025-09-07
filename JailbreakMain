@@ -151,73 +151,100 @@ createToggle("Keycard Bypass", false, function(state)
 end)
 
 -- ======================
--- Kill Aura (Fixed for Police & Criminal/Prisoner)
+-- Kill Aura / Anti-Damage
 -- ======================
 getgenv().killAuraEnabled = false
-createToggle("Killaura (Requires Pistol)", false, function(state)
+local KILL_RANGE = 2500 -- adjustable
+createToggle("Killaura / AntiDamage (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
+	if state and player.Character then
+		runKillAura(player.Character)
+	end
 end)
 
 local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
 
-spawn(function()
-	while true do
-		task.wait(0.5)
-		if not getgenv().killAuraEnabled then continue end
-		if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+-- Kill Aura function
+function runKillAura(character)
+	spawn(function()
+		while getgenv().killAuraEnabled do
+			task.wait(0.5)
+			if not character or not character:FindFirstChild("HumanoidRootPart") then break end
 
-		-- Determine your team dynamically
-		local myTeam = tostring(player.Team)
+			local nearestEnemy = nil
+			local nearestDistance = KILL_RANGE
+			local myTeam = tostring(player.Team)
 
-		-- Find nearest enemy (Police if prisoner, Criminal if police)
-		local nearestEnemy = nil
-		local nearestDistance = 2500
-		for _, v in pairs(Players:GetPlayers()) do
-			if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
-				local theirTeam = tostring(v.Team)
-				if ((myTeam == "Police" and theirTeam == "Criminal") or (myTeam ~= "Police" and theirTeam == "Police")) then
-					local dist = (v.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
-					if dist < nearestDistance then
-						nearestDistance, nearestEnemy = dist, v
+			for _, v in pairs(Players:GetPlayers()) do
+				if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
+					local theirTeam = tostring(v.Team)
+					if ((myTeam == "Police" and theirTeam == "Criminal") or (myTeam ~= "Police" and theirTeam == "Police")) then
+						local dist = (v.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude
+						if dist < nearestDistance then
+							nearestDistance, nearestEnemy = dist, v
+						end
 					end
 				end
 			end
-		end
 
-		if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
-			-- Override raycasting to target enemy
-			require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
-				local args = {oldRayIgnore(...)}
-				local envScript = tostring(getfenv(2).script)
-				if (envScript == "BulletEmitter" or envScript == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
-					args[1] = nearestEnemy.Character.HumanoidRootPart
-					args[2] = nearestEnemy.Character.HumanoidRootPart.Position
+			if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
+				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
+					local args = {oldRayIgnore(...)}
+					local envScript = tostring(getfenv(2).script)
+					if (envScript == "BulletEmitter" or envScript == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
+						args[1] = nearestEnemy.Character.HumanoidRootPart
+						args[2] = nearestEnemy.Character.HumanoidRootPart.Position
+					end
+					return unpack(args)
 				end
-				return unpack(args)
-			end
 
-			-- Shoot loop
-			while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
-				  and nearestEnemy.Character.Humanoid.Health > 0 
-				  and (nearestEnemy.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude < 2500 
-				  and player.Folder:FindFirstChild("Pistol") do
-
-				player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
-				local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
-				if currentGun then
-					require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
+				while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
+					  and nearestEnemy.Character.Humanoid.Health > 0 
+					  and (nearestEnemy.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude < KILL_RANGE
+					  and player.Folder:FindFirstChild("Pistol") do
+					player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+					local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
+					if currentGun then
+						require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
+					end
+					task.wait()
 				end
-				task.wait()
-			end
 
-			if player.Folder:FindFirstChild("Pistol") then
-				player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+				if player.Folder:FindFirstChild("Pistol") then
+					player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+				end
+			else
+				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
 			end
-		else
-			require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
 		end
+	end)
+end
+
+-- Anti-damage function
+function antiDamage(character)
+	local humanoid = character:WaitForChild("Humanoid")
+	humanoid.MaxHealth = math.huge
+	humanoid.Health = math.huge
+	humanoid.HealthChanged:Connect(function()
+		humanoid.Health = humanoid.MaxHealth
+	end)
+end
+
+-- Character respawn handling
+player.CharacterAdded:Connect(function(char)
+	antiDamage(char)
+	if getgenv().killAuraEnabled then
+		runKillAura(char)
 	end
 end)
+
+-- Initialize current character
+if player.Character then
+	antiDamage(player.Character)
+	if getgenv().killAuraEnabled then
+		runKillAura(player.Character)
+	end
+end
 
 -- ======================
 -- ESP
