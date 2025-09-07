@@ -135,6 +135,62 @@ local function createToggle(name, default, callback)
 	end)
 end
 
+-- Slider helper
+local function createSlider(name, min, max, default, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 30)
+	frame.BackgroundTransparency = 1
+	frame.Parent = contentFrame
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.5, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = name..": "..default
+	label.TextColor3 = Color3.fromRGB(200,200,200)
+	label.Font = Enum.Font.SourceSans
+	label.TextSize = 16
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = frame
+
+	local slider = Instance.new("TextButton")
+	slider.Size = UDim2.new(0.4, 0, 0.5, 0)
+	slider.Position = UDim2.new(0.55, 0, 0.25, 0)
+	slider.Text = ""
+	slider.BackgroundColor3 = Color3.fromRGB(80,80,80)
+	slider.BorderSizePixel = 0
+	slider.Parent = frame
+
+	local sliderFill = Instance.new("Frame")
+	sliderFill.Size = UDim2.new((default-min)/(max-min), 0, 1, 0)
+	sliderFill.BackgroundColor3 = Color3.fromRGB(128,0,128)
+	sliderFill.BorderSizePixel = 0
+	sliderFill.Parent = slider
+
+	local dragging = false
+	slider.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+		end
+	end)
+	slider.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	RunService.RenderStepped:Connect(function()
+		if dragging then
+			local mousePos = game:GetService("UserInputService"):GetMouseLocation().X
+			local sliderX = slider.AbsolutePosition.X
+			local sliderWidth = slider.AbsoluteSize.X
+			local percent = math.clamp((mousePos - sliderX)/sliderWidth,0,1)
+			local value = math.floor(min + percent*(max-min))
+			sliderFill.Size = UDim2.new(percent,0,1,0)
+			label.Text = name..": "..value
+			callback(value)
+		end
+	end)
+end
+
 -- ======================
 -- Keycard Bypass
 -- ======================
@@ -154,13 +210,18 @@ end)
 -- Kill Aura
 -- ======================
 getgenv().killAuraEnabled = false
-local KILL_RANGE = 2500 -- adjustable
+local KILL_RANGE = 2500 -- default
 createToggle("Killaura (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
 	if state and player.Character then
 		runKillAura(player.Character)
 	end
 end)
+createSlider("Killaura Range", 500, 5000, KILL_RANGE, function(value)
+	KILL_RANGE = value
+end)
+
+local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
 
 -- Kill Aura function
 function runKillAura(character)
@@ -218,17 +279,27 @@ function runKillAura(character)
 	end)
 end
 
+-- ======================
 -- Character respawn handling
+-- ======================
 player.CharacterAdded:Connect(function(char)
+	-- Reapply Kill Aura
 	if getgenv().killAuraEnabled then
 		runKillAura(char)
 	end
+	-- Reapply Keycard bypass
+	if keyEnabled then
+		require(plrUtils).hasKey = function() return true end
+	end
 end)
 
--- Initialize current character
+-- Initialize for current character
 if player.Character then
 	if getgenv().killAuraEnabled then
 		runKillAura(player.Character)
+	end
+	if keyEnabled then
+		require(plrUtils).hasKey = function() return true end
 	end
 end
 
