@@ -1,0 +1,396 @@
+-- Services
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- ======================
+-- UI Setup
+-- ======================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "JailbreakUI"
+screenGui.Parent = PlayerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 350, 0, 400)
+mainFrame.Position = UDim2.new(0, 50, 0, 50)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderColor3 = Color3.fromRGB(128, 0, 128)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 30)
+header.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -60, 1, 0)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Jailbreak | Smile B"
+title.TextColor3 = Color3.fromRGB(180, 180, 255)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 18
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 1, 0)
+minimizeBtn.Position = UDim2.new(1, -60, 0, 0)
+minimizeBtn.Text = "−"
+minimizeBtn.Font = Enum.Font.SourceSansBold
+minimizeBtn.TextSize = 18
+minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 100)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 1, 0)
+closeBtn.Position = UDim2.new(1, -30, 0, 0)
+closeBtn.Text = "×"
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.TextSize = 18
+closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = header
+
+local minimizedBar = Instance.new("TextButton")
+minimizedBar.Size = UDim2.new(0, 150, 0, 30)
+minimizedBar.Position = UDim2.new(0, 50, 0, 50)
+minimizedBar.Text = "Smile B | JB"
+minimizedBar.Font = Enum.Font.SourceSansBold
+minimizedBar.TextSize = 16
+minimizedBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizedBar.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+minimizedBar.Visible = false
+minimizedBar.Parent = screenGui
+
+minimizeBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = false
+	minimizedBar.Visible = true
+end)
+minimizedBar.MouseButton1Click:Connect(function()
+	mainFrame.Visible = true
+	minimizedBar.Visible = false
+end)
+closeBtn.MouseButton1Click:Connect(function()
+	screenGui:Destroy()
+end)
+
+-- ======================
+-- Content Frame + Layout
+-- ======================
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -40)
+contentFrame.Position = UDim2.new(0, 10, 0, 30)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 5)
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = contentFrame
+
+-- Toggle helper
+local function createToggle(name, default, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 30)
+	frame.BackgroundTransparency = 1
+	frame.Parent = contentFrame
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.6, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.TextColor3 = Color3.fromRGB(200,200,200)
+	label.Font = Enum.Font.SourceSans
+	label.TextSize = 16
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = frame
+
+	local toggle = Instance.new("TextButton")
+	toggle.Size = UDim2.new(0, 50, 0, 20)
+	toggle.Position = UDim2.new(0.7, 0, 0.15, 0)
+	toggle.Text = default and "ON" or "OFF"
+	toggle.Font = Enum.Font.SourceSansBold
+	toggle.TextSize = 14
+	toggle.BackgroundColor3 = default and Color3.fromRGB(128,0,128) or Color3.fromRGB(80,80,80)
+	toggle.TextColor3 = Color3.fromRGB(255,255,255)
+	toggle.BorderSizePixel = 0
+	toggle.Parent = frame
+
+	local state = default
+	toggle.MouseButton1Click:Connect(function()
+		state = not state
+		toggle.Text = state and "ON" or "OFF"
+		toggle.BackgroundColor3 = state and Color3.fromRGB(128,0,128) or Color3.fromRGB(80,80,80)
+		callback(state)
+	end)
+end
+
+-- ======================
+-- Keycard Bypass
+-- ======================
+local plrUtils = ReplicatedStorage:WaitForChild("Game"):WaitForChild("PlayerUtils")
+local oldHasKey = require(plrUtils).hasKey
+local keyEnabled = false
+createToggle("Key Bypass", false, function(state)
+	keyEnabled = state
+	if state then
+		require(plrUtils).hasKey = function() return true end
+	else
+		require(plrUtils).hasKey = oldHasKey
+	end
+end)
+
+-- ======================
+-- Kill Aura (Fixed for Police & Criminal/Prisoner)
+-- ======================
+getgenv().killAuraEnabled = false
+createToggle("Kill Aura", false, function(state)
+	getgenv().killAuraEnabled = state
+end)
+
+local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
+
+spawn(function()
+	while true do
+		task.wait(0.5)
+		if not getgenv().killAuraEnabled then continue end
+		if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+
+		-- Equip Pistol ID 17
+		if not player.Folder:FindFirstChild("Pistol") then
+			local pistolGiver = Workspace.Givers:FindFirstChild("Pistol") or Workspace.Givers:GetChildren()[17]
+			if pistolGiver and pistolGiver:FindFirstChild("ClickDetector") then
+				fireclickdetector(pistolGiver.ClickDetector)
+			end
+		end
+
+		-- Determine your team dynamically
+		local myTeam = tostring(player.Team)
+
+		-- Find nearest enemy (Police if prisoner, Criminal if police)
+		local nearestEnemy = nil
+		local nearestDistance = 1000
+		for _, v in pairs(Players:GetPlayers()) do
+			if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
+				local theirTeam = tostring(v.Team)
+				if ((myTeam == "Police" and theirTeam == "Criminal") or (myTeam ~= "Police" and theirTeam == "Police")) then
+					local dist = (v.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+					if dist < nearestDistance then
+						nearestDistance, nearestEnemy = dist, v
+					end
+				end
+			end
+		end
+
+		if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
+			require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
+				local args = {oldRayIgnore(...)}
+				local envScript = tostring(getfenv(2).script)
+				if (envScript == "BulletEmitter" or envScript == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
+					args[1] = nearestEnemy.Character.HumanoidRootPart
+					args[2] = nearestEnemy.Character.HumanoidRootPart.Position
+				end
+				return unpack(args)
+			end
+
+			while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
+				  and nearestEnemy.Character.Humanoid.Health > 0 
+				  and (nearestEnemy.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude < 600 
+				  and player.Folder:FindFirstChild("Pistol") do
+
+				player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+				local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
+				if currentGun then
+					require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
+				end
+				task.wait()
+			end
+
+			if player.Folder:FindFirstChild("Pistol") then
+				player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+			end
+		else
+			require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
+		end
+	end
+end)
+
+-- ======================
+-- ESP
+-- ======================
+local espEnabled = false
+createToggle("ESP", false, function(state)
+	espEnabled = state
+end)
+
+_G.FriendColor = Color3.fromRGB(0,0,255)
+_G.EnemyColor = Color3.fromRGB(255,0,0)
+_G.UseTeamColor = true
+
+local Holder = Instance.new("Folder", game.CoreGui)
+Holder.Name = "ESP"
+
+local Box = Instance.new("BoxHandleAdornment")
+Box.Name = "nilBox"
+Box.Size = Vector3.new(1,2,1)
+Box.Color3 = Color3.new(100/255,100/255,100/255)
+Box.Transparency = 0.7
+Box.ZIndex = 0
+Box.AlwaysOnTop = false
+Box.Visible = false
+
+local NameTag = Instance.new("BillboardGui")
+NameTag.Name = "nilNameTag"
+NameTag.Enabled = false
+NameTag.Size = UDim2.new(0,200,0,50)
+NameTag.AlwaysOnTop = true
+NameTag.StudsOffset = Vector3.new(0,1.8,0)
+local Tag = Instance.new("TextLabel", NameTag)
+Tag.Name = "Tag"
+Tag.BackgroundTransparency = 1
+Tag.Position = UDim2.new(0,-50,0,0)
+Tag.Size = UDim2.new(0,300,0,20)
+Tag.TextSize = 15
+Tag.TextColor3 = Color3.new(100/255,100/255,100/255)
+Tag.TextStrokeColor3 = Color3.new(0,0,0)
+Tag.TextStrokeTransparency = 0.4
+Tag.Text = "nil"
+Tag.Font = Enum.Font.SourceSansBold
+Tag.TextScaled = false
+
+local function LoadCharacter(v)
+	if not espEnabled then return end
+	repeat task.wait() until v.Character and v.Character:FindFirstChild("Humanoid")
+	local vHolder = Holder:FindFirstChild(v.Name)
+	if not vHolder then vHolder = Instance.new("Folder", Holder) vHolder.Name = v.Name end
+	vHolder:ClearAllChildren()
+	local b = Box:Clone()
+	b.Name = v.Name.."Box"
+	b.Adornee = v.Character
+	b.Parent = vHolder
+	local t = NameTag:Clone()
+	t.Name = v.Name.."NameTag"
+	t.Enabled = true
+	t.Parent = vHolder
+	t.Adornee = v.Character:FindFirstChild("Head")
+	if not t.Adornee then return end
+	t.Tag.Text = v.Name
+	b.Color3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
+	t.Tag.TextColor3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
+end
+
+local function UnloadCharacter(v)
+	local vHolder = Holder:FindFirstChild(v.Name)
+	if vHolder then vHolder:ClearAllChildren() end
+end
+
+local function LoadPlayer(v)
+	local vHolder = Holder:FindFirstChild(v.Name)
+	if not vHolder then
+		vHolder = Instance.new("Folder", Holder)
+		vHolder.Name = v.Name
+	end
+	v.CharacterAdded:Connect(function() pcall(LoadCharacter,v) end)
+	v.CharacterRemoving:Connect(function() pcall(UnloadCharacter,v) end)
+	v.Changed:Connect(function(prop)
+		if prop == "TeamColor" then
+			UnloadCharacter(v)
+			task.wait()
+			LoadCharacter(v)
+		end
+	end)
+	if espEnabled then pcall(LoadCharacter,v) end
+end
+
+for i,v in pairs(Players:GetPlayers()) do
+	spawn(function() pcall(LoadPlayer,v) end)
+end
+Players.PlayerAdded:Connect(function(v) pcall(LoadPlayer,v) end)
+Players.PlayerRemoving:Connect(function(v) pcall(UnloadCharacter,v) end)
+
+spawn(function()
+	while task.wait(0.5) do
+		if espEnabled then
+			for i,v in pairs(Players:GetPlayers()) do
+				if v ~= player then pcall(LoadCharacter,v) end
+			end
+		else
+			for i,v in pairs(Holder:GetChildren()) do
+				v:ClearAllChildren()
+			end
+		end
+	end
+end)
+
+-- ======================
+-- Item Giver (All Jailbreak Items)
+-- ======================
+local itemFrame = Instance.new("Frame")
+itemFrame.Size = UDim2.new(1,0,0,200)
+itemFrame.BackgroundTransparency = 0.2
+itemFrame.BackgroundColor3 = Color3.fromRGB(50,50,50)
+itemFrame.BorderSizePixel = 0
+itemFrame.Parent = contentFrame
+
+local itemList = Instance.new("ScrollingFrame")
+itemList.Size = UDim2.new(1,-10,1,-70)
+itemList.Position = UDim2.new(0,5,0,5)
+itemList.BackgroundTransparency = 1
+itemList.ScrollBarThickness = 8
+itemList.Parent = itemFrame
+
+local itemLayout = Instance.new("UIListLayout")
+itemLayout.Parent = itemList
+itemLayout.SortOrder = Enum.SortOrder.LayoutOrder
+itemLayout.Padding = UDim.new(0,5)
+
+local itemBox = Instance.new("TextBox")
+itemBox.Size = UDim2.new(1,-10,0,30)
+itemBox.Position = UDim2.new(0,5,1,-40)
+itemBox.PlaceholderText = "Enter Item ID..."
+itemBox.TextColor3 = Color3.fromRGB(255,255,255)
+itemBox.BackgroundColor3 = Color3.fromRGB(80,80,80)
+itemBox.BorderSizePixel = 0
+itemBox.Parent = itemFrame
+
+local giveButton = Instance.new("TextButton")
+giveButton.Size = UDim2.new(1,-10,0,30)
+giveButton.Position = UDim2.new(0,5,1,-70)
+giveButton.Text = "Give Item"
+giveButton.TextColor3 = Color3.fromRGB(255,255,255)
+giveButton.BackgroundColor3 = Color3.fromRGB(128,0,128)
+giveButton.BorderSizePixel = 0
+giveButton.Parent = itemFrame
+
+giveButton.MouseButton1Click:Connect(function()
+	local itemId = tonumber(itemBox.Text)
+	if itemId and ReplicatedStorage.Game.ItemSystem.ItemSystem:FindFirstChild("GiveItem") then
+		pcall(function()
+			ReplicatedStorage.Game.ItemSystem.ItemSystem.GiveItem:InvokeServer(itemId)
+		end)
+	end
+end)
+
+-- All Jailbreak Item IDs (expanded)
+local allItemIDs = {17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40} -- add more if needed
+for _,id in pairs(allItemIDs) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1,-10,0,30)
+	btn.Text = "Item ID "..id
+	btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+	btn.TextColor3 = Color3.fromRGB(255,255,255)
+	btn.Parent = itemList
+	btn.MouseButton1Click:Connect(function()
+		itemBox.Text = tostring(id)
+	end)
+end
