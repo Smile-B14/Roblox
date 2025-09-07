@@ -141,7 +141,7 @@ end
 local plrUtils = ReplicatedStorage:WaitForChild("Game"):WaitForChild("PlayerUtils")
 local oldHasKey = require(plrUtils).hasKey
 local keyEnabled = false
-createToggle("Key Bypass", false, function(state)
+createToggle("Keycard Bypass", false, function(state)
 	keyEnabled = state
 	if state then
 		require(plrUtils).hasKey = function() return true end
@@ -154,7 +154,7 @@ end)
 -- Kill Aura (Fixed for Police & Criminal/Prisoner)
 -- ======================
 getgenv().killAuraEnabled = false
-createToggle("Kill Aura", false, function(state)
+createToggle("Killaura (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
 end)
 
@@ -165,14 +165,6 @@ spawn(function()
 		task.wait(0.5)
 		if not getgenv().killAuraEnabled then continue end
 		if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
-
-		-- Equip Pistol ID 17
-		if not player.Folder:FindFirstChild("Pistol") then
-			local pistolGiver = Workspace.Givers:FindFirstChild("Pistol") or Workspace.Givers:GetChildren()[17]
-			if pistolGiver and pistolGiver:FindFirstChild("ClickDetector") then
-				fireclickdetector(pistolGiver.ClickDetector)
-			end
-		end
 
 		-- Determine your team dynamically
 		local myTeam = tostring(player.Team)
@@ -193,6 +185,7 @@ spawn(function()
 		end
 
 		if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
+			-- Override raycasting to target enemy
 			require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
 				local args = {oldRayIgnore(...)}
 				local envScript = tostring(getfenv(2).script)
@@ -203,6 +196,7 @@ spawn(function()
 				return unpack(args)
 			end
 
+			-- Shoot loop
 			while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
 				  and nearestEnemy.Character.Humanoid.Health > 0 
 				  and (nearestEnemy.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude < 600 
@@ -229,7 +223,7 @@ end)
 -- ESP
 -- ======================
 local espEnabled = false
-createToggle("ESP", false, function(state)
+createToggle("ESP Police/Criminals", false, function(state)
 	espEnabled = state
 end)
 
@@ -382,7 +376,7 @@ giveButton.MouseButton1Click:Connect(function()
 end)
 
 -- All Jailbreak Item IDs (expanded)
-local allItemIDs = {17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40} -- add more if needed
+local allItemIDs = {1,2,3,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20} -- add more if needed
 for _,id in pairs(allItemIDs) do
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1,-10,0,30)
