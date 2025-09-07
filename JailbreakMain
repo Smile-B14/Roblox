@@ -151,18 +151,16 @@ createToggle("Keycard Bypass", false, function(state)
 end)
 
 -- ======================
--- Kill Aura / Anti-Damage
+-- Kill Aura
 -- ======================
 getgenv().killAuraEnabled = false
 local KILL_RANGE = 2500 -- adjustable
-createToggle("Killaura / AntiDamage (Requires Pistol)", false, function(state)
+createToggle("Killaura (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
 	if state and player.Character then
 		runKillAura(player.Character)
 	end
 end)
-
-local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
 
 -- Kill Aura function
 function runKillAura(character)
@@ -220,19 +218,8 @@ function runKillAura(character)
 	end)
 end
 
--- Anti-damage function
-function antiDamage(character)
-	local humanoid = character:WaitForChild("Humanoid")
-	humanoid.MaxHealth = math.huge
-	humanoid.Health = math.huge
-	humanoid.HealthChanged:Connect(function()
-		humanoid.Health = humanoid.MaxHealth
-	end)
-end
-
 -- Character respawn handling
 player.CharacterAdded:Connect(function(char)
-	antiDamage(char)
 	if getgenv().killAuraEnabled then
 		runKillAura(char)
 	end
@@ -240,7 +227,6 @@ end)
 
 -- Initialize current character
 if player.Character then
-	antiDamage(player.Character)
 	if getgenv().killAuraEnabled then
 		runKillAura(player.Character)
 	end
