@@ -135,15 +135,17 @@ local function createToggle(name, default, callback)
 	end)
 end
 
+-- ======================
 -- Slider helper
-local function createSlider(name, min, max, default, callback)
+-- ======================
+function createSlider(name, min, max, default, callback)
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(1, 0, 0, 30)
+	frame.Size = UDim2.new(1,0,0,30)
 	frame.BackgroundTransparency = 1
 	frame.Parent = contentFrame
 
 	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(0.5, 0, 1, 0)
+	label.Size = UDim2.new(0.6,0,1,0)
 	label.BackgroundTransparency = 1
 	label.Text = name..": "..default
 	label.TextColor3 = Color3.fromRGB(200,200,200)
@@ -152,21 +154,19 @@ local function createSlider(name, min, max, default, callback)
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Parent = frame
 
-	local slider = Instance.new("TextButton")
-	slider.Size = UDim2.new(0.4, 0, 0.5, 0)
-	slider.Position = UDim2.new(0.55, 0, 0.25, 0)
-	slider.Text = ""
+	local slider = Instance.new("Frame")
+	slider.Size = UDim2.new(0.35,0,0.4,0)
+	slider.Position = UDim2.new(0.62,0,0.3,0)
 	slider.BackgroundColor3 = Color3.fromRGB(80,80,80)
-	slider.BorderSizePixel = 0
 	slider.Parent = frame
 
 	local sliderFill = Instance.new("Frame")
-	sliderFill.Size = UDim2.new((default-min)/(max-min), 0, 1, 0)
+	sliderFill.Size = UDim2.new((default-min)/(max-min),0,1,0)
 	sliderFill.BackgroundColor3 = Color3.fromRGB(128,0,128)
-	sliderFill.BorderSizePixel = 0
 	sliderFill.Parent = slider
 
 	local dragging = false
+
 	slider.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = true
@@ -177,13 +177,11 @@ local function createSlider(name, min, max, default, callback)
 			dragging = false
 		end
 	end)
-	RunService.RenderStepped:Connect(function()
-		if dragging then
-			local mousePos = game:GetService("UserInputService"):GetMouseLocation().X
-			local sliderX = slider.AbsolutePosition.X
-			local sliderWidth = slider.AbsoluteSize.X
-			local percent = math.clamp((mousePos - sliderX)/sliderWidth,0,1)
-			local value = math.floor(min + percent*(max-min))
+	slider.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+			local localX = math.clamp(input.Position.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
+			local percent = localX / slider.AbsoluteSize.X
+			local value = math.floor(min + percent * (max - min))
 			sliderFill.Size = UDim2.new(percent,0,1,0)
 			label.Text = name..": "..value
 			callback(value)
@@ -210,26 +208,23 @@ end)
 -- Kill Aura
 -- ======================
 getgenv().killAuraEnabled = false
-local KILL_RANGE = 2500 -- default
+local KILL_RANGE = 2500
+local killAuraCharacter = nil
+
 createToggle("Killaura (Requires Pistol)", false, function(state)
 	getgenv().killAuraEnabled = state
-	if state and player.Character then
-		runKillAura(player.Character)
-	end
+	killAuraCharacter = player.Character
 end)
+
 createSlider("Killaura Range", 500, 5000, KILL_RANGE, function(value)
 	KILL_RANGE = value
 end)
 
-local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
-
--- Kill Aura function
-function runKillAura(character)
-	spawn(function()
-		while getgenv().killAuraEnabled do
-			task.wait(0.5)
-			if not character or not character:FindFirstChild("HumanoidRootPart") then break end
-
+-- Central Kill Aura Loop
+spawn(function()
+	while true do
+		task.wait(0.3)
+		if getgenv().killAuraEnabled and killAuraCharacter and killAuraCharacter:FindFirstChild("HumanoidRootPart") then
 			local nearestEnemy = nil
 			local nearestDistance = KILL_RANGE
 			local myTeam = tostring(player.Team)
@@ -238,7 +233,7 @@ function runKillAura(character)
 				if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
 					local theirTeam = tostring(v.Team)
 					if ((myTeam == "Police" and theirTeam == "Criminal") or (myTeam ~= "Police" and theirTeam == "Police")) then
-						local dist = (v.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude
+						local dist = (v.Character.HumanoidRootPart.Position - killAuraCharacter.HumanoidRootPart.Position).Magnitude
 						if dist < nearestDistance then
 							nearestDistance, nearestEnemy = dist, v
 						end
@@ -247,37 +242,16 @@ function runKillAura(character)
 			end
 
 			if nearestEnemy and player.Folder:FindFirstChild("Pistol") then
-				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
-					local args = {oldRayIgnore(...)}
-					local envScript = tostring(getfenv(2).script)
-					if (envScript == "BulletEmitter" or envScript == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
-						args[1] = nearestEnemy.Character.HumanoidRootPart
-						args[2] = nearestEnemy.Character.HumanoidRootPart.Position
-					end
-					return unpack(args)
+				player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+				local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
+				if currentGun then
+					require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
 				end
-
-				while nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("Humanoid") 
-					  and nearestEnemy.Character.Humanoid.Health > 0 
-					  and (nearestEnemy.Character.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude < KILL_RANGE
-					  and player.Folder:FindFirstChild("Pistol") do
-					player.Folder.Pistol.InventoryEquipRemote:FireServer(true)
-					local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
-					if currentGun then
-						require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
-					end
-					task.wait()
-				end
-
-				if player.Folder:FindFirstChild("Pistol") then
-					player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
-				end
-			else
-				require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
+				player.Folder.Pistol.InventoryEquipRemote:FireServer(false)
 			end
 		end
-	end)
-end
+	end
+end)
 
 -- ======================
 -- Character respawn handling
