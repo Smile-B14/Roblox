@@ -12,7 +12,7 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ===== configuration =====
-local DEFAULT_KILL_RANGE = 1000
+local DEFAULT_KILL_RANGE = 1000 -- [recommended]
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.18
 local GIVEITEM_MAX_ATTEMPTS = 400
@@ -22,6 +22,7 @@ local ESP_UPDATE_INTERVAL = 0.1
 local ESP_FULL_RELOAD_INTERVAL = 10
 local PISTOL_CHECK_INTERVAL = 0.5
 local UI_FADE_TIME = 0.25
+local EQUIP_WAIT_TIME = 0.12
 
 -- ===== state =====
 local state = {
@@ -76,16 +77,14 @@ main.BorderSizePixel = 0
 main.Active = true
 main.Draggable = true
 main.Parent = screenGui
-local corner = Instance.new("UICorner", main)
-corner.CornerRadius = UDim.new(0, 14)
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
 
 -- Header
 local header = Instance.new("Frame", main)
 header.Size = UDim2.new(1,0,0,40)
 header.BackgroundColor3 = Color3.fromRGB(28,28,30)
 header.BorderSizePixel = 0
-local headerCorner = Instance.new("UICorner", header)
-headerCorner.CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
 
 local title = Instance.new("TextLabel", header)
 title.Position = UDim2.new(0,12,0,0)
@@ -97,6 +96,7 @@ title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Color3.fromRGB(200,200,255)
 
+-- Minimize button
 local btnMin = Instance.new("TextButton", header)
 btnMin.Size = UDim2.new(0,28,0,28)
 btnMin.Position = UDim2.new(1,-110,0,6)
@@ -105,9 +105,9 @@ btnMin.Font = Enum.Font.SourceSansBold
 btnMin.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnMin.TextColor3 = Color3.fromRGB(255,223,120)
 btnMin.BorderSizePixel = 0
-local minCorner = Instance.new("UICorner", btnMin)
-minCorner.CornerRadius = UDim.new(0,6)
+Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0,6)
 
+-- Close button
 local btnClose = Instance.new("TextButton", header)
 btnClose.Size = UDim2.new(0,28,0,28)
 btnClose.Position = UDim2.new(1,-70,0,6)
@@ -116,9 +116,9 @@ btnClose.Font = Enum.Font.SourceSansBold
 btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnClose.TextColor3 = Color3.fromRGB(255,120,120)
 btnClose.BorderSizePixel = 0
-local closeCorner = Instance.new("UICorner", btnClose)
-closeCorner.CornerRadius = UDim.new(0,6)
+Instance.new("UICorner", btnClose).CornerRadius = UDim.new(0,6)
 
+-- Minimized button
 local minimizedBtn = Instance.new("TextButton", screenGui)
 minimizedBtn.Size = UDim2.new(0, 40,0,40)
 minimizedBtn.Position = UDim2.new(0.5,-20,0.5,-20)
@@ -128,86 +128,7 @@ minimizedBtn.TextSize = 16
 minimizedBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
 minimizedBtn.TextColor3 = Color3.fromRGB(255,255,255)
 minimizedBtn.Visible = false
-local minBtnCorner = Instance.new("UICorner", minimizedBtn)
-minBtnCorner.CornerRadius = UDim.new(0,8)
-
--- Confirmation frame for close
-local confirmationFrame = Instance.new("Frame")
-confirmationFrame.Size = UDim2.new(0, 300,0,150)
-confirmationFrame.Position = UDim2.new(0.5,-150,0.5,-75)
-confirmationFrame.BackgroundColor3 = Color3.fromRGB(30,30,32)
-confirmationFrame.BorderSizePixel = 0
-confirmationFrame.Visible = false
-confirmationFrame.Parent = screenGui
-local confTitle = Instance.new("TextLabel", confirmationFrame)
-confTitle.Size = UDim2.new(1,0,0,40)
-confTitle.BackgroundTransparency = 1
-confTitle.Text = "Are you sure?"
-confTitle.Font = Enum.Font.SourceSansBold
-confTitle.TextSize = 18
-confTitle.TextColor3 = Color3.fromRGB(255,255,255)
-local confText = Instance.new("TextLabel", confirmationFrame)
-confText.Size = UDim2.new(1,0,0,60)
-confText.Position = UDim2.new(0,0,0,40)
-confText.BackgroundTransparency = 1
-confText.Text = "Closing will disable all features."
-confText.Font = Enum.Font.SourceSans
-confText.TextSize = 14
-confText.TextColor3 = Color3.fromRGB(220,220,220)
-confText.TextWrapped = true
-local btnYes = Instance.new("TextButton", confirmationFrame)
-btnYes.Size = UDim2.new(0.4,0,0,30)
-btnYes.Position = UDim2.new(0.1,0,1,-40)
-btnYes.Text = "Yes"
-btnYes.Font = Enum.Font.SourceSansBold
-btnYes.BackgroundColor3 = Color3.fromRGB(255,80,80)
-btnYes.TextColor3 = Color3.fromRGB(255,255,255)
-btnYes.BorderSizePixel = 0
-local btnNo = Instance.new("TextButton", confirmationFrame)
-btnNo.Size = UDim2.new(0.4,0,0,30)
-btnNo.Position = UDim2.new(0.5,0,1,-40)
-btnNo.Text = "No"
-btnNo.Font = Enum.Font.SourceSansBold
-btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
-btnNo.TextColor3 = Color3.fromRGB(255,255,255)
-btnNo.BorderSizePixel = 0
-
--- ===== Left controls + Right logs =====
-local left = Instance.new("Frame", main)
-left.Size = UDim2.new(0.45,-12,1,-52)
-left.Position = UDim2.new(0,8,0,44)
-left.BackgroundTransparency = 1
-local leftLayout = Instance.new("UIListLayout", left)
-leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
-leftLayout.Padding = UDim.new(0,8)
-
-local right = Instance.new("Frame", main)
-right.Size = UDim2.new(0.55,-12,1,-52)
-right.Position = UDim2.new(0.45,6,0,44)
-right.BackgroundColor3 = Color3.fromRGB(14,14,16)
-right.BackgroundTransparency = 0.02
-right.BorderSizePixel = 0
-right.ClipsDescendants = true
-local logsTitle = Instance.new("TextLabel", right)
-logsTitle.Size = UDim2.new(1,0,0,26)
-logsTitle.Position = UDim2.new(0,0,0,4)
-logsTitle.BackgroundTransparency = 1
-logsTitle.Text = "Logs (last "..LOG_CAP..")"
-logsTitle.Font = Enum.Font.SourceSansBold
-logsTitle.TextSize = 14
-logsTitle.TextColor3 = Color3.fromRGB(220,220,220)
-local logsScroll = Instance.new("ScrollingFrame", right)
-logsScroll.Size = UDim2.new(1,-8,1,-44)
-logsScroll.Position = UDim2.new(0,4,0,36)
-logsScroll.BackgroundTransparency = 1
-logsScroll.ScrollBarThickness = 8
-local logsList = Instance.new("Frame", logsScroll)
-logsList.Size = UDim2.new(1,0,1,0)
-logsList.BackgroundTransparency = 1
-logsList.Name = "LogsList"
-local logsLayout = Instance.new("UIListLayout", logsList)
-logsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-logsLayout.Padding = UDim.new(0,4)
+Instance.new("UICorner", minimizedBtn).CornerRadius = UDim.new(0,8)
 
 -- ===== fade helpers =====
 local function fadeRecursive(parent, transparency, time)
@@ -228,41 +149,15 @@ local function fadeRecursive(parent, transparency, time)
 end
 
 local function fadeIn(frame, time)
-    fadeRecursive(frame, 1, 0)
+    for _,t in ipairs(fadeRecursive(frame, 1, 0)) do t:Play() end
     frame.Visible = true
-    fadeRecursive(frame, 0, time)
+    for _,t in ipairs(fadeRecursive(frame, 0, time)) do t:Play() end
 end
 
 local function fadeOut(frame, time)
-    local tweens = fadeRecursive(frame, 1, time)
-    for _, t in ipairs(tweens) do t.Completed:Wait() end
+    for _,t in ipairs(fadeRecursive(frame, 1, time)) do t:Play() end
+    task.wait(time)
     frame.Visible = false
-end
-
--- ===== logging =====
-local function pushLog(msg)
-    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
-    table.insert(logs, entry)
-    if #logs > LOG_CAP then table.remove(logs, 1) end
-    print("[SmileB] " .. entry)
-    if logsList and logsScroll then
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, -8, 0, 18)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = entry
-        lbl.Font = Enum.Font.SourceSans
-        lbl.TextSize = 14
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.TextColor3 = Color3.fromRGB(220,220,220)
-        lbl.Parent = logsList
-        task.defer(function()
-            local layout = logsList:FindFirstChildOfClass("UIListLayout")
-            if layout then
-                logsScroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 4)
-                logsScroll.CanvasPosition = Vector2.new(0, layout.AbsoluteContentSize.Y + 4)
-            end
-        end)
-    end
 end
 
 -- ===== minimize / restore =====
