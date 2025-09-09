@@ -267,18 +267,31 @@ end
 
 -- ===== minimize / restore =====
 local savedMainPosition
+local savedMainSize
+
 btnMin.MouseButton1Click:Connect(function()
     savedMainPosition = main.Position
+    savedMainSize = main.Size
     fadeOut(main, UI_FADE_TIME)
     alwaysVisibleStatus.Visible = false
+
+    -- show minimized button in same spot as header
+    minimizedBtn.Position = UDim2.new(0, main.AbsolutePosition.X, 0, main.AbsolutePosition.Y)
     minimizedBtn.Visible = true
+    minimizedBtn.Active = true
+    minimizedBtn.Draggable = true
 end)
+
 minimizedBtn.MouseButton1Click:Connect(function()
     minimizedBtn.Visible = false
     alwaysVisibleStatus.Visible = true
-    main.Position = savedMainPosition or main.Position
+
+    -- restore UI to saved position and size
+    main.Size = savedMainSize or UDim2.new(0, 650, 0, 320)
+    main.Position = savedMainPosition or UDim2.new(0.5, -325, 0.5, -160)
     fadeIn(main, UI_FADE_TIME)
 end)
+
 
 -- ===== close confirmation =====
 btnClose.MouseButton1Click:Connect(function()
