@@ -66,7 +66,6 @@ alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Left
 alwaysVisibleStatus.TextColor3 = Color3.fromRGB(200,200,200)
 alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF"
 alwaysVisibleStatus.Parent = screenGui
-addCornerRadius(alwaysVisibleStatus, 10)
 
 local statusText = Instance.new("TextLabel")
 statusText.Parent = alwaysVisibleStatus
@@ -91,10 +90,6 @@ main.Draggable = true
 main.Parent = screenGui
 local corner = Instance.new("UICorner", main)
 corner.CornerRadius = UDim.new(0, 14)
-addCornerRadius(main, 12)
-addCornerRadius(header, 12)
-addCornerRadius(btnMin, 8)
-addCornerRadius(btnClose, 8)
 
 
 -- Header
