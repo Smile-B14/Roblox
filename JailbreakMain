@@ -12,7 +12,7 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ===== configuration =====
-local DEFAULT_KILL_RANGE = 2500
+local DEFAULT_KILL_RANGE = 1000
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.18
 local GIVEITEM_MAX_ATTEMPTS = 400
