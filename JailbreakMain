@@ -54,10 +54,11 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = PlayerGui
 
 local alwaysVisibleStatus = Instance.new("TextLabel")
-alwaysVisibleStatus.Size = UDim2.new(0, 400, 0, 20)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5,0)
-alwaysVisibleStatus.Position = UDim2.new(0.5,0,0,10)
-alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(20,20,22)
+alwaysVisibleStatus.Size = UDim2.new(0, 250, 0, 25)
+alwaysVisibleStatus.Position = UDim2.new(1, -260, 0, 10) -- top-right, with padding
+alwaysVisibleStatus.AnchorPoint = Vector2.new(0, 0)      -- align properly
+alwaysVisibleStatus.BackgroundTransparency = 0.3
+alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
 alwaysVisibleStatus.BorderSizePixel = 0
 alwaysVisibleStatus.Font = Enum.Font.SourceSans
 alwaysVisibleStatus.TextSize = 12
@@ -122,7 +123,7 @@ closeCorner.CornerRadius = UDim.new(0,6)
 local minimizedBtn = Instance.new("TextButton", screenGui)
 minimizedBtn.Size = UDim2.new(0, 40,0,40)
 minimizedBtn.Position = UDim2.new(0.5,-20,0.5,-20)
-minimizedBtn.Text = "JB"
+minimizedBtn.Text = "≡"
 minimizedBtn.Font = Enum.Font.SourceSansBold
 minimizedBtn.TextSize = 16
 minimizedBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
@@ -269,17 +270,21 @@ end
 local savedMainPosition
 local savedMainSize
 
--- style the minimized button to be a "hamburger" menu
-minimizedBtn.Text = "≡"
-minimizedBtn.TextScaled = true
-minimizedBtn.Font = Enum.Font.SourceSansBold
+-- floating minimized button (hamburger)
+local minimizedBtn = Instance.new("TextButton")
+minimizedBtn.Parent = screenGui
 minimizedBtn.Size = UDim2.new(0, 40, 0, 40)
+minimizedBtn.Position = UDim2.new(0, 10, 0, 100)
 minimizedBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizedBtn.Text = "≡"  -- hamburger icon
+minimizedBtn.TextScaled = true
+minimizedBtn.Font = Enum.Font.SourceSansBold
 minimizedBtn.Visible = false
 minimizedBtn.Active = true
 minimizedBtn.Draggable = true
 minimizedBtn.ZIndex = 10
+
 
 btnMin.MouseButton1Click:Connect(function()
     -- save state
