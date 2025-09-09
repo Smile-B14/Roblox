@@ -1,14 +1,11 @@
 -- Smile B | Jailbreak — Consolidated & Fixed LocalScript
 -- Paste into StarterPlayerScripts (LocalScript)
--- Changes in this version:
--- 1) Added Item Grabber button (Grab Items) that aggressively clicks Workspace.Givers until attempts exhausted or new items appear.
--- 2) Silent Aim now mirrors KillAura targeting logic, requests pistol when needed, and will not target same team/prisoners. Prioritization window uses lastDamagePosition for 3s.
--- 3) Kill range slider and toggle labels: removed parenthetical notes from labels for cleanliness.
--- 4) Always-visible status bar moved and resized to avoid covering UI; it now hides when UI is minimized.
--- 5) Minimize/restore now hides the whole UI (including status bar) and restores to original position.
--- 6) ESP refresh: updates real-time every 0.1s and fully reloads every 10s while enabled.
--- 7) Close (Yes) now fully disables features and restores any overridden modules.
--- 8) Several reliability fixes (ensure pistol logic, safe pcall usage, cleanup on close).
+-- Features:
+--  - Aggressive Grab Items: clicks Givers and simulates touch pickups for ground items
+--  - KillAura: focuses closest enemy; optional short priority to last damage position
+--  - Silent Aim: mirrors KillAura target selection
+--  - Minimize / Restore: hides whole GUI and status; small bar restores it
+--  - ESP, Keycard bypass, pistol handling, logging, and safer cleanup
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -43,8 +40,7 @@ local state = {
     hasPistol = false,
     tryingToGetPistol = false,
     killLoopId = 0,
-    currentTarget = nil,
-    previousTargetColor = nil
+    currentTarget = nil
 }
 local logs = {}
 local lastHealth = nil
@@ -266,8 +262,11 @@ btnNo.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = false
 end)
 
+-- helper to safely restore overrides; forward-declared
+local function updateSilentAimOverride(enabled) end
+
 btnYes.MouseButton1Click:Connect(function()
-    -- disable all features and restore overrides
+    confirmationFrame.Visible = false
     state.keyBypass = false
     state.esp = false
     state.killAura = false
@@ -290,7 +289,7 @@ btnYes.MouseButton1Click:Connect(function()
     for p,b in pairs(nameTagMap) do pcall(function() b:Destroy() end) nameTagMap[p] = nil end
     pushLog("All features disabled and GUI closed")
     -- destroy gui
-    screenGui:Destroy()
+    if screenGui then screenGui:Destroy() end
 end)
 
 -- layout: left controls + right logs
@@ -479,7 +478,7 @@ grabBtn.BorderSizePixel = 0
 grabBtn.BackgroundColor3 = Color3.fromRGB(70,70,70)
 grabBtn.TextColor3 = Color3.fromRGB(255,255,255)
 
--- ===== right logs panel =====n
+-- ===== right logs panel =====
 local logsTitle = Instance.new("TextLabel", right)
 logsTitle.Size = UDim2.new(1,0,0,26)
 logsTitle.Position = UDim2.new(0,0,0,4)
@@ -650,6 +649,34 @@ local function tryClickGiversOnce()
     return false
 end
 
+-- attempt to pickup dropped items on ground by simulating touch
+local function tryPickupDroppedOnce()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local found = false
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Parent and obj.Parent:IsA("Model") then
+            local name = tostring(obj.Name):lower()
+            -- list of keywords commonly used for dropped items; extend if needed
+            if string.find(name, "pistol") or string.find(name, "gun") or string.find(name, "rifle") or string.find(name, "shotgun") or string.find(name, "ammo") or string.find(name, "cash") or string.find(name, "money") or string.find(name, "bag") or string.find(name, "drop") then
+                pcall(function()
+                    firetouchinterest(obj, hrp, 0)
+                    task.wait(0.03)
+                    firetouchinterest(obj, hrp, 1)
+                    task.wait(0.05)
+                end)
+                found = true
+                -- if we got an item into Folder, return early
+                if LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() > 0 then
+                    return true
+                end
+            end
+        end
+    end
+    return found
+end
+
 local function ensurePistol()
     if state.tryingToGetPistol or state.hasPistol then return end
     state.tryingToGetPistol = true
@@ -672,7 +699,7 @@ local function ensurePistol()
     end)
 end
 
--- Item grabber that tries to click Givers aggressively and reports what it found
+-- Item grabber that tries to click Givers and touch-pickup dropped items aggressively
 local function grabAllItems()
     if state.tryingToGetPistol then pushLog("Already attempting to get items") return end
     state.tryingToGetPistol = true
@@ -681,7 +708,10 @@ local function grabAllItems()
         local startCount = LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() or 0
         local attempts = 0
         while attempts < GIVEITEM_MAX_ATTEMPTS do
+            -- try click givers first
             pcall(tryClickGiversOnce)
+            -- then try pickup dropped items (touch)
+            pcall(tryPickupDroppedOnce)
             attempts = attempts + 1
             local nowCount = LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() or 0
             if nowCount > startCount then
@@ -739,21 +769,29 @@ local function isEnemyTeam(myTeam, theirTeam)
     return myTeam ~= theirTeam
 end
 
--- ===== target selection (now uses priority window based on lastDamagePosition) =====
+-- ===== target selection (uses priority window based on lastDamagePosition) =====
 local function getNearestEnemy(maxRange)
-    local nearestDistance, nearestEnemy = maxRange, nil
+    maxRange = maxRange or DEFAULT_KILL_RANGE
+    local nearestDistance = maxRange
+    local nearestEnemy = nil
     local myTeam = teamString(LocalPlayer)
     local priorityActive = (tick() - lastDamageTime) < DAMAGE_PRIORITY_WINDOW and lastDamagePosition
-    for i,v in pairs(Players:GetPlayers()) do
+    local myPos = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position) or Vector3.new()
+    for _,v in pairs(Players:GetPlayers()) do
         if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
             local theirTeam = teamString(v)
             if isEnemyTeam(myTeam, theirTeam) then
-                local distToMe = (v.Character.HumanoidRootPart.Position - (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.new())).Magnitude
-                local dist = distToMe
+                local distToMyPos = (v.Character.HumanoidRootPart.Position - myPos).Magnitude
+                local dist = distToMyPos
                 if priorityActive then
                     -- prefer enemies closer to the lastDamagePosition
                     local pdist = (v.Character.HumanoidRootPart.Position - lastDamagePosition).Magnitude
                     dist = pdist
+                    -- but still bound by maxRange from player
+                    if distToMyPos > maxRange then
+                        -- out of effective range for engagement
+                        continue
+                    end
                 end
                 if dist < nearestDistance then
                     nearestDistance = dist
@@ -765,7 +803,7 @@ local function getNearestEnemy(maxRange)
     return nearestEnemy
 end
 
--- ===== damage watcher (records lastDamagePosition when damaged) =====n
+-- ===== damage watcher (records lastDamagePosition when damaged) =====
 spawn(function()
     while main and main.Parent do
         local char = LocalPlayer.Character
@@ -791,18 +829,7 @@ function updateSilentAimOverride(enabled)
     end
     if enabled then
         RayCastModule.RayIgnoreNonCollideWithIgnoreList = function(...)
-            local nearestDistance, nearestEnemy = state.killRange or DEFAULT_KILL_RANGE, nil
-            local myTeam = teamString(LocalPlayer)
-            for i,v in pairs(Players:GetPlayers()) do
-                local theirTeam = teamString(v)
-                if isEnemyTeam(myTeam, theirTeam) and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
-                    local dist = (v.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
-                    if dist < nearestDistance then
-                        nearestDistance = dist
-                        nearestEnemy = v
-                    end
-                end
-            end
+            local nearestEnemy = getNearestEnemy(state.killRange or DEFAULT_KILL_RANGE)
             local arg = {oldRayIgnore(...) }
             if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") then
                 arg[1] = nearestEnemy.Character.HumanoidRootPart
@@ -810,10 +837,8 @@ function updateSilentAimOverride(enabled)
             end
             return unpack(arg)
         end
-        -- ensure pistol like kill aura
         ensurePistol()
     else
-        -- restore
         pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
     end
 end
@@ -830,43 +855,53 @@ function runKillAura(character)
             if state.killLoopId ~= myLoopId then break end
             if not state.killAura then break end
             if not character or not character.Parent then break end
-            if not character:FindFirstChild("HumanoidRootPart") then break end
+            local hrp = character:FindFirstChild("HumanoidRootPart")
+            if not hrp then break end
+
+            -- if not armed, try to acquire pistol and wait
             if not state.hasPistol then
                 if not state.tryingToGetPistol then ensurePistol() end
                 task.wait(KILLAURA_TICK)
-                continue
-            end
-            local nearestEnemy = getNearestEnemy(state.killRange or DEFAULT_KILL_RANGE)
-            if nearestEnemy then
-                pcall(function()
-                    RayCastModule.RayIgnoreNonCollideWithIgnoreList = function(...)
-                        local arg = {oldRayIgnore(...) }
-                        if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and (nearestEnemy.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < (state.killRange or DEFAULT_KILL_RANGE) and nearestEnemy.Character.Humanoid.Health > 0 then
-                            arg[1] = nearestEnemy.Character.HumanoidRootPart
-                            arg[2] = nearestEnemy.Character.HumanoidRootPart.Position
+            else
+                local nearestEnemy = getNearestEnemy(state.killRange or DEFAULT_KILL_RANGE)
+                if nearestEnemy then
+                    -- apply temporary raycast override to aim at target
+                    pcall(function()
+                        if RayCastModule and oldRayIgnore then
+                            RayCastModule.RayIgnoreNonCollideWithIgnoreList = function(...)
+                                local arg = {oldRayIgnore(...) }
+                                if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and (nearestEnemy.Character.HumanoidRootPart.Position - hrp.Position).Magnitude < (state.killRange or DEFAULT_KILL_RANGE) and nearestEnemy.Character.Humanoid.Health > 0 then
+                                    arg[1] = nearestEnemy.Character.HumanoidRootPart
+                                    arg[2] = nearestEnemy.Character.HumanoidRootPart.Position
+                                end
+                                return unpack(arg)
+                            end
                         end
-                        return unpack(arg)
-                    end
-                end)
-                if LocalPlayer.Folder:FindFirstChild("Pistol") then
-                    local shotCount = 0
-                    LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(true)
-                    task.wait(EQUIP_WAIT_TIME)
-                    while state.killAura and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and (nearestEnemy.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < (state.killRange or DEFAULT_KILL_RANGE) and nearestEnemy.Character.Humanoid.Health > 0 do
-                        local currentGun = nil
-                        pcall(function() currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped() end)
-                        if currentGun then
-                            pcall(function() require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun) end)
-                            shotCount = shotCount + 1
-                            if shotCount % 50 == 0 then pushLog("Fired " .. tostring(shotCount) .. " shots at " .. nearestEnemy.Name) end
+                    end)
+
+                    -- attempt to equip and shoot
+                    if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
+                        local shotCount = 0
+                        pcall(function() LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(true) end)
+                        task.wait(EQUIP_WAIT_TIME)
+                        while state.killAura and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and nearestEnemy.Character.Humanoid.Health > 0 and (nearestEnemy.Character.HumanoidRootPart.Position - hrp.Position).Magnitude < (state.killRange or DEFAULT_KILL_RANGE) do
+                            local currentGun = nil
+                            pcall(function() currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped() end)
+                            if currentGun then
+                                pcall(function() require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun) end)
+                                shotCount = shotCount + 1
+                                if shotCount % 50 == 0 then pushLog("Fired " .. tostring(shotCount) .. " shots at " .. nearestEnemy.Name) end
+                            end
+                            task.wait(FIRE_DELAY)
                         end
-                        task.wait(FIRE_DELAY)
+                        pcall(function() LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(false) end)
                     end
-                    pcall(function() LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(false) end)
+
+                    -- restore raycast override
+                    pcall(function() if RayCastModule and oldRayIgnore then RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end end)
                 end
-                pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
+                task.wait(KILLAURA_TICK)
             end
-            task.wait(KILLAURA_TICK)
         end
         pushLog("KillAura loop stopped (id "..tostring(myLoopId)..")")
         alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s"):format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
