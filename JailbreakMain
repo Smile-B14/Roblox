@@ -1,11 +1,5 @@
--- Smile B | Jailbreak — Consolidated & Fixed LocalScript
+-- Smile B | Jailbreak — Full Centralized & Redesigned LocalScript
 -- Paste into StarterPlayerScripts (LocalScript)
--- Features:
---  - Aggressive Grab Items: clicks Givers and simulates touch pickups for ground items
---  - KillAura: focuses closest enemy; optional short priority to last damage position
---  - Silent Aim: mirrors KillAura target selection
---  - Minimize / Restore: hides whole GUI and status; small bar restores it
---  - ESP, Keycard bypass, pistol handling, logging, and safer cleanup
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -26,9 +21,7 @@ local LOG_CAP = 50
 local ESP_UPDATE_INTERVAL = 0.1
 local ESP_FULL_RELOAD_INTERVAL = 10
 local PISTOL_CHECK_INTERVAL = 0.5
-local EQUIP_WAIT_TIME = 0.45
-local FIRE_DELAY = 0.15
-local UI_FADE_TIME = 0.22
+local UI_FADE_TIME = 0.25
 
 -- ===== state =====
 local state = {
@@ -47,98 +40,23 @@ local lastHealth = nil
 local lastDamageTime = 0
 local lastDamagePosition = nil
 
--- ===== cached modules (safe if exist) =====
+-- ===== cached modules (if any) =====
 local RayCastModule
-pcall(function() RayCastModule = ReplicatedStorage:FindFirstChild("Module") and require(ReplicatedStorage.Module.RayCast) end)
+pcall(function()
+    RayCastModule = ReplicatedStorage:FindFirstChild("Module") and require(ReplicatedStorage.Module.RayCast)
+end)
 local oldRayIgnore = RayCastModule and RayCastModule.RayIgnoreNonCollideWithIgnoreList
 
--- ===== UI placeholders =====
-local screenGui, main, logsList, logsScroll, logsFrame, alwaysVisibleStatus, confirmationFrame, minimizedBtn = nil, nil, nil, nil, nil, nil, nil, nil
-local savedMainPosition = nil
-
-local function pushLog(msg)
-    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
-    table.insert(logs, entry)
-    if #logs > LOG_CAP then table.remove(logs, 1) end
-    print("[SmileB] " .. entry)
-    if logsList and logsScroll then
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, -8, 0, 18)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = entry
-        lbl.Font = Enum.Font.SourceSans
-        lbl.TextSize = 14
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.TextColor3 = Color3.fromRGB(220,220,220)
-        lbl.Parent = logsList
-        local count = 0
-        for _,c in ipairs(logsList:GetChildren()) do if c:IsA("TextLabel") then count = count + 1 end end
-        while count > LOG_CAP do
-            for _,c in ipairs(logsList:GetChildren()) do
-                if c:IsA("TextLabel") then c:Destroy(); count = count - 1; break end
-            end
-        end
-        task.defer(function()
-            local logsLayout = logsList:FindFirstChildOfClass("UIListLayout")
-            if logsLayout then
-                logsScroll.CanvasSize = UDim2.new(0, 0, 0, logsLayout.AbsoluteContentSize.Y + 4)
-                logsScroll.CanvasPosition = Vector2.new(0, logsLayout.AbsoluteContentSize.Y + 4)
-            end
-        end)
-    end
-end
-
--- ===== fade helpers =====
-local function setTransparency(obj, transparency)
-    if obj:IsA("Frame") or obj:IsA("ScrollingFrame") then
-        obj.BackgroundTransparency = transparency
-    elseif obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-        obj.TextTransparency = transparency
-        obj.BackgroundTransparency = transparency
-    elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-        obj.ImageTransparency = transparency
-        obj.BackgroundTransparency = transparency
-    end
-end
-local function tweenTransparency(obj, goal, time)
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tween = TweenService:Create(obj, tweenInfo, goal)
-    tween:Play()
-    return tween
-end
-local function fadeRecursive(parent, transparency, time)
-    local tweens = {}
-    setTransparency(parent, transparency)
-    table.insert(tweens, tweenTransparency(parent, {BackgroundTransparency = transparency, TextTransparency = transparency, ImageTransparency = transparency}, time))
-    for _, child in ipairs(parent:GetChildren()) do
-        local childTweens = fadeRecursive(child, transparency, time)
-        for _, t in ipairs(childTweens) do table.insert(tweens, t) end
-    end
-    return tweens
-end
-local function fadeIn(frame, time)
-    fadeRecursive(frame, 1, 0)
-    frame.Visible = true
-    local tweens = fadeRecursive(frame, 0, time)
-    return tweens
-end
-local function fadeOut(frame, time)
-    local tweens = fadeRecursive(frame, 1, time)
-    for _, t in ipairs(tweens) do t.Completed:Wait() end
-    frame.Visible = false
-end
-
--- ===== build UI =====
-screenGui = Instance.new("ScreenGui")
+-- ===== GUI =====
+local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SmileB_JailbreakUI"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = PlayerGui
 
--- always visible status (moved and resized to avoid overlap)
-alwaysVisibleStatus = Instance.new("TextLabel")
-alwaysVisibleStatus.Size = UDim2.new(0, 300, 0, 20)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(1, 0)
-alwaysVisibleStatus.Position = UDim2.new(1, -10, 0, 10) -- snug against right edge
+local alwaysVisibleStatus = Instance.new("TextLabel")
+alwaysVisibleStatus.Size = UDim2.new(0, 400, 0, 20)
+alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5,0)
+alwaysVisibleStatus.Position = UDim2.new(0.5,0,0,10)
 alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(20,20,22)
 alwaysVisibleStatus.BorderSizePixel = 0
 alwaysVisibleStatus.Font = Enum.Font.SourceSans
@@ -148,20 +66,27 @@ alwaysVisibleStatus.TextColor3 = Color3.fromRGB(200,200,200)
 alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF"
 alwaysVisibleStatus.Parent = screenGui
 
-main = Instance.new("Frame")
+-- Main frame
+local main = Instance.new("Frame")
 main.Name = "Main"
 main.Size = UDim2.new(0, 650, 0, 320)
-main.Position = UDim2.new(0, 36, 0, 36)
-main.BackgroundColor3 = Color3.fromRGB(20,20,22)
+main.Position = UDim2.new(0.5, -325, 0.5, -160)
+main.BackgroundColor3 = Color3.fromRGB(30,30,30)
 main.BorderSizePixel = 0
 main.Active = true
 main.Draggable = true
 main.Parent = screenGui
+local corner = Instance.new("UICorner", main)
+corner.CornerRadius = UDim.new(0, 14)
 
+-- Header
 local header = Instance.new("Frame", main)
 header.Size = UDim2.new(1,0,0,40)
 header.BackgroundColor3 = Color3.fromRGB(28,28,30)
 header.BorderSizePixel = 0
+local headerCorner = Instance.new("UICorner", header)
+headerCorner.CornerRadius = UDim.new(0, 12)
+
 local title = Instance.new("TextLabel", header)
 title.Position = UDim2.new(0,12,0,0)
 title.Size = UDim2.new(1,-160,1,0)
@@ -175,50 +100,41 @@ title.TextColor3 = Color3.fromRGB(200,200,255)
 local btnMin = Instance.new("TextButton", header)
 btnMin.Size = UDim2.new(0,28,0,28)
 btnMin.Position = UDim2.new(1,-110,0,6)
-btnMin.Text = "-"
+btnMin.Text = "–"
 btnMin.Font = Enum.Font.SourceSansBold
 btnMin.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnMin.TextColor3 = Color3.fromRGB(255,223,120)
 btnMin.BorderSizePixel = 0
+local minCorner = Instance.new("UICorner", btnMin)
+minCorner.CornerRadius = UDim.new(0,6)
 
 local btnClose = Instance.new("TextButton", header)
 btnClose.Size = UDim2.new(0,28,0,28)
 btnClose.Position = UDim2.new(1,-70,0,6)
-btnClose.Text = "X"
+btnClose.Text = "✕"
 btnClose.Font = Enum.Font.SourceSansBold
 btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnClose.TextColor3 = Color3.fromRGB(255,120,120)
 btnClose.BorderSizePixel = 0
+local closeCorner = Instance.new("UICorner", btnClose)
+closeCorner.CornerRadius = UDim.new(0,6)
 
-minimizedBtn = Instance.new("TextButton", screenGui)
-minimizedBtn.Size = UDim2.new(0,140,0,30)
-minimizedBtn.Position = UDim2.new(0,36,0,36)
-minimizedBtn.Text = "Smile B | JB"
+local minimizedBtn = Instance.new("TextButton", screenGui)
+minimizedBtn.Size = UDim2.new(0, 40,0,40)
+minimizedBtn.Position = UDim2.new(0.5,-20,0.5,-20)
+minimizedBtn.Text = "JB"
 minimizedBtn.Font = Enum.Font.SourceSansBold
-minimizedBtn.TextSize = 14
-minimizedBtn.BackgroundColor3 = Color3.fromRGB(36,36,40)
-minimizedBtn.TextColor3 = Color3.fromRGB(240,240,240)
+minimizedBtn.TextSize = 16
+minimizedBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
+minimizedBtn.TextColor3 = Color3.fromRGB(255,255,255)
 minimizedBtn.Visible = false
-minimizedBtn.BorderSizePixel = 0
+local minBtnCorner = Instance.new("UICorner", minimizedBtn)
+minBtnCorner.CornerRadius = UDim.new(0,8)
 
-btnMin.MouseButton1Click:Connect(function()
-    -- hide entire UI and show minimized button
-    savedMainPosition = main.Position
-    fadeOut(main, UI_FADE_TIME)
-    alwaysVisibleStatus.Visible = false
-    minimizedBtn.Visible = true
-end)
-minimizedBtn.MouseButton1Click:Connect(function()
-    minimizedBtn.Visible = false
-    alwaysVisibleStatus.Visible = true
-    main.Position = savedMainPosition or main.Position
-    fadeIn(main, UI_FADE_TIME)
-end)
-
--- confirmation frame for close
-confirmationFrame = Instance.new("Frame")
-confirmationFrame.Size = UDim2.new(0, 300, 0, 150)
-confirmationFrame.Position = UDim2.new(0.5, -150, 0.5, -75)
+-- Confirmation frame for close
+local confirmationFrame = Instance.new("Frame")
+confirmationFrame.Size = UDim2.new(0, 300,0,150)
+confirmationFrame.Position = UDim2.new(0.5,-150,0.5,-75)
 confirmationFrame.BackgroundColor3 = Color3.fromRGB(30,30,32)
 confirmationFrame.BorderSizePixel = 0
 confirmationFrame.Visible = false
@@ -255,40 +171,133 @@ btnNo.Font = Enum.Font.SourceSansBold
 btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
 btnNo.TextColor3 = Color3.fromRGB(255,255,255)
 btnNo.BorderSizePixel = 0
+
+-- ===== Left controls + Right logs =====
+local left = Instance.new("Frame", main)
+left.Size = UDim2.new(0.45,-12,1,-52)
+left.Position = UDim2.new(0,8,0,44)
+left.BackgroundTransparency = 1
+local leftLayout = Instance.new("UIListLayout", left)
+leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
+leftLayout.Padding = UDim.new(0,8)
+
+local right = Instance.new("Frame", main)
+right.Size = UDim2.new(0.55,-12,1,-52)
+right.Position = UDim2.new(0.45,6,0,44)
+right.BackgroundColor3 = Color3.fromRGB(14,14,16)
+right.BackgroundTransparency = 0.02
+right.BorderSizePixel = 0
+right.ClipsDescendants = true
+local logsTitle = Instance.new("TextLabel", right)
+logsTitle.Size = UDim2.new(1,0,0,26)
+logsTitle.Position = UDim2.new(0,0,0,4)
+logsTitle.BackgroundTransparency = 1
+logsTitle.Text = "Logs (last "..LOG_CAP..")"
+logsTitle.Font = Enum.Font.SourceSansBold
+logsTitle.TextSize = 14
+logsTitle.TextColor3 = Color3.fromRGB(220,220,220)
+local logsScroll = Instance.new("ScrollingFrame", right)
+logsScroll.Size = UDim2.new(1,-8,1,-44)
+logsScroll.Position = UDim2.new(0,4,0,36)
+logsScroll.BackgroundTransparency = 1
+logsScroll.ScrollBarThickness = 8
+local logsList = Instance.new("Frame", logsScroll)
+logsList.Size = UDim2.new(1,0,1,0)
+logsList.BackgroundTransparency = 1
+logsList.Name = "LogsList"
+local logsLayout = Instance.new("UIListLayout", logsList)
+logsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+logsLayout.Padding = UDim.new(0,4)
+
+-- ===== fade helpers =====
+local function fadeRecursive(parent, transparency, time)
+    local tweens = {}
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    if parent:IsA("Frame") or parent:IsA("ScrollingFrame") then
+        table.insert(tweens, TweenService:Create(parent, tweenInfo, {BackgroundTransparency = transparency}))
+    elseif parent:IsA("TextLabel") or parent:IsA("TextButton") or parent:IsA("TextBox") then
+        table.insert(tweens, TweenService:Create(parent, tweenInfo, {TextTransparency = transparency, BackgroundTransparency = transparency}))
+    elseif parent:IsA("ImageLabel") or parent:IsA("ImageButton") then
+        table.insert(tweens, TweenService:Create(parent, tweenInfo, {ImageTransparency = transparency, BackgroundTransparency = transparency}))
+    end
+    for _, child in ipairs(parent:GetChildren()) do
+        local childTweens = fadeRecursive(child, transparency, time)
+        for _, t in ipairs(childTweens) do table.insert(tweens, t) end
+    end
+    return tweens
+end
+
+local function fadeIn(frame, time)
+    fadeRecursive(frame, 1, 0)
+    frame.Visible = true
+    fadeRecursive(frame, 0, time)
+end
+
+local function fadeOut(frame, time)
+    local tweens = fadeRecursive(frame, 1, time)
+    for _, t in ipairs(tweens) do t.Completed:Wait() end
+    frame.Visible = false
+end
+
+-- ===== logging =====
+local function pushLog(msg)
+    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
+    table.insert(logs, entry)
+    if #logs > LOG_CAP then table.remove(logs, 1) end
+    print("[SmileB] " .. entry)
+    if logsList and logsScroll then
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -8, 0, 18)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = entry
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 14
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextColor3 = Color3.fromRGB(220,220,220)
+        lbl.Parent = logsList
+        task.defer(function()
+            local layout = logsList:FindFirstChildOfClass("UIListLayout")
+            if layout then
+                logsScroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 4)
+                logsScroll.CanvasPosition = Vector2.new(0, layout.AbsoluteContentSize.Y + 4)
+            end
+        end)
+    end
+end
+
+-- ===== minimize / restore =====
+local savedMainPosition
+btnMin.MouseButton1Click:Connect(function()
+    savedMainPosition = main.Position
+    fadeOut(main, UI_FADE_TIME)
+    alwaysVisibleStatus.Visible = false
+    minimizedBtn.Visible = true
+end)
+minimizedBtn.MouseButton1Click:Connect(function()
+    minimizedBtn.Visible = false
+    alwaysVisibleStatus.Visible = true
+    main.Position = savedMainPosition or main.Position
+    fadeIn(main, UI_FADE_TIME)
+end)
+
+-- ===== close confirmation =====
 btnClose.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = true
 end)
 btnNo.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = false
 end)
-
--- helper to safely restore overrides; forward-declared
-local function updateSilentAimOverride(enabled) end
-
 btnYes.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = false
+    -- disable features
     state.keyBypass = false
     state.esp = false
     state.killAura = false
     state.silentAim = false
     state.killLoopId = state.killLoopId + 1
-    -- restore RayCast override
     if RayCastModule and oldRayIgnore then
         pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
     end
-    updateSilentAimOverride(false)
-    -- restore PlayerUtils.hasKey if overwritten
-    pcall(function()
-        local plrUtils = ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils")
-        if plrUtils and rawget(_G, "SmileB_original_hasKey") then
-            require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey")
-        end
-    end)
-    -- cleanup ESP
-    for p,h in pairs(highlightMap) do pcall(function() h:Destroy() end) highlightMap[p] = nil end
-    for p,b in pairs(nameTagMap) do pcall(function() b:Destroy() end) nameTagMap[p] = nil end
-    pushLog("All features disabled and GUI closed")
-    -- destroy gui
     if screenGui then screenGui:Destroy() end
 end)
 
