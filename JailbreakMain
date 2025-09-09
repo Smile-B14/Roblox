@@ -19,7 +19,7 @@ local GIVEITEM_MAX_ATTEMPTS = 400
 local DAMAGE_PRIORITY_WINDOW = 3
 local LOG_CAP = 50
 local ESP_UPDATE_INTERVAL = 0.1
-local ESP_FULL_RELOAD_INTERVAL = 1
+local ESP_FULL_RELOAD_INTERVAL = 2.5
 local PISTOL_CHECK_INTERVAL = 0.5
 local UI_FADE_TIME = 0.25
 
@@ -111,7 +111,7 @@ minCorner.CornerRadius = UDim.new(0,6)
 local btnClose = Instance.new("TextButton", header)
 btnClose.Size = UDim2.new(0,28,0,28)
 btnClose.Position = UDim2.new(1,-70,0,6)
-btnClose.Text = "✕"
+btnClose.Text = "x"
 btnClose.Font = Enum.Font.SourceSansBold
 btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnClose.TextColor3 = Color3.fromRGB(255,120,120)
