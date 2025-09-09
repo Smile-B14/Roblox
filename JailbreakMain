@@ -427,7 +427,7 @@ createToggle(left, "Keycard Bypass", false, function(v)
 end)
 
 -- KillAura toggle
-createToggle(left, "KillAura", false, function(v)
+createToggle(left, "KillAura (1000 Recommended)", false, function(v)
     state.killAura = v
     pushLog("KillAura toggled: "..tostring(v))
     if v and LocalPlayer.Character then
