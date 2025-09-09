@@ -10,7 +10,7 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- ===== configuration =====
-local DEFAULT_KILL_RANGE = 2500
+local DEFAULT_KILL_RANGE = 1500
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.35
 local GIVEITEM_MAX_ATTEMPTS = 250
