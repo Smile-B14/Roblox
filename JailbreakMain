@@ -10,7 +10,7 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- ===== configuration =====
-local DEFAULT_KILL_RANGE = 1500
+local DEFAULT_KILL_RANGE = 2500
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.35
 local GIVEITEM_MAX_ATTEMPTS = 250
@@ -38,7 +38,7 @@ local logs = {} -- string array (keeps up to LOG_CAP)
 local lastHealth = nil
 local lastDamageTime = 0
 -- ===== UI placeholders (declared early so functions can reference) =====
-local screenGui, main, logsList, logsScroll, logsFrame, alwaysVisibleStatus = nil, nil, nil, nil, nil, nil
+local screenGui, main, logsList, logsScroll, logsFrame, alwaysVisibleStatus, confirmationFrame = nil, nil, nil, nil, nil, nil, nil
 -- pushLog: append to logs array, print, and add to UI if ready
 local function pushLog(msg)
     local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
@@ -193,8 +193,71 @@ minimizedBtn.MouseButton1Click:Connect(function()
     minimizedBtn.Visible = false
     fadeIn(main, UI_FADE_TIME)
 end)
+-- confirmation frame for close
+confirmationFrame = Instance.new("Frame")
+confirmationFrame.Size = UDim2.new(0, 300, 0, 150)
+confirmationFrame.Position = UDim2.new(0.5, -150, 0.5, -75)
+confirmationFrame.BackgroundColor3 = Color3.fromRGB(30,30,32)
+confirmationFrame.BorderSizePixel = 0
+confirmationFrame.Visible = false
+confirmationFrame.Parent = screenGui
+local confTitle = Instance.new("TextLabel", confirmationFrame)
+confTitle.Size = UDim2.new(1,0,0,40)
+confTitle.BackgroundTransparency = 1
+confTitle.Text = "Are you sure?"
+confTitle.Font = Enum.Font.SourceSansBold
+confTitle.TextSize = 18
+confTitle.TextColor3 = Color3.fromRGB(255,255,255)
+local confText = Instance.new("TextLabel", confirmationFrame)
+confText.Size = UDim2.new(1,0,0,60)
+confText.Position = UDim2.new(0,0,0,40)
+confText.BackgroundTransparency = 1
+confText.Text = "Closing will disable all features."
+confText.Font = Enum.Font.SourceSans
+confText.TextSize = 14
+confText.TextColor3 = Color3.fromRGB(220,220,220)
+confText.TextWrapped = true
+local btnYes = Instance.new("TextButton", confirmationFrame)
+btnYes.Size = UDim2.new(0.4,0,0,30)
+btnYes.Position = UDim2.new(0.1,0,1,-40)
+btnYes.Text = "Yes"
+btnYes.Font = Enum.Font.SourceSansBold
+btnYes.BackgroundColor3 = Color3.fromRGB(255,80,80)
+btnYes.TextColor3 = Color3.fromRGB(255,255,255)
+btnYes.BorderSizePixel = 0
+local btnNo = Instance.new("TextButton", confirmationFrame)
+btnNo.Size = UDim2.new(0.4,0,0,30)
+btnNo.Position = UDim2.new(0.5,0,1,-40)
+btnNo.Text = "No"
+btnNo.Font = Enum.Font.SourceSansBold
+btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
+btnNo.TextColor3 = Color3.fromRGB(255,255,255)
+btnNo.BorderSizePixel = 0
 btnClose.MouseButton1Click:Connect(function()
-    fadeOut(main, UI_FADE_TIME)
+    confirmationFrame.Visible = true
+end)
+btnNo.MouseButton1Click:Connect(function()
+    confirmationFrame.Visible = false
+end)
+btnYes.MouseButton1Click:Connect(function()
+    -- disable all features
+    state.keyBypass = false
+    local ok, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
+    if ok and plrUtils then
+        pcall(function() require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey") or require(plrUtils).hasKey end)
+        pushLog("Keycard bypass disabled")
+    end
+    state.esp = false
+    for p,h in pairs(highlightMap) do pcall(function() h:Destroy() end) highlightMap[p] = nil end
+    for p,b in pairs(nameTagMap) do pcall(function() b:Destroy() end) nameTagMap[p] = nil end
+    pushLog("ESP disabled")
+    state.killAura = false
+    state.killLoopId = state.killLoopId + 1
+    pushLog("KillAura disabled")
+    state.silentAim = false
+    updateSilentAimOverride(false)
+    pushLog("Silent Aim disabled")
+    -- destroy gui
     screenGui:Destroy()
 end)
 -- layout: left controls + right logs
@@ -314,8 +377,6 @@ createToggle(left, "Keycard Bypass", false, function(v)
         else
             pcall(function() require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey") or require(plrUtils).hasKey end)
             pushLog("Keycard bypass disabled")
-            require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
-            pushLog("Silent Aim disabled")
         end
     else
         pushLog("Keycard bypass: PlayerUtils not found")
@@ -326,11 +387,6 @@ end)
 createToggle(left, "KillAura (requires pistol)", false, function(v)
     state.killAura = v
     pushLog("KillAura toggled: "..tostring(v))
-    if v then
-        pushLog("KillAura enabled")
-    else
-        pushLog("KillAura disabled")
-    end
     if v and LocalPlayer.Character then
         spawn(function() runKillAura(LocalPlayer.Character) end)
     else
@@ -343,13 +399,7 @@ end)
 createToggle(left, "Silent Aim (requires pistol)", false, function(v)
     state.silentAim = v
     pushLog("Silent Aim toggled: "..tostring(v))
-    if v then
-        pushLog("Silent Aim enabled")
-        updateSilentAimOverride(true)
-    else
-        pushLog("Silent Aim disabled")
-        updateSilentAimOverride(false)
-    end
+    updateSilentAimOverride(v)
     alwaysVisibleStatus.Text = ("Pistol: %s • KillAura: %s • SilentAim: %s • ESP: %s • KeyBypass: %s"):format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
 end)
 -- Shared Range slider
@@ -582,32 +632,33 @@ local function getNearestEnemy(maxRange)
     return nearestEnemy
 end
 -- safe oldRayIgnore require
-local oldRayIgnore = nil
-pcall(function()
-    local rc = ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast")
-    if rc then oldRayIgnore = require(rc).RayIgnoreNonCollideWithIgnoreList end
-end)
+local oldRayIgnore = require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList
 -- ===== silent aim override =====
 local function updateSilentAimOverride(enabled)
-    if not oldRayIgnore then return end
-    pcall(function()
-        local rc = ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast")
-        if rc then
-            if enabled then
-                require(rc).RayIgnoreNonCollideWithIgnoreList = function(...)
-                    local nearestEnemy = getNearestEnemy(state.killRange or DEFAULT_KILL_RANGE)
-                    local arg = {oldRayIgnore(...)}
-                    if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy then
-                        arg[1] = nearestEnemy.Character.HumanoidRootPart
-                        arg[2] = nearestEnemy.Character.HumanoidRootPart.Position
+    if enabled then
+        require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
+            local nearestDistance, nearestEnemy = state.killRange or DEFAULT_KILL_RANGE, nil
+            local myTeam = tostring(LocalPlayer.Team)
+            for i,v in pairs(Players:GetPlayers()) do
+                local theirTeam = tostring(v.Team)
+                if ((myTeam == "Police" and theirTeam == "Criminal") or theirTeam == "Police") and theirTeam ~= myTeam and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
+                    local dist = (v.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+                    if dist < nearestDistance then
+                        nearestDistance = dist
+                        nearestEnemy = v
                     end
-                    return unpack(arg)
                 end
-            else
-                require(rc).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
             end
+            local arg = {oldRayIgnore(...)}
+            if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy then
+                arg[1] = nearestEnemy.Character.HumanoidRootPart
+                arg[2] = nearestEnemy.Character.HumanoidRootPart.Position
+            end
+            return unpack(arg)
         end
-    end)
+    else
+        require(ReplicatedStorage.Module.RayCast).RayIgnoreNonCollideWithIgnoreList = oldRayIgnore
+    end
 end
 -- ===== kill aura loop (cancelable via loopId) =====
 function runKillAura(character)
