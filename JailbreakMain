@@ -81,14 +81,14 @@ screenGui.Parent = PlayerGui
 local alwaysVisibleStatus = Instance.new("TextLabel")
 alwaysVisibleStatus.Name = "StatusStrip"
 alwaysVisibleStatus.Size = UDim2.new(0, 520, 0, 30)
-alwaysVisibleStatus.Position = UDim2.new(0.98, -540, 0, 10)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(1, 0)
+alwaysVisibleStatus.Position = UDim2.new(0.5, -260, 0, 10)
+alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5, 0)
 alwaysVisibleStatus.BackgroundTransparency = 0.18
 alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
 alwaysVisibleStatus.BorderSizePixel = 0
-alwaysVisibleStatus.Font = Enum.Font.SourceSans
+alwaysVisibleStatus.Font = Enum.Font.Gotham
 alwaysVisibleStatus.TextSize = 13
-alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Left
+alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Center
 alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
 alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF  AutoDrop: OFF"
 alwaysVisibleStatus.Parent = screenGui
@@ -97,8 +97,8 @@ addCorner(alwaysVisibleStatus)
 -- main container
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.new(0, 700, 0, 380)
-main.Position = UDim2.new(0.5, -350, 0.5, -190) -- center spawn
+main.Size = UDim2.new(0, 700, 0, 420) -- Made taller to fit everything
+main.Position = UDim2.new(0.5, -350, 0.5, -210) -- center spawn, adjusted for height
 main.BackgroundColor3 = Color3.fromRGB(30,30,30)
 main.BorderSizePixel = 0
 main.Active = true
@@ -119,7 +119,7 @@ title.Position = UDim2.new(0,12,0,0)
 title.Size = UDim2.new(1,-200,1,0)
 title.BackgroundTransparency = 1
 title.Text = "Jailbreak | Smile B"
-title.Font = Enum.Font.SourceSansBold
+title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Color3.fromRGB(200,200,255)
@@ -130,7 +130,7 @@ btnMin.Name = "BtnMin"
 btnMin.Size = UDim2.new(0,34,0,30)
 btnMin.Position = UDim2.new(1,-154,0,8)
 btnMin.Text = "—"
-btnMin.Font = Enum.Font.SourceSansBold
+btnMin.Font = Enum.Font.GothamBold
 btnMin.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnMin.TextColor3 = Color3.fromRGB(255,223,120)
 btnMin.BorderSizePixel = 0
@@ -141,7 +141,7 @@ btnClose.Name = "BtnClose"
 btnClose.Size = UDim2.new(0,34,0,30)
 btnClose.Position = UDim2.new(1,-108,0,8)
 btnClose.Text = "x"
-btnClose.Font = Enum.Font.SourceSansBold
+btnClose.Font = Enum.Font.GothamBold
 btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnClose.TextColor3 = Color3.fromRGB(255,120,120)
 btnClose.BorderSizePixel = 0
@@ -162,9 +162,10 @@ local function makeTab(label)
     local b = Instance.new("TextButton", tabBar)
     b.Size = UDim2.new(0, 120, 1, 0)
     b.Text = label
-    b.Font = Enum.Font.SourceSansBold
+    b.Font = Enum.Font.GothamBold
     b.TextSize = 14
     b.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    b.TextColor3 = Color3.fromRGB(255,255,255) -- Changed to white
     b.BorderSizePixel = 0
     addCorner(b)
     return b
@@ -224,7 +225,7 @@ logsTitle.Size = UDim2.new(1,0,0,26)
 logsTitle.Position = UDim2.new(0,0,0,6)
 logsTitle.BackgroundTransparency = 1
 logsTitle.Text = "Logs (last "..LOG_CAP..")"
-logsTitle.Font = Enum.Font.SourceSansBold
+logsTitle.Font = Enum.Font.GothamBold
 logsTitle.TextSize = 14
 logsTitle.TextColor3 = Color3.fromRGB(220,220,220)
 
@@ -232,7 +233,7 @@ local clearBtn = Instance.new("TextButton", right)
 clearBtn.Size = UDim2.new(0,72,0,28)
 clearBtn.Position = UDim2.new(1,-84,0,6)
 clearBtn.Text = "Clear"
-clearBtn.Font = Enum.Font.SourceSans
+clearBtn.Font = Enum.Font.Gotham
 clearBtn.TextSize = 12
 clearBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
 clearBtn.TextColor3 = Color3.fromRGB(240,240,240)
@@ -264,7 +265,7 @@ local function pushLog(msg)
         lbl.Size = UDim2.new(1, -8, 0, 18)
         lbl.BackgroundTransparency = 1
         lbl.Text = entry
-        lbl.Font = Enum.Font.SourceSans
+        lbl.Font = Enum.Font.Gotham
         lbl.TextSize = 14
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextColor3 = Color3.fromRGB(220,220,220)
@@ -301,7 +302,7 @@ local function createToggle(parent, labelText, default, callback)
     lbl.Size = UDim2.new(0.62,0,1,0)
     lbl.BackgroundTransparency = 1
     lbl.Text = labelText
-    lbl.Font = Enum.Font.SourceSans
+    lbl.Font = Enum.Font.Gotham
     lbl.TextSize = 14
     lbl.TextColor3 = Color3.fromRGB(230,230,230)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -310,7 +311,7 @@ local function createToggle(parent, labelText, default, callback)
     btn.Size = UDim2.new(0,84,0,28)
     btn.Position = UDim2.new(1,-92,0,3)
     btn.Text = default and "ON" or "OFF"
-    btn.Font = Enum.Font.SourceSansBold
+    btn.Font = Enum.Font.GothamBold
     btn.TextSize = 13
     btn.BorderSizePixel = 0
     btn.BackgroundColor3 = default and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
@@ -324,7 +325,7 @@ local function createToggle(parent, labelText, default, callback)
         btn.BackgroundColor3 = st and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
         callback(st)
     end)
-    return row, btn
+    return row, btn, callback -- Return callback for keybind access
 end
 
 local function createSlider(parent, name, min, max, default, callback)
@@ -333,7 +334,7 @@ local function createSlider(parent, name, min, max, default, callback)
     lbl.Size = UDim2.new(0.6,0,1,0)
     lbl.BackgroundTransparency = 1
     lbl.Text = name .. ": " .. tostring(default)
-    lbl.Font = Enum.Font.SourceSans
+    lbl.Font = Enum.Font.Gotham
     lbl.TextSize = 14
     lbl.TextColor3 = Color3.fromRGB(220,220,220)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -383,7 +384,7 @@ end
 
 -- ===== left controls =====
 -- Keycard toggle
-local keyRow, keyBtn = createToggle(left, "Keycard Bypass", false, function(v)
+local keyRow, keyBtn, keyCallback = createToggle(left, "Keycard Bypass", false, function(v)
     state.keyBypass = v
     local ok, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
     if ok and plrUtils then
@@ -403,7 +404,7 @@ local keyRow, keyBtn = createToggle(left, "Keycard Bypass", false, function(v)
 end)
 
 -- KillAura toggle
-local kaRow, kaBtn = createToggle(left, "KillAura (1000 Recommended)", false, function(v)
+local kaRow, kaBtn, kaCallback = createToggle(left, "KillAura (1000 Recommended)", false, function(v)
     state.killAura = v
     pushLog("KillAura toggled: "..tostring(v))
     if v and LocalPlayer.Character then
@@ -416,7 +417,7 @@ local kaRow, kaBtn = createToggle(left, "KillAura (1000 Recommended)", false, fu
 end)
 
 -- SilentAim toggle
-local saRow, saBtn = createToggle(left, "Silent Aim", false, function(v)
+local saRow, saBtn, saCallback = createToggle(left, "Silent Aim", false, function(v)
     state.silentAim = v
     pushLog("Silent Aim toggled: "..tostring(v))
     updateSilentAimOverride(v)
@@ -433,7 +434,7 @@ end)
 state.killRange = DEFAULT_KILL_RANGE
 
 -- ESP toggle
-local espRow, espBtn = createToggle(left, "ESP", false, function(v)
+local espRow, espBtn, espCallback = createToggle(left, "ESP", false, function(v)
     state.esp = v
     pushLog("ESP toggled: "..tostring(v))
     if not v then
@@ -452,7 +453,7 @@ local grabLbl = Instance.new("TextLabel", grabRow)
 grabLbl.Size = UDim2.new(0.62,0,1,0)
 grabLbl.BackgroundTransparency = 1
 grabLbl.Text = "Grab Items"
-grabLbl.Font = Enum.Font.SourceSans
+grabLbl.Font = Enum.Font.Gotham
 grabLbl.TextSize = 14
 grabLbl.TextColor3 = Color3.fromRGB(230,230,230)
 grabLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -461,7 +462,7 @@ local grabBtn = Instance.new("TextButton", grabRow)
 grabBtn.Size = UDim2.new(0,84,0,28)
 grabBtn.Position = UDim2.new(1,-92,0,3)
 grabBtn.Text = "Grab"
-grabBtn.Font = Enum.Font.SourceSansBold
+grabBtn.Font = Enum.Font.GothamBold
 grabBtn.TextSize = 13
 grabBtn.BorderSizePixel = 0
 grabBtn.BackgroundColor3 = Color3.fromRGB(70,70,70)
@@ -469,7 +470,7 @@ grabBtn.TextColor3 = Color3.fromRGB(255,255,255)
 addCorner(grabBtn)
 
 -- Auto Drop toggle
-local autoDropRow, autoDropBtn = createToggle(left, "Auto Drop Guns", false, function(v)
+local autoDropRow, autoDropBtn, autoDropCallback = createToggle(left, "Auto Drop Guns", false, function(v)
     state.autoDrop = v
     if v then
         state.autoDropLoopId = state.autoDropLoopId + 1
@@ -554,7 +555,7 @@ local function makeNameTagFor(p)
     local txt = Instance.new("TextLabel", bg)
     txt.Size = UDim2.new(1,0,1,0)
     txt.BackgroundTransparency = 1
-    txt.Font = Enum.Font.SourceSansBold
+    txt.Font = Enum.Font.GothamBold
     txt.TextScaled = true
     txt.Text = p.Name
     txt.TextColor3 = teamColorForPlayer(p)
@@ -647,14 +648,14 @@ spawn(function()
     end
 end)
 
--- ===== pistol acquisition / grabbing logic (kept and reused) =====
+-- ===== pistol acquisition / grabbing logic (updated for better reliability) =====
 local function tryClickGiversOnce()
     if not Workspace:FindFirstChild("Givers") then return false end
     for _,g in ipairs(Workspace.Givers:GetChildren()) do
         if not g or not g.Parent then continue end
         local cd = g:FindFirstChildWhichIsA("ClickDetector")
         if cd then
-            pcall(function() fireclickdetector(cd) end)
+            pcall(function() fireclickdetector(cd, 0) end) -- Added distance 0 for reliability
             task.wait(0.04)
             if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then return true end
         end
@@ -672,6 +673,7 @@ local function tryPickupDroppedOnce()
             local name = tostring(obj.Name):lower()
             if string.find(name, "pistol") or string.find(name, "gun") or string.find(name, "rifle") or string.find(name, "shotgun") or string.find(name, "ammo") or string.find(name, "cash") or string.find(name, "money") or string.find(name, "bag") or string.find(name, "drop") then
                 pcall(function()
+                    obj.CFrame = hrp.CFrame -- Teleport to player for better pickup
                     firetouchinterest(obj, hrp, 0)
                     task.wait(0.03)
                     firetouchinterest(obj, hrp, 1)
@@ -944,7 +946,7 @@ local confTitle = Instance.new("TextLabel", confirmationFrame)
 confTitle.Size = UDim2.new(1,0,0,44)
 confTitle.BackgroundTransparency = 1
 confTitle.Text = "Are you sure?"
-confTitle.Font = Enum.Font.SourceSansBold
+confTitle.Font = Enum.Font.GothamBold
 confTitle.TextSize = 18
 confTitle.TextColor3 = Color3.fromRGB(255,255,255)
 
@@ -953,7 +955,7 @@ confText.Size = UDim2.new(1,0,0,66)
 confText.Position = UDim2.new(0,0,0,44)
 confText.BackgroundTransparency = 1
 confText.Text = "Closing will disable all features."
-confText.Font = Enum.Font.SourceSans
+confText.Font = Enum.Font.Gotham
 confText.TextSize = 14
 confText.TextColor3 = Color3.fromRGB(220,220,220)
 confText.TextWrapped = true
@@ -962,7 +964,7 @@ local btnYes = Instance.new("TextButton", confirmationFrame)
 btnYes.Size = UDim2.new(0.4,0,0,32)
 btnYes.Position = UDim2.new(0.06,0,1,-44)
 btnYes.Text = "Yes"
-btnYes.Font = Enum.Font.SourceSansBold
+btnYes.Font = Enum.Font.GothamBold
 btnYes.BackgroundColor3 = Color3.fromRGB(255,80,80)
 btnYes.TextColor3 = Color3.fromRGB(255,255,255)
 btnYes.BorderSizePixel = 0
@@ -972,7 +974,7 @@ local btnNo = Instance.new("TextButton", confirmationFrame)
 btnNo.Size = UDim2.new(0.4,0,0,32)
 btnNo.Position = UDim2.new(0.54,0,1,-44)
 btnNo.Text = "No"
-btnNo.Font = Enum.Font.SourceSansBold
+btnNo.Font = Enum.Font.GothamBold
 btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
 btnNo.TextColor3 = Color3.fromRGB(255,255,255)
 btnNo.BorderSizePixel = 0
@@ -1010,7 +1012,7 @@ minimizedBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 minimizedBtn.Text = "≡"
 minimizedBtn.TextScaled = true
-minimizedBtn.Font = Enum.Font.SourceSansBold
+minimizedBtn.Font = Enum.Font.GothamBold
 minimizedBtn.Visible = false
 minimizedBtn.Active = true
 addCorner(minimizedBtn)
@@ -1022,15 +1024,15 @@ btnMin.MouseButton1Click:Connect(function()
     savedMainSize = main.Size
     main.Visible = false
     minimizedBtn.Position = UDim2.new(0, math.clamp(main.AbsolutePosition.X, 4, workspace.CurrentCamera.ViewportSize.X - minimizedBtn.AbsoluteSize.X - 4),
-                                       0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y - minimizedBtn.AbsoluteSize.Y - 4))
+                                       0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y + 100)) -- Allow off bottom
     minimizedBtn.Visible = true
 end)
 
 minimizedBtn.MouseButton1Click:Connect(function()
     minimizedBtn.Visible = false
     main.Visible = true
-    main.Position = savedMainPosition or UDim2.new(0.5, -350, 0.5, -190)
-    main.Size = savedMainSize or UDim2.new(0, 700, 0, 380)
+    main.Position = savedMainPosition or UDim2.new(0.5, -350, 0.5, -210)
+    main.Size = savedMainSize or UDim2.new(0, 700, 0, 420)
 end)
 
 -- ===== keybinds UI (tab content) =====
@@ -1040,7 +1042,7 @@ local function makeKeybindRow(parent, actionName, defaultKey)
     lbl.Size = UDim2.new(0.5,0,1,0)
     lbl.BackgroundTransparency = 1
     lbl.Text = actionName
-    lbl.Font = Enum.Font.SourceSans
+    lbl.Font = Enum.Font.Gotham
     lbl.TextSize = 14
     lbl.TextColor3 = Color3.fromRGB(230,230,230)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -1049,8 +1051,8 @@ local function makeKeybindRow(parent, actionName, defaultKey)
     keyLabel.Size = UDim2.new(0,120,0,28)
     keyLabel.Position = UDim2.new(0.5, 8, 0, 4)
     keyLabel.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    keyLabel.Text = tostring(defaultKey)
-    keyLabel.Font = Enum.Font.SourceSans
+    keyLabel.Text = tostring(defaultKey):gsub("Enum.KeyCode.", "") -- Remove Enum.KeyCode. for defaults
+    keyLabel.Font = Enum.Font.Gotham
     keyLabel.TextSize = 14
     keyLabel.TextColor3 = Color3.fromRGB(230,230,230)
     addCorner(keyLabel)
@@ -1059,7 +1061,7 @@ local function makeKeybindRow(parent, actionName, defaultKey)
     setBtn.Size = UDim2.new(0,80,0,28)
     setBtn.Position = UDim2.new(1, -88, 0, 4)
     setBtn.Text = "Set"
-    setBtn.Font = Enum.Font.SourceSansBold
+    setBtn.Font = Enum.Font.GothamBold
     setBtn.TextSize = 13
     setBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
     setBtn.BorderSizePixel = 0
@@ -1099,7 +1101,7 @@ local kbTitle = Instance.new("TextLabel", contentKeybinds)
 kbTitle.Size = UDim2.new(1,0,0,26)
 kbTitle.BackgroundTransparency = 1
 kbTitle.Text = "Keybinds"
-kbTitle.Font = Enum.Font.SourceSansBold
+kbTitle.Font = Enum.Font.GothamBold
 kbTitle.TextSize = 16
 kbTitle.TextColor3 = Color3.fromRGB(220,220,220)
 
@@ -1115,7 +1117,7 @@ local creditsTitle = Instance.new("TextLabel", contentCredits)
 creditsTitle.Size = UDim2.new(1,0,0,26)
 creditsTitle.BackgroundTransparency = 1
 creditsTitle.Text = "Credits"
-creditsTitle.Font = Enum.Font.SourceSansBold
+creditsTitle.Font = Enum.Font.GothamBold
 creditsTitle.TextSize = 16
 creditsTitle.TextColor3 = Color3.fromRGB(220,220,220)
 
@@ -1125,7 +1127,7 @@ creditsText.Position = UDim2.new(0,0,0,36)
 creditsText.BackgroundTransparency = 1
 creditsText.TextWrapped = true
 creditsText.Text = "Tiktok: @SmileB.BS\nSuggest changes here: ContactSmileB@gmail.com"
-creditsText.Font = Enum.Font.SourceSans
+creditsText.Font = Enum.Font.Gotham
 creditsText.TextSize = 14
 creditsText.TextColor3 = Color3.fromRGB(220,220,220)
 
@@ -1163,25 +1165,25 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                     state.killAura = not state.killAura
                     kaBtn.Text = state.killAura and "ON" or "OFF"
                     kaBtn.BackgroundColor3 = state.killAura and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    if state.killAura and LocalPlayer.Character then spawn(function() runKillAura(LocalPlayer.Character) end) end
+                    kaCallback(state.killAura) -- Call callback directly
                     pushLog("Keybind toggled KillAura: "..tostring(state.killAura))
                 elseif action == "SilentAim" then
                     state.silentAim = not state.silentAim
                     saBtn.Text = state.silentAim and "ON" or "OFF"
                     saBtn.BackgroundColor3 = state.silentAim and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    updateSilentAimOverride(state.silentAim)
-                    if state.silentAim then ensurePistol() end
+                    saCallback(state.silentAim) -- Call callback directly
                     pushLog("Keybind toggled SilentAim: "..tostring(state.silentAim))
                 elseif action == "ESP" then
                     state.esp = not state.esp
                     espBtn.Text = state.esp and "ON" or "OFF"
                     espBtn.BackgroundColor3 = state.esp and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    if state.esp then for _,pl in pairs(Players:GetPlayers()) do spawn(function() pcall(function() setupESPForPlayer(pl) end) end) end end
+                    espCallback(state.esp) -- Call callback directly
                     pushLog("Keybind toggled ESP: "..tostring(state.esp))
                 elseif action == "Keycard" then
                     state.keyBypass = not state.keyBypass
                     keyBtn.Text = state.keyBypass and "ON" or "OFF"
                     keyBtn.BackgroundColor3 = state.keyBypass and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    keyCallback(state.keyBypass) -- Call callback directly
                     pushLog("Keybind toggled Keycard Bypass: "..tostring(state.keyBypass))
                 elseif action == "Grab" then
                     pushLog("Keybind: Grab pressed")
@@ -1190,8 +1192,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                     state.autoDrop = not state.autoDrop
                     autoDropBtn.Text = state.autoDrop and "ON" or "OFF"
                     autoDropBtn.BackgroundColor3 = state.autoDrop and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    -- AutoDrop logic toggles itself already via the toggle callback
-                    autoDropBtn.MouseButton1Click:Fire()
+                    autoDropCallback(state.autoDrop) -- Call callback directly
                 end
                 alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
                     :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
@@ -1201,7 +1202,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- ===== dragging logic for main and minimizedBtn (clamped to viewport) =====
+-- ===== dragging logic for main and minimizedBtn (clamped to viewport, allow bottom off) =====
 local function makeDraggable(guiObject)
     local dragging = false
     local dragStart = Vector2.new()
@@ -1211,7 +1212,7 @@ local function makeDraggable(guiObject)
     local function clampToViewport(x, y, sizeX, sizeY)
         local vw = cam and cam.ViewportSize or Vector2.new(1920,1080)
         local nx = math.clamp(x, 4, vw.X - sizeX - 4)
-        local ny = math.clamp(y, 4, vw.Y - sizeY - 4)
+        local ny = math.clamp(y, 4, vw.Y + 100) -- Allow off bottom
         return nx, ny
     end
 
