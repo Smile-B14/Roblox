@@ -899,7 +899,7 @@ local confText = Instance.new("TextLabel", confirmationFrame)
 confText.Size = UDim2.new(1,0,0,66)
 confText.Position = UDim2.new(0,0,0,44)
 confText.BackgroundTransparency = 1
-confText.Text = "Closing will disable all features."
+confText.Text = "You Wont Be Able To Reopen This UI."
 confText.Font = Enum.Font.Gotham
 confText.TextSize = 14
 confText.TextColor3 = Color3.fromRGB(220,220,220)
@@ -1099,36 +1099,63 @@ local function isTyping()
 end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
+-- ===== key input handler to trigger toggles/actions by keybinds =====
+local function updateStatusText()
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"),
+                (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"),
+                (state.keyBypass and "ON" or "OFF"))
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if isTyping() then return end
+
     if input.UserInputType == Enum.UserInputType.Keyboard then
         local kc = input.KeyCode
-        -- compare to keybinds
-        for action,bind in pairs(state.keybinds) do
+
+        -- RightShift toggles minimize/restore
+        if kc == Enum.KeyCode.RightShift then
+            if main.Visible then
+                minimizeUI()
+                pushLog("UI minimized (RightShift)")
+            else
+                minimizedBtn.Visible = false
+                main.Visible = true
+                main.Position = savedMainPosition or UDim2.new(0.5, -350, 0.5, -210)
+                main.Size = savedMainSize or UDim2.new(0, 700, 0, 420)
+                pushLog("UI restored (RightShift)")
+            end
+            updateStatusText()
+            return
+        end
+
+        -- custom keybinds
+        for action, bind in pairs(state.keybinds) do
             if bind == kc then
                 if action == "KillAura" then
                     state.killAura = not state.killAura
                     kaBtn.Text = state.killAura and "ON" or "OFF"
                     kaBtn.BackgroundColor3 = state.killAura and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    kaCallback(state.killAura) -- Call callback directly
+                    kaCallback(state.killAura)
                     pushLog("Keybind toggled KillAura: "..tostring(state.killAura))
                 elseif action == "SilentAim" then
                     state.silentAim = not state.silentAim
                     saBtn.Text = state.silentAim and "ON" or "OFF"
                     saBtn.BackgroundColor3 = state.silentAim and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    saCallback(state.silentAim) -- Call callback directly
+                    saCallback(state.silentAim)
                     pushLog("Keybind toggled SilentAim: "..tostring(state.silentAim))
                 elseif action == "ESP" then
                     state.esp = not state.esp
                     espBtn.Text = state.esp and "ON" or "OFF"
                     espBtn.BackgroundColor3 = state.esp and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    espCallback(state.esp) -- Call callback directly
+                    espCallback(state.esp)
                     pushLog("Keybind toggled ESP: "..tostring(state.esp))
                 elseif action == "Keycard" then
                     state.keyBypass = not state.keyBypass
                     keyBtn.Text = state.keyBypass and "ON" or "OFF"
                     keyBtn.BackgroundColor3 = state.keyBypass and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    keyCallback(state.keyBypass) -- Call callback directly
+                    keyCallback(state.keyBypass)
                     pushLog("Keybind toggled Keycard Bypass: "..tostring(state.keyBypass))
                 elseif action == "Grab" then
                     pushLog("Keybind: Grab pressed")
@@ -1138,16 +1165,19 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                     if main.Visible then
                         minimizeUI()
                     else
-                        minimizedBtn:MouseButton1Click()
+                        minimizedBtn.Visible = false
+                        main.Visible = true
+                        main.Position = savedMainPosition or UDim2.new(0.5, -350, 0.5, -210)
+                        main.Size = savedMainSize or UDim2.new(0, 700, 0, 420)
                     end
                 end
-                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+                updateStatusText()
                 break
             end
         end
     end
 end)
+
 
 -- ===== dragging logic for main (on header) and minimizedBtn (clamped to viewport) =====
 local function makeDraggable(dragHandle, target)
