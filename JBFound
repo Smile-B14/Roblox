@@ -1,0 +1,538 @@
+for i, v in pairs(game:GetService("CoreGui"):GetChildren()) do
+    if v.Name == "ui" then
+        v:Destroy()
+    end
+end
+local UI = loadstring(game:HttpGetAsync("https://pastebin.com/raw/0589YkmB"))()
+ 
+local window = UI:Window("Premium")
+local nif = UI:Notification("Welcome to", game:GetService("Players").LocalPlayer.Name, "Okay!")
+local aim = window:Tab("Aimbot")
+local esp = window:Tab("Esp")
+local teleportm = window:Tab("Teleport")
+local robbers = window:Tab("Robbers")
+local player = window:Tab("LocalPlayer")
+local misc = window:Tab("Misc")
+ 
+_G.aim = true
+aim:Toggle("Aimbot",true,function(value)
+    _G.aim = value
+end)
+ 
+_G.Dis = 300
+aim:Slider("Distance",0,600,300,function(value)
+    _G.Dis = value
+end)
+ 
+_G.Esp = true
+esp:Toggle("Esp",true,function(value)
+    _G.Esp = value
+end)
+ 
+_G.dropesp = false
+esp:Toggle("Drop Esp",false,function(value)
+    _G.dropesp = value
+end)
+ 
+robbers:Button("Drop",function()
+    if workspace:FindFirstChild("Drop") then
+        teleport(game:GetService("Workspace").Drop.Root.Position)
+    end
+end)
+ 
+ 
+_G.speed = 24
+player:Slider("Speed",0,100,24,function(value)
+    _G.speed = value
+end)
+ 
+_G.inf = false
+player:Toggle("Inf Jump",false,function(value)
+    _G.inf = value
+end)
+ 
+ _G.Nerf = false
+player:Toggle("Nerf Equip",false,function(value)
+    _G.Nerf = value
+end)
+
+player:Toggle("Anti Ragdoll", false, function(value)
+local tagUtils = require(game:GetService("ReplicatedStorage").Tag.TagUtils)
+ 
+local oldIsPointInTag
+tagUtils.isPointInTag = function(point, tag)
+    if tag == "NoRagdoll" or tag == "NoFallDamage" then 
+        return value
+    end
+    
+    return oldIsPointInTag(point, tag)
+end
+end)
+ 
+misc:Toggle("Unlock Doors", false, function(value)
+    local plrUtils = game:GetService("ReplicatedStorage").Game.PlayerUtils
+local oldHasKey = require(plrUtils).hasKey
+require(plrUtils).hasKey = function()
+return value
+end
+end)
+ 
+local u13 = require(game:GetService("ReplicatedStorage").Game.GunShop.GunShopUI)
+misc:Button("Shop Open", function(value)
+    u13.open()
+end)
+ 
+misc:Button("No wait E", function()
+local UI = require(game:GetService("ReplicatedStorage").Module:WaitForChild("UI"));
+while wait() do
+for i,v in pairs (UI.CircleAction.Specs) do
+v.Duration = 0;
+v.Timed = true;
+end
+end
+end)
+ 
+misc:Button("Delete Doors & Lasers",function(value)
+            for i, v in workspace:GetDescendants() do
+if v.Name == "BarbedWire" or v.Name == "Door" and v:IsA("Part") or v:IsA("Part") and v:FindFirstChild("TouchInterest") and v.BrickColor == BrickColor.new("Dusty Rose") or v.Name == "Part" and v:FindFirstChild("TouchInterest") then
+v.CanTouch = false
+v.CanCollide = false
+v.Transparency = 1
+end
+if v.Name == "SlideDoor" or v.Name == "SwingDoor" or v.Name == "Doors" or v.Name == "BankDoor" then
+for i, f in v:GetDescendants() do
+if f:IsA("Part") or f:IsA("MeshPart") then
+f.CanCollide = false
+f.Transparency = 1
+end
+end
+end
+end
+end)
+ 
+getgenv().toggled = false
+ 
+misc:Toggle("Killaura", false, function(value)
+    getgenv().toggled = value
+end)
+ 
+spawn(function()
+ 
+if getgenv().killauraloaded then return end
+local old = require(game:GetService("ReplicatedStorage").Module.RayCast).RayIgnoreNonCollideWithIgnoreList
+local function getNearestEnemy()
+local nearestDistance, nearestEnemy = 1000, nil
+local myTeam = tostring(game:GetService("Players").LocalPlayer.Team)
+for i,v in pairs(game:GetService("Players"):GetPlayers()) do
+local theirTeam = tostring(v.Team)
+if ((myTeam == "Police" and theirTeam == "Criminal") or theirTeam == "Police") and theirTeam ~= myTeam and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
+if (v.Character.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < nearestDistance then
+nearestDistance, nearestEnemy = (v.Character.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude, v
+end
+end
+end
+return nearestEnemy
+end
+local function shoot()
+local currentGun = require(game:GetService("ReplicatedStorage").Game:WaitForChild("ItemSystem"):WaitForChild("ItemSystem")).GetLocalEquipped()
+if not currentGun then return end
+require(game:GetService("ReplicatedStorage").Game:WaitForChild("Item"):WaitForChild("Gun"))._attemptShoot(currentGun)
+end
+getgenv().killauraloaded = true
+while wait(0.5) do
+if getgenv().toggled == false then continue end
+if not game:GetService("Players").LocalPlayer.Character then continue end
+if not game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then continue end
+local nearestEnemy = getNearestEnemy()
+if nearestEnemy then
+require(game:GetService("ReplicatedStorage").Module.RayCast).RayIgnoreNonCollideWithIgnoreList = function(...)
+local arg = {old(...)}
+if (tostring(getfenv(2).script) == "BulletEmitter" or tostring(getfenv(2).script) == "Taser") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and (nearestEnemy.Character.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 600 and nearestEnemy.Character.Humanoid.Health > 0 then
+arg[1] = nearestEnemy.Character.HumanoidRootPart
+arg[2] = nearestEnemy.Character.HumanoidRootPart.Position
+end
+return unpack(arg)
+end
+if not game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol") then
+fireclickdetector(workspace.Givers:GetChildren()[17].ClickDetector)
+end
+if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol") then
+while game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol") and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and (nearestEnemy.Character.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 600 and nearestEnemy.Character.Humanoid.Health > 0 do
+game:GetService("Players").LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+wait()
+shoot()
+end
+end
+if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol") then
+game:GetService("Players").LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(false)
+end
+else
+require(game:GetService("ReplicatedStorage").Module.RayCast).RayIgnoreNonCollideWithIgnoreList = old
+end
+end
+end)
+_G.Killed = true
+misc:Toggle("Killed NPC",true,function(value)
+    _G.Killed = value
+end)
+ 
+_G.Hitbox = true
+misc:Toggle("Hitbox",true,function(value)
+    _G.Hitbox = value
+end)
+ 
+function Action(Object, Function) if Object ~= nil then Function(Object); end end
+ 
+local players = game:GetService("Players")
+function teleport(pos)
+    local is = false
+    if game:GetService("Players").LocalPlayer.Character.HumanoidRootPart:FindFirstChild("Vel") then
+        game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Vel:Destroy()
+    end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {players.LocalPlayer.Character,game:GetService("Workspace").OilRig.ActiveRobberyRegion,game:GetService("Workspace").OilRig.GunRegions.Region}
+    local raycast = workspace:Raycast(players.LocalPlayer.Character.HumanoidRootPart.Position+Vector3.new(0,5,0),Vector3.new(0,1000,0),params)
+    if not raycast or raycast.Instance == "Region" then
+        if players.LocalPlayer.Character.Humanoid.Sit == false and (pos - players.LocalPlayer.Character.HumanoidRootPart.Position).magnitude > 500 then 
+            is = true
+            for i, v in game:GetService("Workspace").Vehicles:GetChildren() do
+                if v.Name == "Camaro" and (v:FindFirstChild("Engine").Position - players.LocalPlayer.Character.HumanoidRootPart.Position).magnitude < 500 then
+                    players.LocalPlayer.Character.HumanoidRootPart.CFrame += Vector3.new(0,3000,0)
+                    vel = Instance.new("BodyVelocity",game:GetService("Players").LocalPlayer.Character.HumanoidRootPart)
+                    vel.MaxForce = Vector3.new(math.huge,math.huge,math.huge)
+                    vel.Name = "Vel"
+                    vel.P = 0
+                    local d = (players.LocalPlayer.Character.HumanoidRootPart.Position - v:FindFirstChild("Engine").Position+Vector3.new(0,3000,0)).magnitude
+                    cood = v:FindFirstChild("Engine").Position+Vector3.new(0,3000,0)
+                    repeat
+                        wait()
+                        vel.Velocity = CFrame.lookAt(players.LocalPlayer.Character.HumanoidRootPart.Position,cood).LookVector * d / d * 50
+                    until (players.LocalPlayer.Character.HumanoidRootPart.Position - cood).magnitude < 5
+                    vel.Velocity = Vector3.new(0,0,0)
+                    wait(.5)
+                    players.LocalPlayer.Character.Humanoid.Sit = true
+                    vel:Destroy()
+                    players.LocalPlayer.Character.HumanoidRootPart.CFrame -= Vector3.new(0,3000,0)
+                    break
+                end
+            end
+        end
+        if is then
+            task.wait(.5)
+            players.LocalPlayer.Character.Humanoid.Sit = false
+            local VirtualInputManager = game:GetService("VirtualInputManager")
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E.Value, false, game)
+            task.wait(1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E.Value, false, game)
+        end
+        if players.LocalPlayer.Character.Humanoid.Sit == false and (pos - players.LocalPlayer.Character.HumanoidRootPart.Position).magnitude > 500 then return end
+        players.LocalPlayer.Character.HumanoidRootPart.CFrame += Vector3.new(0,3000,0)
+        vel = Instance.new("BodyVelocity",game:GetService("Players").LocalPlayer.Character.HumanoidRootPart)
+        vel.MaxForce = Vector3.new(math.huge,math.huge,math.huge)
+        vel.Name = "Vel"
+        vel.P = 0
+        local d = (players.LocalPlayer.Character.HumanoidRootPart.Position - pos+Vector3.new(0,3000,0)).magnitude
+        cood = pos+Vector3.new(0,3000,0)
+        repeat
+            wait()
+            if players.LocalPlayer.Character.Humanoid.Sit then
+                vel.Velocity = CFrame.lookAt(players.LocalPlayer.Character.HumanoidRootPart.Position,cood).LookVector * d / d * 400
+            else
+                vel.Velocity = CFrame.lookAt(players.LocalPlayer.Character.HumanoidRootPart.Position,cood).LookVector * d / d * 50
+            end
+        until (players.LocalPlayer.Character.HumanoidRootPart.Position - cood).magnitude < 5
+        vel.Velocity = Vector3.new(0,0,0)
+        wait(.5)
+        players.LocalPlayer.Character.Humanoid.Sit = true
+        vel:Destroy()
+        players.LocalPlayer.Character.HumanoidRootPart.CFrame -= Vector3.new(0,3000,0)
+    end
+end
+ 
+teleportm:Button("Plane",function()
+    teleport(Vector3.new(-1292.0791015625, 41.271751403808594, 2852.651611328125))
+end)
+ 
+teleportm:Button("Power Plant",function()
+    teleport(Vector3.new(54.766014099121094, 20.965660095214844, 2326.134765625))
+end)
+ 
+teleportm:Button("Jeweler",function()
+    teleport(Vector3.new(149.5464630126953, 17.965538024902344, 1368.3978271484375))
+end)
+ 
+teleportm:Button("Criminal Base",function()
+    teleport(Vector3.new(-295.552978515625, 17.965667724609375, 1602.01806640625))
+end)
+ 
+teleportm:Button("City Bank",function()
+    teleport(Vector3.new(-8.082767486572266, 17.965639114379883, 857.6124267578125))
+end)
+ 
+teleportm:Button("Museum",function()
+    teleport(Vector3.new(1123.495849609375, 139.15896606445312, 1293.735107421875))
+end)
+ 
+teleportm:Button("1M Shop",function()
+    teleport(Vector3.new(551.2893676757812, 63.955833435058594, -1647.752197265625))
+end)
+ 
+teleportm:Button("Volcano",function()
+    teleport(Vector3.new(2212.631591796875, 328.26995849609375, -2503.282958984375))
+end)
+ 
+teleportm:Button("Casino",function()
+    teleport(Vector3.new(-69.00199890136719, 154.98049926757812, -4707.578125))
+end)
+ 
+teleportm:Button("Create Bank",function()
+    teleport(Vector3.new(-749.2611694335938, 19.252309799194336, -5957.173828125))
+end)
+ 
+teleportm:Button("OilRig",function()
+    teleport(Vector3.new(-2838.67578125, 134.25027465820312, -3973.582275390625))
+end)
+ 
+local Camera = workspace.CurrentCamera
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local Holding = false
+ 
+_G.TeamCheck = true
+_G.AimPart = "HumanoidRootPart"
+_G.Sensitivity = 0
+local parts = {}
+local function GetClosestPlayer()
+    local Target = nil
+ 
+    for _, v in next, Players:GetPlayers() do
+        if v.Name ~= LocalPlayer.Name then
+            if _G.TeamCheck == true then
+                if v.Team ~= LocalPlayer.Team then
+                    if v.Character ~= nil then
+                        if v.Character:FindFirstChild("HumanoidRootPart") ~= nil then
+                            if v.Character:FindFirstChild("Humanoid") ~= nil and v.Character:FindFirstChild("Humanoid").WalkSpeed > 0 and v.Character:FindFirstChild("Humanoid").Health ~= 0 and LocalPlayer.Character.Humanoid.Sit == false then
+                                local ScreenPoint = Camera:WorldToScreenPoint(v.Character:WaitForChild("HumanoidRootPart", math.huge).Position)
+                                local VectorDistance = (Vector2.new(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2.new(ScreenPoint.X, ScreenPoint.Y)).Magnitude
+ 
+                                if VectorDistance < 100 and (v.Character:FindFirstChild("HumanoidRootPart").Position - LocalPlayer.Character.HumanoidRootPart.Position).magnitude <= _G.Dis then
+                                    local raparam = RaycastParams.new()
+                                    raparam.FilterType = Enum.RaycastFilterType.Exclude
+                                    local inv = {}
+                                    for i, v in parts do
+                                        table.insert(inv,v["Part"])
+                                    end
+                                    raparam.FilterDescendantsInstances = {inv,game:GetService("Players").LocalPlayer.Character}
+                                    local raycast = workspace:Raycast(game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position,game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart").CFrame.LookVector * 100,raparam)
+                                    if raycast and raycast.Instance then
+                                        if not raycast.Instance:FindFirstChild("T") then
+                                            local b = raycast.Instance.Transparency
+                                            parts[raycast.Instance] = {["Transparency"] = b,["CanCollide"] = raycast.Instance.CanCollide,["Part"] = raycast.Instance}
+                                            local t = Instance.new("IntValue", raycast.Instance)
+                                            t.Name = "T"
+                                            raycast.Instance.CanCollide = false
+                                            raycast.Instance.Transparency = 1
+                                        end
+                                    end
+                                    TweenService:Create(Camera, TweenInfo.new(_G.Sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = CFrame.new(Camera.CFrame.Position, v.Character[_G.AimPart].Position)}):Play()
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+ 
+    return Target
+end
+ 
+local value = 0
+UserInputService.InputBegan:Connect(function(key,event)
+    if event then return end
+    if key.UserInputType == Enum.UserInputType.MouseButton2 then
+        Holding = true
+    end
+    if key.KeyCode == Enum.KeyCode.W then
+        value = 1
+    end
+    if key.KeyCode == Enum.KeyCode.S then
+        value = -1
+    end
+    if key.UserInputType == Enum.UserInputType.Keyboard and key.KeyCode == Enum.KeyCode.Space and _G.inf then
+        Action(game:GetService'Players'.LocalPlayer.Character.Humanoid, function(self)
+            if self:GetState() == Enum.HumanoidStateType.Jumping or self:GetState() == Enum.HumanoidStateType.Freefall then
+                Action(self.Parent.HumanoidRootPart, function(self)
+                    self.Velocity = Vector3.new(0, 50, 0);
+                end)
+            end
+        end)
+    end
+end)
+ 
+UserInputService.InputEnded:Connect(function(key,event)
+    if event then return end
+    if key.UserInputType == Enum.UserInputType.MouseButton2 then
+        Holding = false
+    end
+    if key.KeyCode == Enum.KeyCode.W then
+        value = 0
+    end
+    if key.KeyCode == Enum.KeyCode.S then
+        value = 0
+    end
+end)
+ local m = require(game:GetService("ReplicatedStorage").Resource.Settings)
+RunService.RenderStepped:Connect(function()
+    if _G.Nerf then
+    if game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
+        game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider.Revolver.Top.Icon.Image = m.Images["NerfRevolver"]
+        end
+        if game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
+        game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider.Pistol.Top.Icon.Image = m.Images["NerfPistol"]
+        end
+    if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol") then
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol"):SetAttribute("HotbarImageSrc",m.Images["NerfPistol"])
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Pistol").Name = "NerfPistol"
+    end
+    if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Revolver") then
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Revolver"):SetAttribute("HotbarImageSrc",m.Images["NerfRevolver"])
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("Revolver").Name = "NerfRevolver"
+    end
+    else
+    if game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
+        game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider.Revolver.Top.Icon.Image = m.Images["Revolver"]
+        end
+        if game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
+        game:GetService("Players").LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider.Pistol.Top.Icon.Image = m.Images["Pistol"]
+        end
+        if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfPistol") then
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfPistol"):SetAttribute("HotbarImageSrc",m.Images["Pistol"])
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfPistol").Name = "Pistol"
+    end
+    if game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfRevolver") then
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfRevolver"):SetAttribute("HotbarImageSrc",m.Images["Revolver"])
+        game:GetService("Players").LocalPlayer.Folder:FindFirstChild("NerfRevolver").Name = "Revolver"
+    end
+    end
+    if Holding == true and _G.aim then
+        pcall(function()
+            GetClosestPlayer()
+        end)    
+    elseif Holding == false and _G.aim then
+        for i, v in parts do
+            v["Part"].CanCollide = v["CanCollide"]
+            v["Part"].Transparency = v["Transparency"]
+            if v["Part"]:FindFirstChild("T") then
+                v["Part"].T:Destroy()
+            end
+        end
+        parts = {}
+    end
+    pcall(function()
+        game:GetService("Players").LocalPlayer.Character.Humanoid.WalkSpeed = _G.speed
+    end)
+end)
+ 
+while wait(1) do
+    pcall(function()
+        local tab = {}
+        for i,f in game:GetService("Workspace").MostWanted:GetChildren()[2].Background.MostWanted.Board:GetChildren() do
+            for i, v in game:GetService("Players"):GetChildren() do
+                if f:IsA("Frame") and v.DisplayName == f.Stats.PlayerName.Text then
+                    if v.Character:FindFirstChild("BillboardGui") then
+                        v.Character.BillboardGui.Bounty.Text = f.Stats.Bounty.Text
+                        table.insert(tab,v.Name)
+                    end
+                end
+            end
+        end
+ 
+        for i, v in game:GetService("Players"):GetChildren() do
+            local is = false
+            for i, f in tab do
+                if v.Name == f then
+                    is = true
+                    break
+                end
+            end
+            if is == false then
+                if v.Character:FindFirstChild("BillboardGui") then
+                    v.Character.BillboardGui.Bounty.Text = ""
+                end
+            end
+        end
+    end)
+    for i, v in workspace:GetChildren() do
+        if _G.dropesp then
+            if v.Name == "Drop" then
+                if not v:FindFirstChild("BillboardGui") then
+                    local bill = Instance.new("BillboardGui", v)
+                    bill.Adornee = v
+                    bill.Size = UDim2.new(0, 200,0, 50)
+                    bill.StudsOffset = Vector3.new(0,4,0)
+                    bill.AlwaysOnTop = true
+ 
+                    local textlabel = Instance.new("TextLabel", bill)
+                    textlabel.Size = UDim2.new(1,0,1,0)
+                    textlabel.Position = UDim2.new(0,0,0,0)
+                    textlabel.Name = "TextLabelTitle"
+                    textlabel.Text = v.Name
+                    textlabel.BackgroundTransparency = 1
+                    textlabel.TextSize = 17
+                    textlabel.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+                    textlabel.TextColor3 = Color3.new(0.619608, 0.619608, 0.619608)
+                    local stroke = Instance.new("UIStroke", textlabel)
+                end
+            end
+        elseif v.Name == "Drop" then
+            if v:FindFirstChild("BillboardGui") then
+                v:FindFirstChild("BillboardGui"):Destroy()
+            end
+        end
+    end
+    if _G.Killed then
+        pcall(function()
+            if workspace:FindFirstChild("Drop") and workspace:FindFirstChild("Drop"):FindFirstChild("NPCs") then
+                for i, f in game:GetService("Workspace").Drop.NPCs:GetChildren() do
+                    if (f.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).magnitude <= 300 then
+                        f.Humanoid.Health = 0
+                    end
+                end
+            end
+            if workspace.OilRig:GetChildren()[1] then
+                for i, f in workspace.OilRig.GuardsFolder:GetChildren() do
+                    if (f.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).magnitude <= 300 then
+                        f.Humanoid.Health = 0
+                    end
+                end
+            end
+            if workspace.MansionRobbery.GuardsFolder:GetChildren()[1] then
+                for i, f in workspace.MansionRobbery.GuardsFolder:GetChildren() do
+                    if (f.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).magnitude <= 300 then
+                        f.Humanoid.Health = 0
+                    end
+                end
+            end
+        end)
+    end
+    for i, v in game:GetService("Players"):GetChildren() do
+        if v.Character and v.Name ~= game:GetService("Players").LocalPlayer.Name and v.Team ~= game:GetService("Players").LocalPlayer.Team and _G.Hitbox then
+            if v.Character:FindFirstChild("HumanoidRootPart") then
+                v.Character:FindFirstChild("HumanoidRootPart").Transparency = .8
+                v.Character:FindFirstChild("HumanoidRootPart").CanCollide = false
+                v.Character:FindFirstChild("HumanoidRootPart").Size = Vector3.new(7,7,7)
+            end
+        elseif _G.Hitbox == false or v.Team == game:GetService("Players").LocalPlayer.Team then
+            if v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
+                v.Character:FindFirstChild("HumanoidRootPart").Transparency = 1
+                v.Character:FindFirstChild("HumanoidRootPart").CanCollide = true
+                v.Character:FindFirstChild("HumanoidRootPart").Size = Vector3.new(1.8, 2.1, 0.95)
+            end
+        end
+    end
+end
