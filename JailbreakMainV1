@@ -1418,29 +1418,42 @@ do
     end)
 end
 
+-- Open Gun Shop UI (via module, works correctly)
 do
     local row = newRow(miscContent, 36)
     local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Open Gun Shop UI"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
+    lbl.Size = UDim2.new(0.62,0,1,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "Open Gun Shop UI"
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 14
+    lbl.TextColor3 = Color3.fromRGB(230,230,230)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
     local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28); btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "Open"; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60); btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn); btn.ZIndex = 10; btn.Active = true
-    makeRobustButton(btn, "Open Gun Shop", function()
-        pcall(function()
-            local gui = LocalPlayer.PlayerGui:FindFirstChild("GunShopGui")
-            if gui and gui.Container and gui.Container.Container and gui.Container.Container.Main then
-                gui.Container.Container.Main.Visible = true
-                pushLog("Attempted to open GunShopGui")
-            else
-                pushLog("GunShopGui not found or structure changed")
-            end
+    btn.Size = UDim2.new(0,84,0,28)
+    btn.Position = UDim2.new(1,-92,0,4)
+    btn.Text = "Open"
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.BorderSizePixel = 0
+    btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    addCorner(btn)
+
+    makeRobustButton(btn, "GunShopBtn", function()
+        local ok, uiModule = pcall(function()
+            return require(ReplicatedStorage.Game.GunShop.GunShopUI)
         end)
+        if ok and uiModule and uiModule.open then
+            pcall(function() uiModule.open() end)
+            pushLog("GunShop UI open attempted")
+        else
+            pushLog("GunShop UI not available")
+        end
     end)
 end
+
 
 -- === RESTORED: No wait E (reduce CircleAction durations) ===
 do
@@ -1633,70 +1646,120 @@ makeRobustButton(minimizedBtn, "Restore Minimized", function()
 end)
 
 -- Close button: create a confirmation modal that warns "you will not be able to open menu again"
+-- Close button with readable confirmation modal (overlay + white text + robust cleanup)
+-- Close button with confirmation modal (guaranteed visible buttons)
 makeRobustButton(btnClose, "Close Btn", function()
-    -- create modal
+    local overlay = Instance.new("Frame")
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.Position = UDim2.new(0, 0, 0, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 0.45
+    overlay.BorderSizePixel = 0
+    overlay.ZIndex = 1000
+    overlay.Parent = screenGui
+
     local modal = Instance.new("Frame")
-    modal.Size = UDim2.new(0, 420, 0, 160)
-    modal.Position = UDim2.new(0.5, -210, 0.5, -80)
-    modal.BackgroundColor3 = Color3.fromRGB(25,25,25)
+    modal.Size = UDim2.new(0, 520, 0, 180)
+    modal.Position = UDim2.new(0.5, -260, 0.5, -90)
+    modal.BackgroundColor3 = Color3.fromRGB(20,20,20)
     modal.BorderSizePixel = 0
-    modal.ZIndex = 1000
+    modal.ZIndex = 1001
     addCorner(modal)
     modal.Parent = screenGui
 
+    local titleText = Instance.new("TextLabel", modal)
+    titleText.Size = UDim2.new(1, -24, 0, 34)
+    titleText.Position = UDim2.new(0, 12, 0, 12)
+    titleText.BackgroundTransparency = 1
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 16
+    titleText.TextColor3 = Color3.fromRGB(255,255,255)
+    titleText.TextStrokeTransparency = 0.5
+    titleText.Text = "Confirm Close Menu"
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.ZIndex = 1005
+
     local txt = Instance.new("TextLabel", modal)
     txt.Size = UDim2.new(1, -24, 0, 88)
-    txt.Position = UDim2.new(0, 12, 0, 12)
+    txt.Position = UDim2.new(0, 12, 0, 44)
     txt.BackgroundTransparency = 1
-    txt.Font = Enum.Font.GothamBold
-    txt.TextSize = 16
-    txt.TextColor3 = Color3.fromRGB(230,230,230)
+    txt.Font = Enum.Font.Gotham
+    txt.TextSize = 15
+    txt.TextColor3 = Color3.fromRGB(255,255,255)
+    txt.TextStrokeTransparency = 0.5
     txt.TextWrapped = true
     txt.Text = "Are you sure you want to close the menu?\n\nIf you confirm, the menu will be permanently closed for this session and you will NOT be able to re-open it without restarting the script."
     txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.ZIndex = 1005
 
-    local btnYes = Instance.new("TextButton", modal)
-    btnYes.Size = UDim2.new(0, 120, 0, 36)
-    btnYes.Position = UDim2.new(0.5, -130, 1, -48)
-    btnYes.Text = "Yes, Close"
-    btnYes.Font = Enum.Font.GothamBold
-    btnYes.TextSize = 14
+    local btnContainer = Instance.new("Frame", modal)
+    btnContainer.Size = UDim2.new(1, -24, 0, 44)
+    btnContainer.Position = UDim2.new(0, 12, 1, -56)
+    btnContainer.BackgroundTransparency = 1
+    btnContainer.ZIndex = 1005
+
+    -- Yes button
+    local btnYes = Instance.new("TextButton", btnContainer)
+    btnYes.Size = UDim2.new(0, 140, 1, 0)
+    btnYes.Position = UDim2.new(0.5, -160, 0, 0)
     btnYes.BackgroundColor3 = Color3.fromRGB(180,40,40)
-    btnYes.TextColor3 = Color3.fromRGB(255,255,255)
+    btnYes.BorderSizePixel = 0
+    btnYes.ZIndex = 1005
+    btnYes.TextTransparency = 1 -- hide default text
     addCorner(btnYes)
 
-    local btnNo = Instance.new("TextButton", modal)
-    btnNo.Size = UDim2.new(0, 120, 0, 36)
-    btnNo.Position = UDim2.new(0.5, 10, 1, -48)
-    btnNo.Text = "Cancel"
-    btnNo.Font = Enum.Font.GothamBold
-    btnNo.TextSize = 14
+    local lblYes = Instance.new("TextLabel", btnYes)
+    lblYes.Size = UDim2.new(1,0,1,0)
+    lblYes.BackgroundTransparency = 1
+    lblYes.Font = Enum.Font.GothamBold
+    lblYes.TextSize = 14
+    lblYes.Text = "Yes, Close"
+    lblYes.TextColor3 = Color3.fromRGB(255,255,255)
+    lblYes.TextStrokeTransparency = 0.5
+    lblYes.ZIndex = 1006
+
+    -- No button
+    local btnNo = Instance.new("TextButton", btnContainer)
+    btnNo.Size = UDim2.new(0, 140, 1, 0)
+    btnNo.Position = UDim2.new(0.5, 20, 0, 0)
     btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
-    btnNo.TextColor3 = Color3.fromRGB(255,255,255)
+    btnNo.BorderSizePixel = 0
+    btnNo.ZIndex = 1005
+    btnNo.TextTransparency = 1
     addCorner(btnNo)
 
-    -- handlers
-    local function cleanupModal()
+    local lblNo = Instance.new("TextLabel", btnNo)
+    lblNo.Size = UDim2.new(1,0,1,0)
+    lblNo.BackgroundTransparency = 1
+    lblNo.Font = Enum.Font.GothamBold
+    lblNo.TextSize = 14
+    lblNo.Text = "Cancel"
+    lblNo.TextColor3 = Color3.fromRGB(255,255,255)
+    lblNo.TextStrokeTransparency = 0.5
+    lblNo.ZIndex = 1006
+
+    local function cleanup()
+        pcall(function() overlay:Destroy() end)
         pcall(function() modal:Destroy() end)
     end
 
     makeRobustButton(btnNo, "Close Cancel", function()
-        cleanupModal()
+        cleanup()
         pushLog("UI close cancelled")
     end)
 
     makeRobustButton(btnYes, "Close Confirm", function()
-        -- mark closed (best-effort flag) and destroy UI
-        pcall(function() pushLog("UI closed by user (confirmed)") end)
-        pcall(function() _G.SmileB = nil end)
-        pcall(function() _G.SmileB_Closed = true end)
+        pushLog("UI closed by user (confirmed)")
+        _G.SmileB = nil
+        _G.SmileB_Closed = true
         if minimizedBtn then pcall(function() minimizedBtn:Destroy() end) end
         if screenGui and screenGui.Parent then
             pcall(function() screenGui:Destroy() end)
         end
-        -- no modal cleanup needed since screenGui destroyed
+        cleanup()
     end)
 end)
+
 
 -- keybind handler
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
