@@ -41,14 +41,7 @@ local state = {
     currentTarget = nil,
     autoDrop = false,
     autoDropLoopId = 0,
-    keybinds = {
-        KillAura = Enum.KeyCode.K,
-        SilentAim = Enum.KeyCode.L,
-        ESP = Enum.KeyCode.E,
-        Keycard = Enum.KeyCode.B,
-        Grab = Enum.KeyCode.G,
-        AutoDrop = Enum.KeyCode.Backspace
-    }
+    keybinds = {}  -- No default keybinds
 }
 local logs = {}
 local lastHealth = nil
@@ -478,41 +471,26 @@ local autoDropRow, autoDropBtn, autoDropCallback = createToggle(left, "Auto Drop
             local myLoop = state.autoDropLoopId
             pushLog("AutoDrop: started")
             while state.autoDrop and state.autoDropLoopId == myLoop do
-                -- scan folder for guns
-                local folder = LocalPlayer:FindFirstChild("Folder")
-                if folder then
-                    for _,child in ipairs(folder:GetChildren()) do
-                        local name = tostring(child.Name):lower()
-                        if string.find(name, "pistol") or string.find(name, "shotgun") or string.find(name, "rifle") or string.find(name, "gun") then
-                            pcall(function()
-                                local success = false
-                                -- try common remote names
-                                if child:FindFirstChild("InventoryDropRemote") and child.InventoryDropRemote.FireServer then
-                                    pcall(function() child.InventoryDropRemote:FireServer() success = true end)
-                                end
-                                if not success and LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("InventoryDrop") and type(LocalPlayer.Folder.InventoryDrop.FireServer) == "function" then
-                                    pcall(function() LocalPlayer.Folder.InventoryDrop:FireServer(child) success = true end)
-                                end
-                                -- fallback: try to move to workspace near HRP (may not persist server-side)
-                                if not success then
-                                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                                    pcall(function()
-                                        if child:IsA("Model") or child:IsA("Tool") then
-                                            child.Parent = Workspace
-                                            if hrp and child:FindFirstChildWhichIsA("BasePart") then
-                                                local bp = child:FindFirstChildWhichIsA("BasePart")
-                                                bp.CFrame = hrp.CFrame * CFrame.new(0, -2, 2)
-                                            end
-                                            success = true
-                                        end
-                                    end)
-                                end
-                                if success then
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChild("Humanoid")
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hum and hrp then
+                    local folder = LocalPlayer:FindFirstChild("Folder")
+                    if folder then
+                        for _, child in ipairs(folder:GetChildren()) do
+                            local name = tostring(child.Name):lower()
+                            if string.find(name, "pistol") or string.find(name, "shotgun") or string.find(name, "rifle") or string.find(name, "gun") then
+                                pcall(function()
+                                    hum:EquipTool(child)
+                                    task.wait(0.1)
+                                    child.Parent = Workspace
+                                    local bp = child:FindFirstChildWhichIsA("BasePart")
+                                    if bp then
+                                        bp.CFrame = hrp.CFrame * CFrame.new(0, 0, -3)
+                                    end
                                     pushLog("AutoDrop: dropped " .. tostring(child.Name))
-                                else
-                                    pushLog("AutoDrop: failed to drop " .. tostring(child.Name))
-                                end
-                            end)
+                                end)
+                            end
                         end
                     end
                 end
@@ -655,7 +633,7 @@ local function tryClickGiversOnce()
         if not g or not g.Parent then continue end
         local cd = g:FindFirstChildWhichIsA("ClickDetector")
         if cd then
-            pcall(function() fireclickdetector(cd, 0) end) -- Added distance 0 for reliability
+            pcall(function() fireclickdetector(cd) end)
             task.wait(0.04)
             if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then return true end
         end
@@ -673,11 +651,12 @@ local function tryPickupDroppedOnce()
             local name = tostring(obj.Name):lower()
             if string.find(name, "pistol") or string.find(name, "gun") or string.find(name, "rifle") or string.find(name, "shotgun") or string.find(name, "ammo") or string.find(name, "cash") or string.find(name, "money") or string.find(name, "bag") or string.find(name, "drop") then
                 pcall(function()
-                    obj.CFrame = hrp.CFrame -- Teleport to player for better pickup
-                    firetouchinterest(obj, hrp, 0)
-                    task.wait(0.03)
-                    firetouchinterest(obj, hrp, 1)
-                    task.wait(0.05)
+                    for i = 1, 5 do  -- Repeat touch for reliability
+                        firetouchinterest(obj, hrp, 0)
+                        task.wait(0.03)
+                        firetouchinterest(obj, hrp, 1)
+                        task.wait(0.05)
+                    end
                 end)
                 found = true
                 if LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() > 0 then
@@ -1024,7 +1003,7 @@ btnMin.MouseButton1Click:Connect(function()
     savedMainSize = main.Size
     main.Visible = false
     minimizedBtn.Position = UDim2.new(0, math.clamp(main.AbsolutePosition.X, 4, workspace.CurrentCamera.ViewportSize.X - minimizedBtn.AbsoluteSize.X - 4),
-                                       0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y + 100)) -- Allow off bottom
+                                       0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y - minimizedBtn.AbsoluteSize.Y - 4))
     minimizedBtn.Visible = true
 end)
 
@@ -1036,7 +1015,7 @@ minimizedBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ===== keybinds UI (tab content) =====
-local function makeKeybindRow(parent, actionName, defaultKey)
+local function makeKeybindRow(parent, actionName)
     local row = newRow(parent, 36)
     local lbl = Instance.new("TextLabel", row)
     lbl.Size = UDim2.new(0.5,0,1,0)
@@ -1051,7 +1030,7 @@ local function makeKeybindRow(parent, actionName, defaultKey)
     keyLabel.Size = UDim2.new(0,120,0,28)
     keyLabel.Position = UDim2.new(0.5, 8, 0, 4)
     keyLabel.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    keyLabel.Text = tostring(defaultKey):gsub("Enum.KeyCode.", "") -- Remove Enum.KeyCode. for defaults
+    keyLabel.Text = state.keybinds[actionName] and tostring(state.keybinds[actionName]):gsub("Enum.KeyCode.", "") or "Unset"
     keyLabel.Font = Enum.Font.Gotham
     keyLabel.TextSize = 14
     keyLabel.TextColor3 = Color3.fromRGB(230,230,230)
@@ -1105,12 +1084,12 @@ kbTitle.Font = Enum.Font.GothamBold
 kbTitle.TextSize = 16
 kbTitle.TextColor3 = Color3.fromRGB(220,220,220)
 
-local _r1,_k1 = makeKeybindRow(contentKeybinds, "KillAura", state.keybinds.KillAura)
-local _r2,_k2 = makeKeybindRow(contentKeybinds, "SilentAim", state.keybinds.SilentAim)
-local _r3,_k3 = makeKeybindRow(contentKeybinds, "ESP", state.keybinds.ESP)
-local _r4,_k4 = makeKeybindRow(contentKeybinds, "Keycard", state.keybinds.Keycard)
-local _r5,_k5 = makeKeybindRow(contentKeybinds, "Grab", state.keybinds.Grab)
-local _r6,_k6 = makeKeybindRow(contentKeybinds, "AutoDrop", state.keybinds.AutoDrop)
+local _r1,_k1 = makeKeybindRow(contentKeybinds, "KillAura")
+local _r2,_k2 = makeKeybindRow(contentKeybinds, "SilentAim")
+local _r3,_k3 = makeKeybindRow(contentKeybinds, "ESP")
+local _r4,_k4 = makeKeybindRow(contentKeybinds, "Keycard")
+local _r5,_k5 = makeKeybindRow(contentKeybinds, "Grab")
+local _r6,_k6 = makeKeybindRow(contentKeybinds, "AutoDrop")
 
 -- credits tab
 local creditsTitle = Instance.new("TextLabel", contentCredits)
@@ -1202,8 +1181,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- ===== dragging logic for main and minimizedBtn (clamped to viewport, allow bottom off) =====
-local function makeDraggable(guiObject)
+-- ===== dragging logic for main (on header) and minimizedBtn (clamped to viewport) =====
+local function makeDraggable(dragHandle, target)
     local dragging = false
     local dragStart = Vector2.new()
     local startPos = UDim2.new()
@@ -1212,41 +1191,38 @@ local function makeDraggable(guiObject)
     local function clampToViewport(x, y, sizeX, sizeY)
         local vw = cam and cam.ViewportSize or Vector2.new(1920,1080)
         local nx = math.clamp(x, 4, vw.X - sizeX - 4)
-        local ny = math.clamp(y, 4, vw.Y + 100) -- Allow off bottom
+        local ny = math.clamp(y, 4, vw.Y - sizeY - 4)
         return nx, ny
     end
 
-    local connB, connC, connE
-
-    guiObject.InputBegan:Connect(function(input)
+    dragHandle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
-            startPos = guiObject.Position
-            connC = UserInputService.InputChanged:Connect(function(move)
+            startPos = target.Position
+            local conn = UserInputService.InputChanged:Connect(function(move)
                 if dragging and (move.UserInputType == Enum.UserInputType.MouseMovement or move.UserInputType == Enum.UserInputType.Touch) then
                     local delta = move.Position - dragStart
                     local newX = startPos.X.Offset + delta.X
                     local newY = startPos.Y.Offset + delta.Y
-                    local sizeX = guiObject.AbsoluteSize.X
-                    local sizeY = guiObject.AbsoluteSize.Y
+                    local sizeX = target.AbsoluteSize.X
+                    local sizeY = target.AbsoluteSize.Y
                     local nx, ny = clampToViewport(newX, newY, sizeX, sizeY)
-                    guiObject.Position = UDim2.new(0, nx, 0, ny)
+                    target.Position = UDim2.new(0, nx, 0, ny)
                 end
             end)
-            connE = input.Changed:Connect(function()
+            input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
-                    if connC then connC:Disconnect(); connC = nil end
-                    if connE then connE:Disconnect(); connE = nil end
+                    conn:Disconnect()
                 end
             end)
         end
     end)
 end
 
-makeDraggable(main)
-makeDraggable(minimizedBtn)
+makeDraggable(header, main)
+makeDraggable(minimizedBtn, minimizedBtn)
 
 -- ensure main spawns centered on most devices
 local cam = workspace.CurrentCamera
