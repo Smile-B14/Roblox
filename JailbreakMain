@@ -1,4 +1,4 @@
--- Smile B | Jailbreak — Full Centralized & Redesigned LocalScript (with draggable UI, autodrop, keybinds, credits)
+-- Smile B | Jailbreak — Full Centralized & Redesigned LocalScript (with draggable UI, autodrop removed, minimize keybind, credits)
 -- Paste into StarterPlayerScripts (LocalScript)
 
 local Players = game:GetService("Players")
@@ -39,8 +39,6 @@ local state = {
     tryingToGetPistol = false,
     killLoopId = 0,
     currentTarget = nil,
-    autoDrop = false,
-    autoDropLoopId = 0,
     keybinds = {}  -- No default keybinds
 }
 local logs = {}
@@ -83,7 +81,7 @@ alwaysVisibleStatus.Font = Enum.Font.Gotham
 alwaysVisibleStatus.TextSize = 13
 alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Center
 alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
-alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF  AutoDrop: OFF"
+alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF"
 alwaysVisibleStatus.Parent = screenGui
 addCorner(alwaysVisibleStatus)
 
@@ -392,8 +390,8 @@ local keyRow, keyBtn, keyCallback = createToggle(left, "Keycard Bypass", false, 
     else
         pushLog("Keycard bypass: PlayerUtils not found")
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
 end)
 
 -- KillAura toggle
@@ -405,8 +403,8 @@ local kaRow, kaBtn, kaCallback = createToggle(left, "KillAura (1000 Recommended)
     else
         state.killLoopId = state.killLoopId + 1
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
 end)
 
 -- SilentAim toggle
@@ -415,8 +413,8 @@ local saRow, saBtn, saCallback = createToggle(left, "Silent Aim", false, functio
     pushLog("Silent Aim toggled: "..tostring(v))
     updateSilentAimOverride(v)
     if v then ensurePistol() end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
 end)
 
 -- Range slider
@@ -436,8 +434,8 @@ local espRow, espBtn, espCallback = createToggle(left, "ESP", false, function(v)
     else
         for _,pl in pairs(Players:GetPlayers()) do spawn(function() pcall(function() setupESPForPlayer(pl) end) end) end
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
 end)
 
 -- Grab Items button
@@ -462,48 +460,16 @@ grabBtn.BackgroundColor3 = Color3.fromRGB(70,70,70)
 grabBtn.TextColor3 = Color3.fromRGB(255,255,255)
 addCorner(grabBtn)
 
--- Auto Drop toggle
-local autoDropRow, autoDropBtn, autoDropCallback = createToggle(left, "Auto Drop Guns", false, function(v)
-    state.autoDrop = v
-    if v then
-        state.autoDropLoopId = state.autoDropLoopId + 1
-        spawn(function()
-            local myLoop = state.autoDropLoopId
-            pushLog("AutoDrop: started")
-            while state.autoDrop and state.autoDropLoopId == myLoop do
-                local char = LocalPlayer.Character
-                local hum = char and char:FindFirstChild("Humanoid")
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if hum and hrp then
-                    local folder = LocalPlayer:FindFirstChild("Folder")
-                    if folder then
-                        for _, child in ipairs(folder:GetChildren()) do
-                            local name = tostring(child.Name):lower()
-                            if string.find(name, "pistol") or string.find(name, "shotgun") or string.find(name, "rifle") or string.find(name, "gun") then
-                                pcall(function()
-                                    hum:EquipTool(child)
-                                    task.wait(0.1)
-                                    child.Parent = Workspace
-                                    local bp = child:FindFirstChildWhichIsA("BasePart")
-                                    if bp then
-                                        bp.CFrame = hrp.CFrame * CFrame.new(0, 0, -3)
-                                    end
-                                    pushLog("AutoDrop: dropped " .. tostring(child.Name))
-                                end)
-                            end
-                        end
-                    end
-                end
-                task.wait(0.6)
-            end
-            pushLog("AutoDrop: stopped")
-        end)
-    else
-        state.autoDropLoopId = state.autoDropLoopId + 1
-    end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
-end)
+-- Minimize note
+local minimizeRow = newRow(left, 36)
+local minimizeLbl = Instance.new("TextLabel", minimizeRow)
+minimizeLbl.Size = UDim2.new(1,0,1,0)
+minimizeLbl.BackgroundTransparency = 1
+minimizeLbl.Text = "Press Right Shift to minimize (default)"
+minimizeLbl.Font = Enum.Font.Gotham
+minimizeLbl.TextSize = 14
+minimizeLbl.TextColor3 = Color3.fromRGB(230,230,230)
+minimizeLbl.TextXAlignment = Enum.TextXAlignment.Left
 
 -- ==== right panel logs already handled ====
 
@@ -687,8 +653,8 @@ local function ensurePistol()
         end
         if not state.hasPistol then pushLog("Pistol acquisition: failed after attempts") end
         state.tryingToGetPistol = false
-        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
     end)
 end
 
@@ -725,8 +691,8 @@ spawn(function()
             if child.Name == "Pistol" then
                 state.hasPistol = false
                 pushLog("Pistol lost from inventory")
-                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
                 if state.killAura or state.silentAim then ensurePistol() end
             end
         end)
@@ -735,8 +701,8 @@ spawn(function()
         if state.hasPistol and not (LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol")) then
             state.hasPistol = false
             pushLog("Pistol no longer detected")
-            alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+            alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
             if state.killAura or state.silentAim then ensurePistol() end
         end
         task.wait(PISTOL_CHECK_INTERVAL)
@@ -883,8 +849,8 @@ function runKillAura(character)
             end
         end
         pushLog("KillAura loop stopped (id "..tostring(myLoopId)..")")
-        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
     end)
 end
 
@@ -972,9 +938,7 @@ btnYes.MouseButton1Click:Connect(function()
     state.esp = false
     state.killAura = false
     state.silentAim = false
-    state.autoDrop = false
     state.killLoopId = state.killLoopId + 1
-    state.autoDropLoopId = state.autoDropLoopId + 1
     if RayCastModule and oldRayIgnore then
         pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
     end
@@ -998,14 +962,16 @@ addCorner(minimizedBtn)
 
 -- minimize / restore
 local savedMainPosition, savedMainSize = nil, nil
-btnMin.MouseButton1Click:Connect(function()
+local function minimizeUI()
     savedMainPosition = main.Position
     savedMainSize = main.Size
     main.Visible = false
     minimizedBtn.Position = UDim2.new(0, math.clamp(main.AbsolutePosition.X, 4, workspace.CurrentCamera.ViewportSize.X - minimizedBtn.AbsoluteSize.X - 4),
                                        0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y - minimizedBtn.AbsoluteSize.Y - 4))
     minimizedBtn.Visible = true
-end)
+end
+
+btnMin.MouseButton1Click:Connect(minimizeUI)
 
 minimizedBtn.MouseButton1Click:Connect(function()
     minimizedBtn.Visible = false
@@ -1089,7 +1055,7 @@ local _r2,_k2 = makeKeybindRow(contentKeybinds, "SilentAim")
 local _r3,_k3 = makeKeybindRow(contentKeybinds, "ESP")
 local _r4,_k4 = makeKeybindRow(contentKeybinds, "Keycard")
 local _r5,_k5 = makeKeybindRow(contentKeybinds, "Grab")
-local _r6,_k6 = makeKeybindRow(contentKeybinds, "AutoDrop")
+local _r6,_k6 = makeKeybindRow(contentKeybinds, "Minimize")
 
 -- credits tab
 local creditsTitle = Instance.new("TextLabel", contentCredits)
@@ -1167,14 +1133,16 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 elseif action == "Grab" then
                     pushLog("Keybind: Grab pressed")
                     grabAllItems()
-                elseif action == "AutoDrop" then
-                    state.autoDrop = not state.autoDrop
-                    autoDropBtn.Text = state.autoDrop and "ON" or "OFF"
-                    autoDropBtn.BackgroundColor3 = state.autoDrop and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-                    autoDropCallback(state.autoDrop) -- Call callback directly
+                elseif action == "Minimize" then
+                    pushLog("Keybind: Minimize pressed")
+                    if main.Visible then
+                        minimizeUI()
+                    else
+                        minimizedBtn:MouseButton1Click()
+                    end
                 end
-                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
+                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
                 break
             end
         end
