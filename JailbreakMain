@@ -1,4 +1,4 @@
--- Smile B | Jailbreak - Full Centralized & Redesigned LocalScript
+-- Smile B | Jailbreak — Full Centralized & Redesigned LocalScript (with draggable UI, autodrop, keybinds, credits)
 -- Paste into StarterPlayerScripts (LocalScript)
 
 local Players = game:GetService("Players")
@@ -23,11 +23,9 @@ local ESP_FULL_RELOAD_INTERVAL = 2.5
 local PISTOL_CHECK_INTERVAL = 0.5
 local UI_FADE_TIME = 0.25
 
--- extra timing used later (were referenced but not defined in base)
 local EQUIP_WAIT_TIME = 0.12
 local FIRE_DELAY = 0.06
 
--- UI corner radius
 local UI_CORNER_RADIUS = UDim.new(0, 12)
 
 -- ===== state =====
@@ -40,7 +38,17 @@ local state = {
     hasPistol = false,
     tryingToGetPistol = false,
     killLoopId = 0,
-    currentTarget = nil
+    currentTarget = nil,
+    autoDrop = false,
+    autoDropLoopId = 0,
+    keybinds = {
+        KillAura = Enum.KeyCode.K,
+        SilentAim = Enum.KeyCode.L,
+        ESP = Enum.KeyCode.E,
+        Keycard = Enum.KeyCode.B,
+        Grab = Enum.KeyCode.G,
+        AutoDrop = Enum.KeyCode.Backspace
+    }
 }
 local logs = {}
 local lastHealth = nil
@@ -69,12 +77,12 @@ screenGui.Name = "SmileB_JailbreakUI"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = PlayerGui
 
--- Always visible status strip (wider + rounded)
+-- status strip
 local alwaysVisibleStatus = Instance.new("TextLabel")
 alwaysVisibleStatus.Name = "StatusStrip"
-alwaysVisibleStatus.Size = UDim2.new(0, 460, 0, 30) -- wider to fit text
-alwaysVisibleStatus.Position = UDim2.new(1, -470, 0, 10)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(0, 0)
+alwaysVisibleStatus.Size = UDim2.new(0, 520, 0, 30)
+alwaysVisibleStatus.Position = UDim2.new(0.98, -540, 0, 10)
+alwaysVisibleStatus.AnchorPoint = Vector2.new(1, 0)
 alwaysVisibleStatus.BackgroundTransparency = 0.18
 alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
 alwaysVisibleStatus.BorderSizePixel = 0
@@ -82,35 +90,33 @@ alwaysVisibleStatus.Font = Enum.Font.SourceSans
 alwaysVisibleStatus.TextSize = 13
 alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Left
 alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
-alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF"
+alwaysVisibleStatus.Text = "Pistol: No  KillAura: OFF  SilentAim: OFF  ESP: OFF  KeyBypass: OFF  AutoDrop: OFF"
 alwaysVisibleStatus.Parent = screenGui
 addCorner(alwaysVisibleStatus)
 
--- Main frame
+-- main container
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.new(0, 650, 0, 340)
-main.Position = UDim2.new(0.5, -325, 0.5, -170)
+main.Size = UDim2.new(0, 700, 0, 380)
+main.Position = UDim2.new(0.5, -350, 0.5, -190) -- center spawn
 main.BackgroundColor3 = Color3.fromRGB(30,30,30)
 main.BorderSizePixel = 0
 main.Active = true
-main.Draggable = true
 main.Parent = screenGui
 addCorner(main)
 
--- Header
-local header = Instance.new("Frame")
+-- header
+local header = Instance.new("Frame", main)
 header.Name = "Header"
-header.Size = UDim2.new(1,0,0,44)
+header.Size = UDim2.new(1,0,0,46)
 header.BackgroundColor3 = Color3.fromRGB(28,28,30)
 header.BorderSizePixel = 0
-header.Parent = main
 addCorner(header)
 
 local title = Instance.new("TextLabel", header)
 title.Name = "Title"
 title.Position = UDim2.new(0,12,0,0)
-title.Size = UDim2.new(1,-180,1,0)
+title.Size = UDim2.new(1,-200,1,0)
 title.BackgroundTransparency = 1
 title.Text = "Jailbreak | Smile B"
 title.Font = Enum.Font.SourceSansBold
@@ -118,23 +124,22 @@ title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Color3.fromRGB(200,200,255)
 
--- Minimize button
+-- minimize, close
 local btnMin = Instance.new("TextButton", header)
 btnMin.Name = "BtnMin"
-btnMin.Size = UDim2.new(0,28,0,28)
-btnMin.Position = UDim2.new(1,-110,0,8)
-btnMin.Text = "-"
+btnMin.Size = UDim2.new(0,34,0,30)
+btnMin.Position = UDim2.new(1,-154,0,8)
+btnMin.Text = "—"
 btnMin.Font = Enum.Font.SourceSansBold
 btnMin.BackgroundColor3 = Color3.fromRGB(36,36,40)
 btnMin.TextColor3 = Color3.fromRGB(255,223,120)
 btnMin.BorderSizePixel = 0
 addCorner(btnMin)
 
--- Close button
 local btnClose = Instance.new("TextButton", header)
 btnClose.Name = "BtnClose"
-btnClose.Size = UDim2.new(0,28,0,28)
-btnClose.Position = UDim2.new(1,-70,0,8)
+btnClose.Size = UDim2.new(0,34,0,30)
+btnClose.Position = UDim2.new(1,-108,0,8)
 btnClose.Text = "x"
 btnClose.Font = Enum.Font.SourceSansBold
 btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40)
@@ -142,79 +147,79 @@ btnClose.TextColor3 = Color3.fromRGB(255,120,120)
 btnClose.BorderSizePixel = 0
 addCorner(btnClose)
 
--- Confirmation frame for close
-local confirmationFrame = Instance.new("Frame")
-confirmationFrame.Name = "Confirmation"
-confirmationFrame.Size = UDim2.new(0, 320,0,160)
-confirmationFrame.Position = UDim2.new(0.5,-160,0.5,-80)
-confirmationFrame.BackgroundColor3 = Color3.fromRGB(30,30,32)
-confirmationFrame.BorderSizePixel = 0
-confirmationFrame.Visible = false
-confirmationFrame.Parent = screenGui
-addCorner(confirmationFrame)
+-- tab bar
+local tabBar = Instance.new("Frame", main)
+tabBar.Name = "TabBar"
+tabBar.Size = UDim2.new(1, -16, 0, 36)
+tabBar.Position = UDim2.new(0,8,0,52)
+tabBar.BackgroundTransparency = 1
+local tabLayout = Instance.new("UIListLayout", tabBar)
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.Padding = UDim.new(0,6)
 
-local confTitle = Instance.new("TextLabel", confirmationFrame)
-confTitle.Size = UDim2.new(1,0,0,44)
-confTitle.BackgroundTransparency = 1
-confTitle.Text = "Are you sure?"
-confTitle.Font = Enum.Font.SourceSansBold
-confTitle.TextSize = 18
-confTitle.TextColor3 = Color3.fromRGB(255,255,255)
+local function makeTab(label)
+    local b = Instance.new("TextButton", tabBar)
+    b.Size = UDim2.new(0, 120, 1, 0)
+    b.Text = label
+    b.Font = Enum.Font.SourceSansBold
+    b.TextSize = 14
+    b.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    b.BorderSizePixel = 0
+    addCorner(b)
+    return b
+end
 
-local confText = Instance.new("TextLabel", confirmationFrame)
-confText.Size = UDim2.new(1,0,0,66)
-confText.Position = UDim2.new(0,0,0,44)
-confText.BackgroundTransparency = 1
-confText.Text = "Closing will disable all features."
-confText.Font = Enum.Font.SourceSans
-confText.TextSize = 14
-confText.TextColor3 = Color3.fromRGB(220,220,220)
-confText.TextWrapped = true
+local tabMainBtn = makeTab("Main")
+local tabKeybindBtn = makeTab("Keybinds")
+local tabCreditsBtn = makeTab("Credits")
 
-local btnYes = Instance.new("TextButton", confirmationFrame)
-btnYes.Size = UDim2.new(0.4,0,0,32)
-btnYes.Position = UDim2.new(0.06,0,1,-44)
-btnYes.Text = "Yes"
-btnYes.Font = Enum.Font.SourceSansBold
-btnYes.BackgroundColor3 = Color3.fromRGB(255,80,80)
-btnYes.TextColor3 = Color3.fromRGB(255,255,255)
-btnYes.BorderSizePixel = 0
-addCorner(btnYes)
+-- content panels
+local contentMain = Instance.new("Frame", main)
+contentMain.Name = "ContentMain"
+contentMain.Size = UDim2.new(1, -16, 1, -110)
+contentMain.Position = UDim2.new(0,8,0,100)
+contentMain.BackgroundTransparency = 1
+addCorner(contentMain)
 
-local btnNo = Instance.new("TextButton", confirmationFrame)
-btnNo.Size = UDim2.new(0.4,0,0,32)
-btnNo.Position = UDim2.new(0.54,0,1,-44)
-btnNo.Text = "No"
-btnNo.Font = Enum.Font.SourceSansBold
-btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
-btnNo.TextColor3 = Color3.fromRGB(255,255,255)
-btnNo.BorderSizePixel = 0
-addCorner(btnNo)
+local contentKeybinds = Instance.new("Frame", main)
+contentKeybinds.Name = "ContentKeybinds"
+contentKeybinds.Size = contentMain.Size
+contentKeybinds.Position = contentMain.Position
+contentKeybinds.BackgroundTransparency = 1
+contentKeybinds.Visible = false
+addCorner(contentKeybinds)
 
--- left and right panels
-local left = Instance.new("Frame", main)
+local contentCredits = Instance.new("Frame", main)
+contentCredits.Name = "ContentCredits"
+contentCredits.Size = contentMain.Size
+contentCredits.Position = contentMain.Position
+contentCredits.BackgroundTransparency = 1
+contentCredits.Visible = false
+addCorner(contentCredits)
+
+-- left & right inside main content
+local left = Instance.new("Frame", contentMain)
 left.Name = "LeftPanel"
-left.Size = UDim2.new(0.45, -12, 1, -64)
-left.Position = UDim2.new(0, 8, 0, 52)
+left.Size = UDim2.new(0.48, -8, 1, 0)
+left.Position = UDim2.new(0,0,0,0)
 left.BackgroundTransparency = 1
 addCorner(left)
-
 local leftLayout = Instance.new("UIListLayout", left)
 leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
 leftLayout.Padding = UDim.new(0,8)
 
-local right = Instance.new("Frame", main)
+local right = Instance.new("Frame", contentMain)
 right.Name = "RightPanel"
-right.Size = UDim2.new(0.55, -12, 1, -64)
-right.Position = UDim2.new(0.45, 6, 0, 52)
+right.Size = UDim2.new(0.52, -8, 1, 0)
+right.Position = UDim2.new(0.48, 8, 0, 0)
 right.BackgroundColor3 = Color3.fromRGB(14,14,16)
 right.BorderSizePixel = 0
 right.ClipsDescendants = true
 addCorner(right)
 
--- logs title and clear button
+-- logs area in right panel
 local logsTitle = Instance.new("TextLabel", right)
-logsTitle.Name = "LogsTitle"
 logsTitle.Size = UDim2.new(1,0,0,26)
 logsTitle.Position = UDim2.new(0,0,0,6)
 logsTitle.BackgroundTransparency = 1
@@ -224,9 +229,8 @@ logsTitle.TextSize = 14
 logsTitle.TextColor3 = Color3.fromRGB(220,220,220)
 
 local clearBtn = Instance.new("TextButton", right)
-clearBtn.Name = "ClearLogs"
-clearBtn.Size = UDim2.new(0,68,0,28)
-clearBtn.Position = UDim2.new(1,-76,0,6)
+clearBtn.Size = UDim2.new(0,72,0,28)
+clearBtn.Position = UDim2.new(1,-84,0,6)
 clearBtn.Text = "Clear"
 clearBtn.Font = Enum.Font.SourceSans
 clearBtn.TextSize = 12
@@ -235,15 +239,13 @@ clearBtn.TextColor3 = Color3.fromRGB(240,240,240)
 clearBtn.BorderSizePixel = 0
 addCorner(clearBtn)
 
--- logs scrolling frame
 local logsScroll = Instance.new("ScrollingFrame", right)
 logsScroll.Name = "LogsScroll"
-logsScroll.Size = UDim2.new(1,-12,1,-54)
+logsScroll.Size = UDim2.new(1,-12,1,-56)
 logsScroll.Position = UDim2.new(0,6,0,36)
 logsScroll.BackgroundTransparency = 1
 logsScroll.ScrollBarThickness = 8
 addCorner(logsScroll)
-
 local logsList = Instance.new("Frame", logsScroll)
 logsList.Name = "LogsList"
 logsList.Size = UDim2.new(1,0,1,0)
@@ -252,37 +254,6 @@ local logsLayout2 = Instance.new("UIListLayout", logsList)
 logsLayout2.SortOrder = Enum.SortOrder.LayoutOrder
 logsLayout2.Padding = UDim.new(0,4)
 
--- fade helpers (unchanged, kept for completeness)
-local function fadeRecursive(parent, transparency, time)
-    local tweens = {}
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    if parent:IsA("Frame") or parent:IsA("ScrollingFrame") then
-        table.insert(tweens, TweenService:Create(parent, tweenInfo, {BackgroundTransparency = transparency}))
-    elseif parent:IsA("TextLabel") or parent:IsA("TextButton") or parent:IsA("TextBox") then
-        table.insert(tweens, TweenService:Create(parent, tweenInfo, {TextTransparency = transparency, BackgroundTransparency = transparency}))
-    elseif parent:IsA("ImageLabel") or parent:IsA("ImageButton") then
-        table.insert(tweens, TweenService:Create(parent, tweenInfo, {ImageTransparency = transparency, BackgroundTransparency = transparency}))
-    end
-    for _, child in ipairs(parent:GetChildren()) do
-        local childTweens = fadeRecursive(child, transparency, time)
-        for _, t in ipairs(childTweens) do table.insert(tweens, t) end
-    end
-    return tweens
-end
-
-local function fadeIn(frame, time)
-    fadeRecursive(frame, 1, 0)
-    frame.Visible = true
-    fadeRecursive(frame, 0, time)
-end
-
-local function fadeOut(frame, time)
-    local tweens = fadeRecursive(frame, 1, time)
-    for _, t in ipairs(tweens) do t.Completed:Wait() end
-    frame.Visible = false
-end
-
--- logging
 local function pushLog(msg)
     local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
     table.insert(logs, entry)
@@ -314,7 +285,7 @@ clearBtn.MouseButton1Click:Connect(function()
     pushLog("Logs cleared")
 end)
 
--- ===== helper row/controls creators (add corners everywhere) =====
+-- helper row creators
 local function newRow(parent, height)
     height = height or 34
     local f = Instance.new("Frame")
@@ -327,7 +298,7 @@ end
 local function createToggle(parent, labelText, default, callback)
     local row = newRow(parent,34)
     local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.6,0,1,0)
+    lbl.Size = UDim2.new(0.62,0,1,0)
     lbl.BackgroundTransparency = 1
     lbl.Text = labelText
     lbl.Font = Enum.Font.SourceSans
@@ -336,8 +307,8 @@ local function createToggle(parent, labelText, default, callback)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
 
     local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,68,0,28)
-    btn.Position = UDim2.new(1,-76,0,3)
+    btn.Size = UDim2.new(0,84,0,28)
+    btn.Position = UDim2.new(1,-92,0,3)
     btn.Text = default and "ON" or "OFF"
     btn.Font = Enum.Font.SourceSansBold
     btn.TextSize = 13
@@ -359,7 +330,7 @@ end
 local function createSlider(parent, name, min, max, default, callback)
     local row = newRow(parent,40)
     local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.58,0,1,0)
+    lbl.Size = UDim2.new(0.6,0,1,0)
     lbl.BackgroundTransparency = 1
     lbl.Text = name .. ": " .. tostring(default)
     lbl.Font = Enum.Font.SourceSans
@@ -368,8 +339,8 @@ local function createSlider(parent, name, min, max, default, callback)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
 
     local slider = Instance.new("Frame", row)
-    slider.Size = UDim2.new(0.38,0,0.45,0)
-    slider.Position = UDim2.new(0.6,0,0.275,0)
+    slider.Size = UDim2.new(0.36,0,0.45,0)
+    slider.Position = UDim2.new(0.62,0,0.275,0)
     slider.BackgroundColor3 = Color3.fromRGB(60,60,60)
     slider.BorderSizePixel = 0
     slider.ClipsDescendants = true
@@ -394,7 +365,6 @@ local function createSlider(parent, name, min, max, default, callback)
     slider.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            main.Draggable = false
             conn = UserInputService.InputChanged:Connect(function(move)
                 if dragging and (move.UserInputType == Enum.UserInputType.MouseMovement or move.UserInputType == Enum.UserInputType.Touch) then
                     updateFromPos(move.Position)
@@ -405,16 +375,15 @@ local function createSlider(parent, name, min, max, default, callback)
     slider.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
-            main.Draggable = true
             if conn then conn:Disconnect(); conn = nil end
         end
     end)
     return row, slider, fill, lbl
 end
 
--- ===== left controls content =====
+-- ===== left controls =====
 -- Keycard toggle
-createToggle(left, "Keycard Bypass", false, function(v)
+local keyRow, keyBtn = createToggle(left, "Keycard Bypass", false, function(v)
     state.keyBypass = v
     local ok, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
     if ok and plrUtils then
@@ -429,12 +398,12 @@ createToggle(left, "Keycard Bypass", false, function(v)
     else
         pushLog("Keycard bypass: PlayerUtils not found")
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
 end)
 
 -- KillAura toggle
-createToggle(left, "KillAura (1000 Recommended)", false, function(v)
+local kaRow, kaBtn = createToggle(left, "KillAura (1000 Recommended)", false, function(v)
     state.killAura = v
     pushLog("KillAura toggled: "..tostring(v))
     if v and LocalPlayer.Character then
@@ -442,18 +411,18 @@ createToggle(left, "KillAura (1000 Recommended)", false, function(v)
     else
         state.killLoopId = state.killLoopId + 1
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
 end)
 
 -- SilentAim toggle
-createToggle(left, "Silent Aim", false, function(v)
+local saRow, saBtn = createToggle(left, "Silent Aim", false, function(v)
     state.silentAim = v
     pushLog("Silent Aim toggled: "..tostring(v))
     updateSilentAimOverride(v)
     if v then ensurePistol() end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
 end)
 
 -- Range slider
@@ -464,7 +433,7 @@ end)
 state.killRange = DEFAULT_KILL_RANGE
 
 -- ESP toggle
-createToggle(left, "ESP", false, function(v)
+local espRow, espBtn = createToggle(left, "ESP", false, function(v)
     state.esp = v
     pushLog("ESP toggled: "..tostring(v))
     if not v then
@@ -473,14 +442,14 @@ createToggle(left, "ESP", false, function(v)
     else
         for _,pl in pairs(Players:GetPlayers()) do spawn(function() pcall(function() setupESPForPlayer(pl) end) end) end
     end
-    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
 end)
 
 -- Grab Items button
 local grabRow = newRow(left, 36)
 local grabLbl = Instance.new("TextLabel", grabRow)
-grabLbl.Size = UDim2.new(0.6,0,1,0)
+grabLbl.Size = UDim2.new(0.62,0,1,0)
 grabLbl.BackgroundTransparency = 1
 grabLbl.Text = "Grab Items"
 grabLbl.Font = Enum.Font.SourceSans
@@ -489,8 +458,8 @@ grabLbl.TextColor3 = Color3.fromRGB(230,230,230)
 grabLbl.TextXAlignment = Enum.TextXAlignment.Left
 
 local grabBtn = Instance.new("TextButton", grabRow)
-grabBtn.Size = UDim2.new(0,68,0,28)
-grabBtn.Position = UDim2.new(1,-76,0,4)
+grabBtn.Size = UDim2.new(0,84,0,28)
+grabBtn.Position = UDim2.new(1,-92,0,3)
 grabBtn.Text = "Grab"
 grabBtn.Font = Enum.Font.SourceSansBold
 grabBtn.TextSize = 13
@@ -499,25 +468,68 @@ grabBtn.BackgroundColor3 = Color3.fromRGB(70,70,70)
 grabBtn.TextColor3 = Color3.fromRGB(255,255,255)
 addCorner(grabBtn)
 
--- floating minimized hamburger button
-local minimizedBtn = Instance.new("TextButton")
-minimizedBtn.Name = "MinimizedBtn"
-minimizedBtn.Parent = screenGui
-minimizedBtn.Size = UDim2.new(0, 48, 0, 48)
-minimizedBtn.Position = UDim2.new(0, 10, 0, 100)
-minimizedBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-minimizedBtn.Text = "≡"
-minimizedBtn.TextScaled = true
-minimizedBtn.Font = Enum.Font.SourceSansBold
-minimizedBtn.Visible = false
-minimizedBtn.Active = true
-minimizedBtn.Draggable = true
-addCorner(minimizedBtn)
+-- Auto Drop toggle
+local autoDropRow, autoDropBtn = createToggle(left, "Auto Drop Guns", false, function(v)
+    state.autoDrop = v
+    if v then
+        state.autoDropLoopId = state.autoDropLoopId + 1
+        spawn(function()
+            local myLoop = state.autoDropLoopId
+            pushLog("AutoDrop: started")
+            while state.autoDrop and state.autoDropLoopId == myLoop do
+                -- scan folder for guns
+                local folder = LocalPlayer:FindFirstChild("Folder")
+                if folder then
+                    for _,child in ipairs(folder:GetChildren()) do
+                        local name = tostring(child.Name):lower()
+                        if string.find(name, "pistol") or string.find(name, "shotgun") or string.find(name, "rifle") or string.find(name, "gun") then
+                            pcall(function()
+                                local success = false
+                                -- try common remote names
+                                if child:FindFirstChild("InventoryDropRemote") and child.InventoryDropRemote.FireServer then
+                                    pcall(function() child.InventoryDropRemote:FireServer() success = true end)
+                                end
+                                if not success and LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("InventoryDrop") and type(LocalPlayer.Folder.InventoryDrop.FireServer) == "function" then
+                                    pcall(function() LocalPlayer.Folder.InventoryDrop:FireServer(child) success = true end)
+                                end
+                                -- fallback: try to move to workspace near HRP (may not persist server-side)
+                                if not success then
+                                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                    pcall(function()
+                                        if child:IsA("Model") or child:IsA("Tool") then
+                                            child.Parent = Workspace
+                                            if hrp and child:FindFirstChildWhichIsA("BasePart") then
+                                                local bp = child:FindFirstChildWhichIsA("BasePart")
+                                                bp.CFrame = hrp.CFrame * CFrame.new(0, -2, 2)
+                                            end
+                                            success = true
+                                        end
+                                    end)
+                                end
+                                if success then
+                                    pushLog("AutoDrop: dropped " .. tostring(child.Name))
+                                else
+                                    pushLog("AutoDrop: failed to drop " .. tostring(child.Name))
+                                end
+                            end)
+                        end
+                    end
+                end
+                task.wait(0.6)
+            end
+            pushLog("AutoDrop: stopped")
+        end)
+    else
+        state.autoDropLoopId = state.autoDropLoopId + 1
+    end
+    alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+end)
 
--- ===== fade helpers for visibility used earlier (kept) =====
+-- ==== right panel logs already handled ====
 
--- ===== ESP (kept) =====
+
+-- ===== ESP helpers (unchanged) =====
 local highlightMap = {}
 local nameTagMap = {}
 
@@ -595,7 +607,6 @@ for _,pl in ipairs(Players:GetPlayers()) do
     pl:GetPropertyChangedSignal("TeamColor"):Connect(function() updateESPColorFor(pl) end)
 end
 
--- realtime update loop for ESP
 spawn(function()
     while main and main.Parent do
         if state.esp then
@@ -622,7 +633,6 @@ spawn(function()
     end
 end)
 
--- periodic full reload for ESP
 spawn(function()
     while main and main.Parent do
         if state.esp then
@@ -637,7 +647,7 @@ spawn(function()
     end
 end)
 
--- ===== pistol acquisition / grabbed items =====
+-- ===== pistol acquisition / grabbing logic (kept and reused) =====
 local function tryClickGiversOnce()
     if not Workspace:FindFirstChild("Givers") then return false end
     for _,g in ipairs(Workspace.Givers:GetChildren()) do
@@ -696,8 +706,8 @@ local function ensurePistol()
         end
         if not state.hasPistol then pushLog("Pistol acquisition: failed after attempts") end
         state.tryingToGetPistol = false
-        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
     end)
 end
 
@@ -726,7 +736,7 @@ end
 
 grabBtn.MouseButton1Click:Connect(function() grabAllItems() end)
 
--- pistol loss watcher and general folder checker
+-- pistol loss watcher
 spawn(function()
     local folder = LocalPlayer:FindFirstChild("Folder", 10)
     if folder then
@@ -734,8 +744,8 @@ spawn(function()
             if child.Name == "Pistol" then
                 state.hasPistol = false
                 pushLog("Pistol lost from inventory")
-                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
                 if state.killAura or state.silentAim then ensurePistol() end
             end
         end)
@@ -744,15 +754,15 @@ spawn(function()
         if state.hasPistol and not (LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol")) then
             state.hasPistol = false
             pushLog("Pistol no longer detected")
-            alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+            alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
             if state.killAura or state.silentAim then ensurePistol() end
         end
         task.wait(PISTOL_CHECK_INTERVAL)
     end
 end)
 
--- ===== team/enemy helper =====
+-- ===== team/enemy helpers and kill aura logic (kept) =====
 local function teamString(pl)
     if not pl then return "" end
     return tostring(pl.Team)
@@ -768,7 +778,6 @@ local function isEnemyTeam(myTeam, theirTeam)
     return myTeam ~= theirTeam
 end
 
--- ===== target selection =====
 local function getNearestEnemy(maxRange)
     maxRange = maxRange or DEFAULT_KILL_RANGE
     local nearestDistance = maxRange
@@ -799,7 +808,6 @@ local function getNearestEnemy(maxRange)
     return nearestEnemy
 end
 
--- ===== damage watcher =====
 spawn(function()
     while main and main.Parent do
         local char = LocalPlayer.Character
@@ -818,7 +826,6 @@ spawn(function()
     end
 end)
 
--- ===== silent aim override =====
 function updateSilentAimOverride(enabled)
     if not RayCastModule or not oldRayIgnore then
         return
@@ -839,7 +846,6 @@ function updateSilentAimOverride(enabled)
     end
 end
 
--- ===== kill aura loop =====
 function runKillAura(character)
     if not character then return end
     state.killLoopId = state.killLoopId + 1
@@ -896,12 +902,12 @@ function runKillAura(character)
             end
         end
         pushLog("KillAura loop stopped (id "..tostring(myLoopId)..")")
-        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
     end)
 end
 
--- ===== respawn handling =====
+-- respawn handling
 LocalPlayer.CharacterAdded:Connect(function(char)
     pushLog("Character respawned")
     lastHealth = char:FindFirstChild("Humanoid") and char.Humanoid.Health or nil
@@ -918,34 +924,60 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
--- initial check for pistol
 if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
     state.hasPistol = true
     pushLog("Pistol present on load")
 end
 
--- ===== minimize / restore logic (status stays visible) =====
-local savedMainPosition
-local savedMainSize
+-- ===== minimize / restore and confirmation UI =====
+local confirmationFrame = Instance.new("Frame")
+confirmationFrame.Name = "Confirmation"
+confirmationFrame.Size = UDim2.new(0, 320,0,160)
+confirmationFrame.Position = UDim2.new(0.5,-160,0.5,-80)
+confirmationFrame.BackgroundColor3 = Color3.fromRGB(30,30,32)
+confirmationFrame.BorderSizePixel = 0
+confirmationFrame.Visible = false
+confirmationFrame.Parent = screenGui
+addCorner(confirmationFrame)
 
-btnMin.MouseButton1Click:Connect(function()
-    savedMainPosition = main.Position
-    savedMainSize = main.Size
+local confTitle = Instance.new("TextLabel", confirmationFrame)
+confTitle.Size = UDim2.new(1,0,0,44)
+confTitle.BackgroundTransparency = 1
+confTitle.Text = "Are you sure?"
+confTitle.Font = Enum.Font.SourceSansBold
+confTitle.TextSize = 18
+confTitle.TextColor3 = Color3.fromRGB(255,255,255)
 
-    -- hide main UI but keep status strip visible
-    main.Visible = false
-    minimizedBtn.Position = UDim2.new(0, main.AbsolutePosition.X, 0, main.AbsolutePosition.Y)
-    minimizedBtn.Visible = true
-end)
+local confText = Instance.new("TextLabel", confirmationFrame)
+confText.Size = UDim2.new(1,0,0,66)
+confText.Position = UDim2.new(0,0,0,44)
+confText.BackgroundTransparency = 1
+confText.Text = "Closing will disable all features."
+confText.Font = Enum.Font.SourceSans
+confText.TextSize = 14
+confText.TextColor3 = Color3.fromRGB(220,220,220)
+confText.TextWrapped = true
 
-minimizedBtn.MouseButton1Click:Connect(function()
-    minimizedBtn.Visible = false
-    main.Visible = true
-    main.Position = savedMainPosition or UDim2.new(0.5, -325, 0.5, -170)
-    main.Size = savedMainSize or UDim2.new(0, 650, 0, 340)
-end)
+local btnYes = Instance.new("TextButton", confirmationFrame)
+btnYes.Size = UDim2.new(0.4,0,0,32)
+btnYes.Position = UDim2.new(0.06,0,1,-44)
+btnYes.Text = "Yes"
+btnYes.Font = Enum.Font.SourceSansBold
+btnYes.BackgroundColor3 = Color3.fromRGB(255,80,80)
+btnYes.TextColor3 = Color3.fromRGB(255,255,255)
+btnYes.BorderSizePixel = 0
+addCorner(btnYes)
 
--- ===== close confirmation =====
+local btnNo = Instance.new("TextButton", confirmationFrame)
+btnNo.Size = UDim2.new(0.4,0,0,32)
+btnNo.Position = UDim2.new(0.54,0,1,-44)
+btnNo.Text = "No"
+btnNo.Font = Enum.Font.SourceSansBold
+btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
+btnNo.TextColor3 = Color3.fromRGB(255,255,255)
+btnNo.BorderSizePixel = 0
+addCorner(btnNo)
+
 btnClose.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = true
 end)
@@ -954,17 +986,275 @@ btnNo.MouseButton1Click:Connect(function()
 end)
 btnYes.MouseButton1Click:Connect(function()
     confirmationFrame.Visible = false
-    -- disable features
+    -- disable features and destroy UI
     state.keyBypass = false
     state.esp = false
     state.killAura = false
     state.silentAim = false
+    state.autoDrop = false
     state.killLoopId = state.killLoopId + 1
+    state.autoDropLoopId = state.autoDropLoopId + 1
     if RayCastModule and oldRayIgnore then
         pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
     end
     if screenGui then screenGui:Destroy() end
 end)
 
-pushLog("Smile B UI loaded and running")
+-- floating minimized hamburger button
+local minimizedBtn = Instance.new("TextButton")
+minimizedBtn.Name = "MinimizedBtn"
+minimizedBtn.Parent = screenGui
+minimizedBtn.Size = UDim2.new(0, 56, 0, 56)
+minimizedBtn.Position = UDim2.new(0, 10, 0, 100)
+minimizedBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizedBtn.Text = "≡"
+minimizedBtn.TextScaled = true
+minimizedBtn.Font = Enum.Font.SourceSansBold
+minimizedBtn.Visible = false
+minimizedBtn.Active = true
+addCorner(minimizedBtn)
+
+-- minimize / restore
+local savedMainPosition, savedMainSize = nil, nil
+btnMin.MouseButton1Click:Connect(function()
+    savedMainPosition = main.Position
+    savedMainSize = main.Size
+    main.Visible = false
+    minimizedBtn.Position = UDim2.new(0, math.clamp(main.AbsolutePosition.X, 4, workspace.CurrentCamera.ViewportSize.X - minimizedBtn.AbsoluteSize.X - 4),
+                                       0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y - minimizedBtn.AbsoluteSize.Y - 4))
+    minimizedBtn.Visible = true
+end)
+
+minimizedBtn.MouseButton1Click:Connect(function()
+    minimizedBtn.Visible = false
+    main.Visible = true
+    main.Position = savedMainPosition or UDim2.new(0.5, -350, 0.5, -190)
+    main.Size = savedMainSize or UDim2.new(0, 700, 0, 380)
+end)
+
+-- ===== keybinds UI (tab content) =====
+local function makeKeybindRow(parent, actionName, defaultKey)
+    local row = newRow(parent, 36)
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(0.5,0,1,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = actionName
+    lbl.Font = Enum.Font.SourceSans
+    lbl.TextSize = 14
+    lbl.TextColor3 = Color3.fromRGB(230,230,230)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local keyLabel = Instance.new("TextLabel", row)
+    keyLabel.Size = UDim2.new(0,120,0,28)
+    keyLabel.Position = UDim2.new(0.5, 8, 0, 4)
+    keyLabel.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    keyLabel.Text = tostring(defaultKey)
+    keyLabel.Font = Enum.Font.SourceSans
+    keyLabel.TextSize = 14
+    keyLabel.TextColor3 = Color3.fromRGB(230,230,230)
+    addCorner(keyLabel)
+
+    local setBtn = Instance.new("TextButton", row)
+    setBtn.Size = UDim2.new(0,80,0,28)
+    setBtn.Position = UDim2.new(1, -88, 0, 4)
+    setBtn.Text = "Set"
+    setBtn.Font = Enum.Font.SourceSansBold
+    setBtn.TextSize = 13
+    setBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
+    setBtn.BorderSizePixel = 0
+    addCorner(setBtn)
+
+    -- capture key on click
+    setBtn.MouseButton1Click:Connect(function()
+        setBtn.Text = "Press Key..."
+        local conn
+        conn = UserInputService.InputBegan:Connect(function(inp, gameProcessed)
+            if gameProcessed then return end
+            if inp.UserInputType == Enum.UserInputType.Keyboard and inp.KeyCode ~= Enum.KeyCode.Unknown then
+                state.keybinds[actionName] = inp.KeyCode
+                keyLabel.Text = tostring(inp.KeyCode):gsub("Enum.KeyCode.", "")
+                setBtn.Text = "Set"
+                conn:Disconnect()
+            end
+        end)
+        -- timeout fallback
+        delay(6, function()
+            if conn and conn.Connected then
+                conn:Disconnect()
+                setBtn.Text = "Set"
+            end
+        end)
+    end)
+
+    return row, keyLabel, setBtn
+end
+
+-- populate keybinds tab
+local keybindsLayout = Instance.new("UIListLayout", contentKeybinds)
+keybindsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+keybindsLayout.Padding = UDim.new(0,8)
+
+local kbTitle = Instance.new("TextLabel", contentKeybinds)
+kbTitle.Size = UDim2.new(1,0,0,26)
+kbTitle.BackgroundTransparency = 1
+kbTitle.Text = "Keybinds"
+kbTitle.Font = Enum.Font.SourceSansBold
+kbTitle.TextSize = 16
+kbTitle.TextColor3 = Color3.fromRGB(220,220,220)
+
+local _r1,_k1 = makeKeybindRow(contentKeybinds, "KillAura", state.keybinds.KillAura)
+local _r2,_k2 = makeKeybindRow(contentKeybinds, "SilentAim", state.keybinds.SilentAim)
+local _r3,_k3 = makeKeybindRow(contentKeybinds, "ESP", state.keybinds.ESP)
+local _r4,_k4 = makeKeybindRow(contentKeybinds, "Keycard", state.keybinds.Keycard)
+local _r5,_k5 = makeKeybindRow(contentKeybinds, "Grab", state.keybinds.Grab)
+local _r6,_k6 = makeKeybindRow(contentKeybinds, "AutoDrop", state.keybinds.AutoDrop)
+
+-- credits tab
+local creditsTitle = Instance.new("TextLabel", contentCredits)
+creditsTitle.Size = UDim2.new(1,0,0,26)
+creditsTitle.BackgroundTransparency = 1
+creditsTitle.Text = "Credits"
+creditsTitle.Font = Enum.Font.SourceSansBold
+creditsTitle.TextSize = 16
+creditsTitle.TextColor3 = Color3.fromRGB(220,220,220)
+
+local creditsText = Instance.new("TextLabel", contentCredits)
+creditsText.Size = UDim2.new(1,0,0,120)
+creditsText.Position = UDim2.new(0,0,0,36)
+creditsText.BackgroundTransparency = 1
+creditsText.TextWrapped = true
+creditsText.Text = "Tiktok: @SmileB.BS\nSuggest changes here: ContactSmileB@gmail.com"
+creditsText.Font = Enum.Font.SourceSans
+creditsText.TextSize = 14
+creditsText.TextColor3 = Color3.fromRGB(220,220,220)
+
+-- tab switching
+local function showTab(tab)
+    contentMain.Visible = false
+    contentKeybinds.Visible = false
+    contentCredits.Visible = false
+    if tab == "Main" then contentMain.Visible = true end
+    if tab == "Keybinds" then contentKeybinds.Visible = true end
+    if tab == "Credits" then contentCredits.Visible = true end
+end
+
+tabMainBtn.MouseButton1Click:Connect(function() showTab("Main") end)
+tabKeybindBtn.MouseButton1Click:Connect(function() showTab("Keybinds") end)
+tabCreditsBtn.MouseButton1Click:Connect(function() showTab("Credits") end)
+
+showTab("Main")
+
+-- ===== key input handler to trigger toggles/actions by keybinds =====
+local function isTyping()
+    local focused = UserInputService:GetFocusedTextBox()
+    return focused and focused ~= ""
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if isTyping() then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local kc = input.KeyCode
+        -- compare to keybinds
+        for action,bind in pairs(state.keybinds) do
+            if bind == kc then
+                if action == "KillAura" then
+                    state.killAura = not state.killAura
+                    kaBtn.Text = state.killAura and "ON" or "OFF"
+                    kaBtn.BackgroundColor3 = state.killAura and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    if state.killAura and LocalPlayer.Character then spawn(function() runKillAura(LocalPlayer.Character) end) end
+                    pushLog("Keybind toggled KillAura: "..tostring(state.killAura))
+                elseif action == "SilentAim" then
+                    state.silentAim = not state.silentAim
+                    saBtn.Text = state.silentAim and "ON" or "OFF"
+                    saBtn.BackgroundColor3 = state.silentAim and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    updateSilentAimOverride(state.silentAim)
+                    if state.silentAim then ensurePistol() end
+                    pushLog("Keybind toggled SilentAim: "..tostring(state.silentAim))
+                elseif action == "ESP" then
+                    state.esp = not state.esp
+                    espBtn.Text = state.esp and "ON" or "OFF"
+                    espBtn.BackgroundColor3 = state.esp and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    if state.esp then for _,pl in pairs(Players:GetPlayers()) do spawn(function() pcall(function() setupESPForPlayer(pl) end) end) end end
+                    pushLog("Keybind toggled ESP: "..tostring(state.esp))
+                elseif action == "Keycard" then
+                    state.keyBypass = not state.keyBypass
+                    keyBtn.Text = state.keyBypass and "ON" or "OFF"
+                    keyBtn.BackgroundColor3 = state.keyBypass and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    pushLog("Keybind toggled Keycard Bypass: "..tostring(state.keyBypass))
+                elseif action == "Grab" then
+                    pushLog("Keybind: Grab pressed")
+                    grabAllItems()
+                elseif action == "AutoDrop" then
+                    state.autoDrop = not state.autoDrop
+                    autoDropBtn.Text = state.autoDrop and "ON" or "OFF"
+                    autoDropBtn.BackgroundColor3 = state.autoDrop and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
+                    -- AutoDrop logic toggles itself already via the toggle callback
+                    autoDropBtn.MouseButton1Click:Fire()
+                end
+                alwaysVisibleStatus.Text = ("Pistol: %s  KillAura: %s  SilentAim: %s  ESP: %s  KeyBypass: %s  AutoDrop: %s")
+                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"), (state.autoDrop and "ON" or "OFF"))
+                break
+            end
+        end
+    end
+end)
+
+-- ===== dragging logic for main and minimizedBtn (clamped to viewport) =====
+local function makeDraggable(guiObject)
+    local dragging = false
+    local dragStart = Vector2.new()
+    local startPos = UDim2.new()
+    local cam = workspace.CurrentCamera
+
+    local function clampToViewport(x, y, sizeX, sizeY)
+        local vw = cam and cam.ViewportSize or Vector2.new(1920,1080)
+        local nx = math.clamp(x, 4, vw.X - sizeX - 4)
+        local ny = math.clamp(y, 4, vw.Y - sizeY - 4)
+        return nx, ny
+    end
+
+    local connB, connC, connE
+
+    guiObject.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            connC = UserInputService.InputChanged:Connect(function(move)
+                if dragging and (move.UserInputType == Enum.UserInputType.MouseMovement or move.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = move.Position - dragStart
+                    local newX = startPos.X.Offset + delta.X
+                    local newY = startPos.Y.Offset + delta.Y
+                    local sizeX = guiObject.AbsoluteSize.X
+                    local sizeY = guiObject.AbsoluteSize.Y
+                    local nx, ny = clampToViewport(newX, newY, sizeX, sizeY)
+                    guiObject.Position = UDim2.new(0, nx, 0, ny)
+                end
+            end)
+            connE = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    if connC then connC:Disconnect(); connC = nil end
+                    if connE then connE:Disconnect(); connE = nil end
+                end
+            end)
+        end
+    end)
+end
+
+makeDraggable(main)
+makeDraggable(minimizedBtn)
+
+-- ensure main spawns centered on most devices
+local cam = workspace.CurrentCamera
+if cam then
+    local vw = cam.ViewportSize
+    main.Position = UDim2.new(0, math.floor((vw.X - main.AbsoluteSize.X)/2), 0, math.floor((vw.Y - main.AbsoluteSize.Y)/2))
+end
+
+-- finally expose the module
 _G.SmileB = { state = state, pushLog = pushLog, ensurePistol = ensurePistol }
+
+pushLog("Smile B UI loaded and running")
