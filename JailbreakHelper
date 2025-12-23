@@ -33,7 +33,7 @@ local SplashTitle = Instance.new("TextLabel")
 SplashTitle.Size = UDim2.new(1, 0, 0, 80)
 SplashTitle.Position = UDim2.new(0, 0, 0.1, 0)
 SplashTitle.BackgroundTransparency = 1
-SplashTitle.Text = "Smile B (right ctrl to toggle)"
+SplashTitle.Text = "Smile B Jailbreak Helper"
 SplashTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 SplashTitle.TextScaled = true
 SplashTitle.Font = Enum.Font.SourceSansBold
@@ -65,6 +65,7 @@ SplashControls.Text = [[Chat Commands:
 !killaura - Auto-shoot enemies (1000 studs)
 !silentaim - Aim assist (1000 studs) 
 !safemode - SilentAim and Killaura but KillAura only ≤100 studs
+❌ NOT RESPONSIBLE FOR ANY BANS
 
 Right Ctrl = Hide/Show UI]]
 SplashControls.TextColor3 = Color3.fromRGB(100, 255, 100)
@@ -171,7 +172,7 @@ TitleBar.Size = UDim2.new(1, 0, 0, 25)
 TitleBar.BackgroundTransparency = 0
 TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 TitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-TitleBar.Text = "🛡️ Smile B 🛡️"
+TitleBar.Text = "Smile B (right ctrl to toggle)"
 TitleBar.Font = Enum.Font.SourceSansBold
 TitleBar.TextScaled = true
 TitleBar.Parent = StatusFrame
