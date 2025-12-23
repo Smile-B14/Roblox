@@ -57,7 +57,7 @@ SplashDesc.TextWrapped = true
 SplashDesc.Parent = SplashFrame
 
 local SplashControls = Instance.new("TextLabel")
-SplashControls.Size = UDim2.new(0.9, 0, 0, 60)
+SplashControls.Size = UDim2.new(0.9, 0, 0, 120)
 SplashControls.Position = UDim2.new(0.05, 0, 0.6, 0)
 SplashControls.BackgroundTransparency = 1
 SplashControls.Text = [[Chat Commands:
