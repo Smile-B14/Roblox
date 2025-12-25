@@ -1,6 +1,21 @@
--- loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/WinterBreakV1.67"))()
--- Smile B | Jailbreak — Separate Sliders for KillAura & Silent Aim Range
--- Paste into StarterPlayerScripts (LocalScript) — full replacement
+--[[
+_____/\\\\\\\\\\\______________________________/\\\\\\______________________________/\\\\\\\\\\\\\___        
+ ___/\\\/////////\\\___________________________\////\\\_____________________________\/\\\/////////\\\_       
+  __\//\\\______\///_______________________/\\\____\/\\\_____________________________\/\\\_______\/\\\_      
+   ___\////\\\____________/\\\\\__/\\\\\___\///_____\/\\\________/\\\\\\\\____________\/\\\\\\\\\\\\\\__     
+    ______\////\\\_______/\\\///\\\\\///\\\__/\\\____\/\\\______/\\\/////\\\___________\/\\\/////////\\\_    
+     _________\////\\\___\/\\\_\//\\\__\/\\\_\/\\\____\/\\\_____/\\\\\\\\\\\____________\/\\\_______\/\\\_   
+      __/\\\______\//\\\__\/\\\__\/\\\__\/\\\_\/\\\____\/\\\____\//\\///////_____________\/\\\_______\/\\\_  
+       _\///\\\\\\\\\\\/___\/\\\__\/\\\__\/\\\_\/\\\__/\\\\\\\\\__\//\\\\\\\\\\___________\/\\\\\\\\\\\\\/__ 
+        ___\///////////_____\///___\///___\///__\///__\/////////____\//////////____________\/////////////____
+
+    UI - Smile B
+    Scripting - Smile B
+    Anything else - Still Smile B
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/WinterBreakV1.67"))()
+]]--
+
+--[Smile B | Roblox Jailbreak V1.67]--
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
