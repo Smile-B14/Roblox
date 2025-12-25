@@ -1,3 +1,4 @@
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/WinterBreakV1.67"))()
 -- Smile B | Jailbreak — Separate Sliders for KillAura & Silent Aim Range
 -- Paste into StarterPlayerScripts (LocalScript) — full replacement
 local Players = game:GetService("Players")
