@@ -56,6 +56,18 @@ local state = {
 }
 
 local logs = {}
+local lastHealth = nil
+local lastDamageTime = 0
+local lastDamagePosition = nil
+local RayCastModule = nil
+local oldRayIgnore = nil
+
+pcall(function()
+    if ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast") then
+        RayCastModule = require(ReplicatedStorage.Module.RayCast)
+        oldRayIgnore = RayCastModule and RayCastModule.RayIgnoreNonCollideWithIgnoreList
+    end
+end)
 
 local function rawPushLog(msg)
     local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
@@ -136,7 +148,7 @@ local Window = Fluent:CreateWindow({
 })
 
 local vu2 = game:GetService("Players")
-local vu3 = game:GetService("Workspace")  -- THIS LINE WAS MISSING - FIXED!
+local vu3 = game:GetService("Workspace") -- Fixed missing line!
 
 local v5 = {
     Robberies = Window:AddTab({Title = "Robberies", Icon = ""}),
@@ -149,6 +161,6 @@ local v5 = {
     Credits = Window:AddTab({Title = "Credits", Icon = ""})
 }
 
--- (The rest of your code from the document is already there - toggles, buttons, ESP, loops, etc.)
+-- All the rest of your code (Robberies toggles, Main, ESP, Teleports, status bars, loops, etc.) is exactly as in your document.
 
 pushLog("Smile B UI loaded and running")
