@@ -1,3 +1,19 @@
+--[[
+_____/\\\\\\\\\\\______________________________/\\\\\\______________________________/\\\\\\\\\\\\\___        
+ ___/\\\/////////\\\___________________________\////\\\_____________________________\/\\\/////////\\\_       
+  __\//\\\______\///_______________________/\\\____\/\\\_____________________________\/\\\_______\/\\\_      
+   ___\////\\\____________/\\\\\__/\\\\\___\///_____\/\\\________/\\\\\\\\____________\/\\\\\\\\\\\\\\__     
+    ______\////\\\_______/\\\///\\\\\///\\\__/\\\____\/\\\______/\\\/////\\\___________\/\\\/////////\\\_    
+     _________\////\\\___\/\\\_\//\\\__\/\\\_\/\\\____\/\\\_____/\\\\\\\\\\\____________\/\\\_______\/\\\_   
+      __/\\\______\//\\\__\/\\\__\/\\\__\/\\\_\/\\\____\/\\\____\//\\///////_____________\/\\\_______\/\\\_  
+       _\///\\\\\\\\\\\/___\/\\\__\/\\\__\/\\\_\/\\\__/\\\\\\\\\__\//\\\\\\\\\\___________\/\\\\\\\\\\\\\/__ 
+        ___\///////////_____\///___\///___\///__\///__\/////////____\//////////____________\/////////////____
+
+    UI - Smile B
+    Scripting - Smile B
+    Anything else - Still Smile B
+]]--
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -6,6 +22,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
 local DEFAULT_KILL_RANGE = 1000
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.18
@@ -19,6 +36,7 @@ local EQUIP_WAIT_TIME = 0.12
 local FIRE_DELAY = 0.06
 local UI_CORNER_RADIUS = UDim.new(0, 12)
 local BUTTON_DEBOUNCE_TIME = 0.18
+
 local state = {
     keyBypass = false,
     esp = false,
@@ -41,27 +59,32 @@ local state = {
     policeIndicator = false,
     policeRange = 650
 }
+
 local logs = {}
 local lastHealth = nil
 local lastDamageTime = 0
 local lastDamagePosition = nil
 local RayCastModule = nil
 local oldRayIgnore = nil
+
 pcall(function()
     if ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast") then
         RayCastModule = require(ReplicatedStorage.Module.RayCast)
         oldRayIgnore = RayCastModule and RayCastModule.RayIgnoreNonCollideWithIgnoreList
     end
 end)
+
 local function rawPushLog(msg)
     local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
     table.insert(logs, entry)
     if #logs > LOG_CAP then table.remove(logs, 1) end
     print("[SmileB] " .. entry)
 end
+
 local function pushLog(msg)
     rawPushLog(msg)
 end
+
 local function ensurePistol()
     if state.tryingToGetPistol or state.hasPistol then return end
     state.tryingToGetPistol = true
@@ -76,12 +99,14 @@ local function ensurePistol()
                 if clickDetector then
                     fireclickdetector(clickDetector)
                     task.wait(EQUIP_WAIT_TIME)
-                    if LocalPlayer.Backpack:FindFirstChild("Pistol") or LocalPlayer.Character:FindFirstChild("Pistol") then
+                    if LocalPlayer.Backpack:FindFirstChild("Pistol") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Pistol")) then
                         state.hasPistol = true
                         pushLog("Pistol obtained")
                         state.tryingToGetPistol = false
-                        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-                            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+                        if alwaysVisibleStatus then
+                            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+                        end
                         return
                     end
                 end
@@ -92,12 +117,14 @@ local function ensurePistol()
     pushLog("Failed to get pistol after " .. attempts .. " attempts")
     state.tryingToGetPistol = false
 end
+
 local function teleportTo(position)
     state.teleportAbortRequested = false
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    local tweenInfo = TweenInfo.new((hrp.Position - position).Magnitude / state.localSpeed, Enum.EasingStyle.Linear)
+    local distance = (hrp.Position - position).Magnitude
+    local tweenInfo = TweenInfo.new(distance / state.localSpeed, Enum.EasingStyle.Linear)
     local tween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(position)})
     tween:Play()
     tween.Completed:Wait()
@@ -106,16 +133,55 @@ local function teleportTo(position)
         state.teleportAbortRequested = false
     end
 end
+
 local function stopActiveTeleport()
     state.teleportAbortRequested = true
 end
-local Fluent = loadstring(game:HttpGet("https://twix.cyou/Fluent.txt"))()
+
+pushLog("Script started - loading Fluent UI...")
+
+local Fluent = nil
+
+local urls = {
+    "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua",
+    "https://twix.cyou/Fluent.txt",
+    "https://raw.githubusercontent.com/jacklebeignet/Fluent-Reborn/refs/heads/main/src/ui.lua"
+}
+
+for _, url in ipairs(urls) do
+    pushLog("Trying URL: " .. url)
+    local success, lib = pcall(function()
+        return loadstring(game:HttpGet(url))()
+    end)
+    if success and lib then
+        Fluent = lib
+        pushLog("Fluent loaded successfully from " .. url)
+        break
+    else
+        pushLog("Failed to load from " .. url .. " - Error: " .. tostring(lib))
+    end
+end
+
+if not Fluent then
+    pushLog("ALL Fluent load attempts FAILED! Your executor is blocking HttpGet.")
+    pushLog("Try a different executor (Krnl, Delta, Synapse) or VPN.")
+    local notify = Instance.new("ScreenGui")
+    local text = Instance.new("TextLabel", notify)
+    text.Size = UDim2.new(1,0,1,0)
+    text.BackgroundTransparency = 0.5
+    text.Text = "Smile B: Fluent UI failed to load!\nCheck executor console for details.\nLikely HttpGet blocked."
+    text.TextSize = 30
+    text.TextColor3 = Color3.new(1,0,0)
+    notify.Parent = PlayerGui
+    return
+end
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
-task.wait(5)
-local vu2 = game:GetService("Players")
-local _ = vu2.LocalPlayer
-local vu3 = game:GetService("Workspace")
-game:GetService("Workspace"):FindFirstChild("Game")
+
+task.wait(2)
+
+pushLog("Creating UI Window...")
+
 local Window = Fluent:CreateWindow({
     Title = "Smile B Scripts (Jailbreak)",
     TabWidth = 160,
@@ -124,6 +190,12 @@ local Window = Fluent:CreateWindow({
     Theme = "Dark",
     MinimizeKey = Enum.KeyCode.RightShift
 })
+
+local vu2 = game:GetService("Players")
+local _ = vu2.LocalPlayer
+local vu3 = game:GetService("Workspace")
+game:GetService("Workspace"):FindFirstChild("Game")
+
 local v5 = {
     Robberies = Window:AddTab({Title = "Robberies", Icon = ""}),
     MainSmileB = Window:AddTab({Title = "Main", Icon = ""}),
@@ -134,6 +206,7 @@ local v5 = {
     Keybinds = Window:AddTab({Title = "Keybinds", Icon = ""}),
     Credits = Window:AddTab({Title = "Credits", Icon = ""})
 }
+
 v5.Robberies:AddSection("Tomb")
 local vu85 = {}
 v5.Robberies:AddToggle("RemoveSpikes", {
@@ -173,10 +246,15 @@ v5.Robberies:AddToggle("RemoveSpikes", {
                                 end
                                 if v101:IsA("Model") and v101.Name == "Model" then
                                     table.insert(vu85, {
-                                        v101:Clone(),
-                                        v97
+                                        model = v101:Clone(),
+                                        parent = v101.Parent,
+                                        transparency = v101.Transparency,
+                                        canCollide = v101.CanCollide,
+                                        canTouch = v101.CanTouch
                                     })
-                                    v101:Destroy()
+                                    v101.Transparency = 1
+                                    v101.CanCollide = false
+                                    v101.CanTouch = false
                                 end
                             end
                         end
@@ -191,12 +269,15 @@ v5.Robberies:AddToggle("RemoveSpikes", {
                 if v104 == nil then
                     break
                 end
-                v105[1].Parent = v105[2]
+                v105.model.Transparency = v105.transparency
+                v105.model.CanCollide = v105.canCollide
+                v105.model.CanTouch = v105.canTouch
             end
             vu85 = {}
         end
     end
 })
+
 local vu105 = {}
 v5.Robberies:AddToggle("DeleteDarts", {
     Title = "Remove Darts",
@@ -218,8 +299,16 @@ v5.Robberies:AddToggle("DeleteDarts", {
                     break
                 end
                 if v113:IsA("BasePart") then
-                    table.insert(vu105, v113:Clone())
-                    v113:Destroy()
+                    table.insert(vu105, {
+                        part = v113:Clone(),
+                        parent = v113.Parent,
+                        transparency = v113.Transparency,
+                        canCollide = v113.CanCollide,
+                        canTouch = v113.CanTouch
+                    })
+                    v113.Transparency = 1
+                    v113.CanCollide = false
+                    v113.CanTouch = false
                 end
             end
         else
@@ -230,27 +319,42 @@ v5.Robberies:AddToggle("DeleteDarts", {
                 if v116 == nil then
                     break
                 end
-                v117.Parent = v109
+                v117.part.Transparency = v117.transparency
+                v117.part.CanCollide = v117.canCollide
+                v117.part.CanTouch = v117.canTouch
             end
             vu105 = {}
         end
     end
 })
+
 local vu117 = {}
 local function vu121()
     local v118 = vu3:FindFirstChild("RobberyTomb")
     if v118 then
         local v119 = v118:FindFirstChild("Cart")
-        local v120 = v119 and v119:FindFirstChild("Planks")
-        if v120 then
-            table.insert(vu117, {
-                model = v120:Clone(),
-                parent = v120.Parent
-            })
-            v120:Destroy()
+        if v119 then
+            local v120 = v119:FindFirstChild("Planks")
+            if v120 then
+                table.insert(vu117, {
+                    model = v120:Clone(),
+                    parent = v120.Parent
+                })
+                for _, child in pairs(v120:GetDescendants()) do
+                    if child:IsA("BasePart") then
+                        child.Transparency = 1
+                        child.CanCollide = false
+                        child.CanTouch = false
+                    end
+                    if child:IsA("Script") or child:IsA("LocalScript") then
+                        child.Disabled = true
+                    end
+                end
+            end
         end
     end
 end
+
 local function vu126()
     local v122, v123, v124 = ipairs(vu117)
     while true do
@@ -259,12 +363,11 @@ local function vu126()
         if v124 == nil then
             break
         end
-        if v125.model.Parent == nil then
-            v125.model.Parent = v125.parent
-        end
+        v125.model.Parent = v125.parent
     end
     vu117 = {}
 end
+
 v5.Robberies:AddToggle("RemovePlanks", {
     Title = "Remove Planks",
     Default = false,
@@ -276,6 +379,7 @@ v5.Robberies:AddToggle("RemovePlanks", {
         end
     end
 })
+
 local vu128 = {}
 local function vu131()
     local v129 = vu3:FindFirstChild("RobberyTomb")
@@ -286,10 +390,20 @@ local function vu131()
                 model = v130:Clone(),
                 parent = v130.Parent
             })
-            v130:Destroy()
+            for _, child in pairs(v130:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
         end
     end
 end
+
 local function vu136()
     local v132, v133, v134 = ipairs(vu128)
     while true do
@@ -298,12 +412,11 @@ local function vu136()
         if v134 == nil then
             break
         end
-        if v135.model.Parent == nil then
-            v135.model.Parent = v135.parent
-        end
+        v135.model.Parent = v135.parent
     end
     vu128 = {}
 end
+
 v5.Robberies:AddToggle("RemoveKillModel", {
     Title = "Remove Lava Damage",
     Default = false,
@@ -315,6 +428,7 @@ v5.Robberies:AddToggle("RemoveKillModel", {
         end
     end
 })
+
 v5.Robberies:AddSection("PowerPlant")
 local vu138 = {}
 local function vu149(p139)
@@ -344,12 +458,22 @@ local function vu149(p139)
             end
             if v147 then
                 table.insert(vu138, v143:Clone())
-                v143:Destroy()
+                for _, child in pairs(v143:GetDescendants()) do
+                    if child:IsA("BasePart") then
+                        child.Transparency = 1
+                        child.CanCollide = false
+                        child.CanTouch = false
+                    end
+                    if child:IsA("Script") or child:IsA("LocalScript") then
+                        child.Disabled = true
+                    end
+                end
             end
         end
         vu149(v143)
     end
 end
+
 v5.Robberies:AddToggle("RemoveBarbedWireModel", {
     Title = "Remove Lasers",
     Default = false,
@@ -370,6 +494,7 @@ v5.Robberies:AddToggle("RemoveBarbedWireModel", {
         end
     end
 })
+
 v5.Robberies:AddSection("Jelwery")
 v5.Robberies:AddToggle("RemoveBarbedWireAndCamera", {
     Title = "Not working",
@@ -377,6 +502,7 @@ v5.Robberies:AddToggle("RemoveBarbedWireAndCamera", {
     Callback = function(_)
     end
 })
+
 v5.Robberies:AddSection("Bank")
 local vu155 = {}
 local function vu161(p156)
@@ -389,12 +515,22 @@ local function vu161(p156)
         end
         if v160:IsA("Model") and v160.Name == "Lasers" then
             table.insert(vu155, v160:Clone())
-            v160:Destroy()
+            for _, child in pairs(v160:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
         else
             vu161(v160)
         end
     end
 end
+
 v5.Robberies:AddToggle("RemoveLasersBank1", {
     Title = "Remove 1st city Bank Lasers",
     Default = false,
@@ -419,6 +555,7 @@ v5.Robberies:AddToggle("RemoveLasersBank1", {
         end
     end
 })
+
 local vu169 = {}
 local function vu175(p170)
     local v171, v172, v173 = pairs(p170:GetChildren())
@@ -430,12 +567,22 @@ local function vu175(p170)
         end
         if v174:IsA("Model") and v174.Name == "Lasers" then
             table.insert(vu169, v174:Clone())
-            v174:Destroy()
+            for _, child in pairs(v174:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
         else
             vu175(v174)
         end
     end
 end
+
 v5.Robberies:AddToggle("RemoveBank2Lasers", {
     Title = "Remove 2nd city Bank Lasers",
     Default = false,
@@ -463,6 +610,7 @@ v5.Robberies:AddToggle("RemoveBank2Lasers", {
         end
     end
 })
+
 v5.Robberies:AddSection("Casino")
 local vu184 = {}
 local function vu191(p185, p186)
@@ -475,12 +623,22 @@ local function vu191(p185, p186)
         end
         if v190:IsA("Model") and table.find(p186, v190.Name) then
             vu184[v190.Name] = v190:Clone()
-            v190:Destroy()
+            for _, child in pairs(v190:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
         else
             vu191(v190, p186)
         end
     end
 end
+
 local function vu196()
     local v192, v193, v194 = pairs(vu184)
     while true do
@@ -493,6 +651,7 @@ local function vu196()
     end
     vu184 = {}
 end
+
 v5.Robberies:AddToggle("RemoveCasinoModels", {
     Title = "Remove Lasers",
     Default = false,
@@ -510,6 +669,7 @@ v5.Robberies:AddToggle("RemoveCasinoModels", {
         end
     end
 })
+
 v5.Robberies:AddSection("Museum")
 local vu198 = nil
 local function vu202(p199)
@@ -517,15 +677,26 @@ local function vu202(p199)
     local v201 = v200 and v200:FindFirstChild("Lights")
     if v201 then
         vu198 = v201:Clone()
-        v201:Destroy()
+        for _, child in pairs(v201:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu203()
     if vu198 then
         vu198.Parent = workspace.Museum
         vu198 = nil
     end
 end
+
 v5.Robberies:AddToggle("RemoveMuseumLaser", {
     Title = "Remove Lasers",
     Default = false,
@@ -537,6 +708,7 @@ v5.Robberies:AddToggle("RemoveMuseumLaser", {
         end
     end
 })
+
 v5.Robberies:AddSection("Mansion")
 local vu205 = {}
 local vu206 = {}
@@ -554,8 +726,16 @@ local function vu220()
                 break
             end
             if v214:IsA("BasePart") and v214.Name == "BarbedWire" then
-                table.insert(vu205, v214:Clone())
-                v214:Destroy()
+                table.insert(vu205, {
+                    part = v214:Clone(),
+                    parent = v214.Parent,
+                    transparency = v214.Transparency,
+                    canCollide = v214.CanCollide,
+                    canTouch = v214.CanTouch
+                })
+                v214.Transparency = 1
+                v214.CanCollide = false
+                v214.CanTouch = false
             end
         end
     end
@@ -568,11 +748,20 @@ local function vu220()
             break
         end
         if v219:IsA("BasePart") and v219.Name == "BarbedWire" then
-            table.insert(vu205, v219:Clone())
-            v219:Destroy()
+            table.insert(vu205, {
+                part = v219:Clone(),
+                parent = v219.Parent,
+                transparency = v219.Transparency,
+                canCollide = v219.CanCollide,
+                canTouch = v219.CanTouch
+            })
+            v219.Transparency = 1
+            v219.CanCollide = false
+            v219.CanTouch = false
         end
     end
 end
+
 local function vu225()
     local v221, v222, v223 = ipairs(vu205)
     while true do
@@ -581,18 +770,34 @@ local function vu225()
         if v223 == nil then
             break
         end
-        v224.Parent = workspace
+        v224.part.Transparency = v224.transparency
+        v224.part.CanCollide = v224.canCollide
+        v224.part.CanTouch = v224.canTouch
     end
     vu205 = {}
 end
+
 local function vu228()
     local v226 = vu3:FindFirstChild("MansionRobbery")
     local v227 = v226 and v226:FindFirstChild("Lasers")
     if v227 then
-        table.insert(vu206, v227:Clone())
-        v227:Destroy()
+        table.insert(vu206, {
+            model = v227:Clone(),
+            parent = v227.Parent
+        })
+        for _, child in pairs(v227:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu233()
     local v229, v230, v231 = ipairs(vu206)
     while true do
@@ -601,18 +806,32 @@ local function vu233()
         if v231 == nil then
             break
         end
-        v232.Parent = workspace
+        v232.model.Parent = v232.parent
     end
     vu206 = {}
 end
+
 local function vu236()
     local v234 = vu3:FindFirstChild("MansionRobbery")
     local v235 = v234 and v234:FindFirstChild("LaserTraps")
     if v235 then
-        table.insert(vu207, v235:Clone())
-        v235:Destroy()
+        table.insert(vu207, {
+            model = v235:Clone(),
+            parent = v235.Parent
+        })
+        for _, child in pairs(v235:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu241()
     local v237, v238, v239 = ipairs(vu207)
     while true do
@@ -621,18 +840,35 @@ local function vu241()
         if v239 == nil then
             break
         end
-        v240.Parent = workspace
+        v240.model.Parent = v240.parent
     end
     vu207 = {}
 end
+
 local function vu244()
     local v242 = vu3:FindFirstChild("MansionRobbery")
     local v243 = v242 and v242:FindFirstChild("GuardsFolder")
     if v243 then
-        table.insert(vu208, v243:Clone())
-        v243:Destroy()
+        table.insert(vu208, {
+            folder = v243:Clone(),
+            parent = v243.Parent
+        })
+        for _, child in pairs(v243:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+            if child:IsA("Humanoid") then
+                child.Health = 0
+            end
+        end
     end
 end
+
 local function vu249()
     local v245, v246, v247 = ipairs(vu208)
     while true do
@@ -641,18 +877,32 @@ local function vu249()
         if v247 == nil then
             break
         end
-        v248.Parent = workspace
+        v248.folder.Parent = v248.parent
     end
     vu208 = {}
 end
+
 local function vu252()
     local v250 = vu3:FindFirstChild("MansionRobbery")
     local v251 = v250 and v250:FindFirstChild("Shields")
     if v251 then
-        table.insert(vu209, v251:Clone())
-        v251:Destroy()
+        table.insert(vu209, {
+            model = v251:Clone(),
+            parent = v251.Parent
+        })
+        for _, child in pairs(v251:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu257()
     local v253, v254, v255 = ipairs(vu209)
     while true do
@@ -661,10 +911,11 @@ local function vu257()
         if v255 == nil then
             break
         end
-        v256.Parent = workspace
+        v256.model.Parent = v256.parent
     end
     vu209 = {}
 end
+
 v5.Robberies:AddToggle("RemoveBarbedWireAndLasers", {
     Title = "Remove Lasers",
     Default = false,
@@ -678,6 +929,7 @@ v5.Robberies:AddToggle("RemoveBarbedWireAndLasers", {
         end
     end
 })
+
 v5.Robberies:AddToggle("RemoveLaserTraps", {
     Title = "Remove Laser Traps",
     Default = false,
@@ -689,6 +941,7 @@ v5.Robberies:AddToggle("RemoveLaserTraps", {
         end
     end
 })
+
 v5.Robberies:AddToggle("RemoveGuardsFolder", {
     Title = "Remove NPCs",
     Default = false,
@@ -700,6 +953,7 @@ v5.Robberies:AddToggle("RemoveGuardsFolder", {
         end
     end
 })
+
 v5.Robberies:AddToggle("RemoveShields", {
     Title = "Remove CEO Walls",
     Default = false,
@@ -711,16 +965,33 @@ v5.Robberies:AddToggle("RemoveShields", {
         end
     end
 })
+
 v5.Robberies:AddSection("Oil Rig")
 local vu262 = {}
 local function vu265()
     local v263 = vu3:FindFirstChild("OilRig")
     local v264 = v263 and v263:FindFirstChild("GuardsFolder")
     if v264 then
-        table.insert(vu262, v264:Clone())
-        v264:Destroy()
+        table.insert(vu262, {
+            folder = v264:Clone(),
+            parent = v264.Parent
+        })
+        for _, child in pairs(v264:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+            if child:IsA("Humanoid") then
+                child.Health = 0
+            end
+        end
     end
 end
+
 local function vu270()
     local v266, v267, v268 = ipairs(vu262)
     while true do
@@ -729,10 +1000,11 @@ local function vu270()
         if v268 == nil then
             break
         end
-        v269.Parent = workspace
+        v269.folder.Parent = v269.parent
     end
     vu262 = {}
 end
+
 v5.Robberies:AddToggle("RemoveGuardsFolder", {
     Title = "Remove NPCs",
     Default = false,
@@ -744,15 +1016,29 @@ v5.Robberies:AddToggle("RemoveGuardsFolder", {
         end
     end
 })
+
 local vu272 = {}
 local function vu275()
     local v273 = vu3:FindFirstChild("OilRig")
     local v274 = v273 and v273:FindFirstChild("MovingLasers")
     if v274 then
-        table.insert(vu272, v274:Clone())
-        v274:Destroy()
+        table.insert(vu272, {
+            model = v274:Clone(),
+            parent = v274.Parent
+        })
+        for _, child in pairs(v274:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu280()
     local v276, v277, v278 = ipairs(vu272)
     while true do
@@ -761,10 +1047,11 @@ local function vu280()
         if v278 == nil then
             break
         end
-        v279.Parent = workspace
+        v279.model.Parent = v279.parent
     end
     vu272 = {}
 end
+
 v5.Robberies:AddToggle("RemoveMovingLasers", {
     Title = "Remove Lasers",
     Default = false,
@@ -776,15 +1063,29 @@ v5.Robberies:AddToggle("RemoveMovingLasers", {
         end
     end
 })
+
 local vu282 = {}
 local function vu285()
     local v283 = vu3:FindFirstChild("OilRig")
     local v284 = v283 and v283:FindFirstChild("Turrets")
     if v284 then
-        table.insert(vu282, v284:Clone())
-        v284:Destroy()
+        table.insert(vu282, {
+            model = v284:Clone(),
+            parent = v284.Parent
+        })
+        for _, child in pairs(v284:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+        end
     end
 end
+
 local function vu290()
     local v286, v287, v288 = ipairs(vu282)
     while true do
@@ -793,10 +1094,11 @@ local function vu290()
         if v288 == nil then
             break
         end
-        v289.Parent = workspace
+        v289.model.Parent = v289.parent
     end
     vu282 = {}
 end
+
 v5.Robberies:AddToggle("RemoveTurrets", {
     Title = "Remove Turrets",
     Default = false,
@@ -808,6 +1110,7 @@ v5.Robberies:AddToggle("RemoveTurrets", {
         end
     end
 })
+
 v5.Robberies:AddSection("CargoShip")
 local vu292 = {}
 local function vu296()
@@ -821,11 +1124,30 @@ local function vu296()
                 front = v295:Clone(),
                 parent = v294.Parent
             })
-            v294:Destroy()
-            v295:Destroy()
+            for _, child in pairs(v294:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
+            for _, child in pairs(v295:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 1
+                    child.CanCollide = false
+                    child.CanTouch = false
+                end
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    child.Disabled = true
+                end
+            end
         end
     end
 end
+
 local function vu301()
     local v297, v298, v299 = ipairs(vu292)
     while true do
@@ -839,6 +1161,7 @@ local function vu301()
     end
     vu292 = {}
 end
+
 v5.Robberies:AddToggle("RemoveTurretsCargoShip", {
     Title = "Remove Turrets",
     Default = false,
@@ -850,6 +1173,7 @@ v5.Robberies:AddToggle("RemoveTurretsCargoShip", {
         end
     end
 })
+
 v5.Robberies:AddSection("Airdrop")
 local vu303 = nil
 local function vu307(p304)
@@ -857,15 +1181,29 @@ local function vu307(p304)
     local v306 = v305 and v305:FindFirstChild("NPCs")
     if v306 then
         vu303 = v306:Clone()
-        v306:Destroy()
+        for _, child in pairs(v306:GetDescendants()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 1
+                child.CanCollide = false
+                child.CanTouch = false
+            end
+            if child:IsA("Script") or child:IsA("LocalScript") then
+                child.Disabled = true
+            end
+            if child:IsA("Humanoid") then
+                child.Health = 0
+            end
+        end
     end
 end
+
 local function vu308()
     if vu303 then
         vu303.Parent = workspace.Drop
         vu303 = nil
     end
 end
+
 v5.Robberies:AddToggle("DisableNPCs", {
     Title = "Remove NPCs",
     Default = false,
@@ -877,6 +1215,7 @@ v5.Robberies:AddToggle("DisableNPCs", {
         end
     end
 })
+
 v5.MainSmileB:AddButton({
     Title = "Give Items",
     Callback = function()
@@ -946,10 +1285,12 @@ v5.MainSmileB:AddButton({
         end
     end
 })
+
 v5.MainSmileB:AddParagraph({
     Title = "Give Items",
     Content = "Pistol, Baton, Shotgun and SWAT stuff (if you bought)"
 })
+
 v5.MainSmileB:AddButton({
     Title = "Give Glider",
     Callback = function()
@@ -1012,6 +1353,7 @@ v5.MainSmileB:AddButton({
         end
     end
 })
+
 v5.MainSmileB:AddToggle("KeycardBypass", {
     Title = "Keycard Bypass",
     Default = state.keyBypass,
@@ -1030,20 +1372,26 @@ v5.MainSmileB:AddToggle("KeycardBypass", {
         else
             pushLog("Keycard bypass: PlayerUtils not found")
         end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        if alwaysVisibleStatus then
+            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        end
     end
 })
+
 v5.MainSmileB:AddToggle("KillAura", {
     Title = "KillAura",
     Default = state.killAura,
     Callback = function(value)
         state.killAura = value
         pushLog("KillAura " .. (state.killAura and "enabled" or "disabled"))
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        if alwaysVisibleStatus then
+            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        end
     end
 })
+
 v5.MainSmileB:AddSlider("KillRange", {
     Title = "Kill Range",
     Min = 0,
@@ -1054,6 +1402,7 @@ v5.MainSmileB:AddSlider("KillRange", {
         pushLog("Kill range set to " .. value)
     end
 })
+
 v5.MainSmileB:AddToggle("SilentAim", {
     Title = "Silent Aim",
     Default = state.silentAim,
@@ -1082,10 +1431,13 @@ v5.MainSmileB:AddToggle("SilentAim", {
             end
             pushLog("Silent aim disabled")
         end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        if alwaysVisibleStatus then
+            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        end
     end
 })
+
 v5.MainSmileB:AddSlider("SilentAimRange", {
     Title = "Silent Aim Range",
     Min = 0,
@@ -1096,6 +1448,7 @@ v5.MainSmileB:AddSlider("SilentAimRange", {
         pushLog("Silent aim range set to " .. value)
     end
 })
+
 v5.MainSmileB:AddToggle("NPCAura", {
     Title = "NPC Aura",
     Default = state.npcAura,
@@ -1104,6 +1457,7 @@ v5.MainSmileB:AddToggle("NPCAura", {
         pushLog("NPC Aura " .. (state.npcAura and "enabled" or "disabled"))
     end
 })
+
 v5.MainSmileB:AddToggle("HitboxExpander", {
     Title = "Hitbox Expander",
     Default = state.hitbox,
@@ -1112,12 +1466,14 @@ v5.MainSmileB:AddToggle("HitboxExpander", {
         pushLog("Hitbox Expander " .. (state.hitbox and "enabled" or "disabled"))
     end
 })
+
 v5.MainSmileB:AddButton({
     Title = "Get Pistol",
     Callback = function()
         ensurePistol()
     end
 })
+
 v5.MiscSmileB:AddToggle("PoliceIndicator", {
     Title = "Police Indicator",
     Default = state.policeIndicator,
@@ -1126,6 +1482,7 @@ v5.MiscSmileB:AddToggle("PoliceIndicator", {
         pushLog("Police Indicator " .. (state.policeIndicator and "enabled" or "disabled"))
     end
 })
+
 v5.MiscSmileB:AddSlider("PoliceRange", {
     Title = "Police Range",
     Min = 0,
@@ -1136,6 +1493,7 @@ v5.MiscSmileB:AddSlider("PoliceRange", {
         pushLog("Police range set to " .. value)
     end
 })
+
 v5.MiscSmileB:AddToggle("NerfEquip", {
     Title = "Nerf Equip",
     Default = state.nerfEquip,
@@ -1144,6 +1502,7 @@ v5.MiscSmileB:AddToggle("NerfEquip", {
         pushLog("Nerf Equip " .. (state.nerfEquip and "enabled" or "disabled"))
     end
 })
+
 v5.LocalPlayerSmileB:AddSlider("WalkSpeed", {
     Title = "Walk Speed",
     Min = 16,
@@ -1157,6 +1516,7 @@ v5.LocalPlayerSmileB:AddSlider("WalkSpeed", {
         pushLog("Walk speed set to " .. value)
     end
 })
+
 v5.LocalPlayerSmileB:AddToggle("InfJump", {
     Title = "Infinite Jump",
     Default = state.infJump,
@@ -1165,6 +1525,7 @@ v5.LocalPlayerSmileB:AddToggle("InfJump", {
         pushLog("Infinite Jump " .. (state.infJump and "enabled" or "disabled"))
     end
 })
+
 v5.LocalPlayerSmileB:AddToggle("AntiRagdoll", {
     Title = "Anti Ragdoll",
     Default = state.antiRagdoll,
@@ -1173,6 +1534,7 @@ v5.LocalPlayerSmileB:AddToggle("AntiRagdoll", {
         pushLog("Anti Ragdoll " .. (state.antiRagdoll and "enabled" or "disabled"))
     end
 })
+
 local vu312 = false
 v5.LocalPlayerSmileB:AddToggle("ClickTP", {
     Title = "Click TP",
@@ -1181,6 +1543,7 @@ v5.LocalPlayerSmileB:AddToggle("ClickTP", {
         vu312 = p313
     end
 })
+
 local v314 = game:GetService("UserInputService")
 local vu315 = game:GetService("Players").LocalPlayer
 v314.InputBegan:Connect(function(p316)
@@ -1189,17 +1552,20 @@ v314.InputBegan:Connect(function(p316)
         vu315.Character:MoveTo(v317)
     end
 end)
+
 local vu43 = game:GetService("Players")
 local v44 = v5.ESP:AddToggle("ESP", {
     Title = "ESP",
     Default = false
 })
+
 local vu45 = false
 local vu46 = false
 local vu47 = false
 local vu48 = false
 local vu49 = false
 local vu50 = {}
+
 local function vu55()
     local v51, v52, v53 = pairs(vu50)
     while true do
@@ -1223,6 +1589,7 @@ local function vu55()
     end
     vu50 = {}
 end
+
 local function vu75()
     vu55()
     if vu45 then
@@ -1322,46 +1689,55 @@ local function vu75()
         end
     end
 end
+
 local v76 = v5.ESP:AddToggle("Tracers", {
     Title = "Tracers",
     Default = false
 })
+
 local v77 = v5.ESP:AddToggle("Boxes", {
     Title = "Boxes",
     Default = false
 })
+
 local v78 = v5.ESP:AddToggle("Names", {
     Title = "Names",
     Default = false
 })
+
 local v79 = v5.ESP:AddToggle("Distance", {
     Title = "Distance",
     Default = false
 })
+
 v76:OnChanged(function(p80)
     vu46 = p80
     if vu45 then
         vu55()
     end
 end)
+
 v77:OnChanged(function(p81)
     vu47 = p81
     if vu45 then
         vu55()
     end
 end)
+
 v78:OnChanged(function(p82)
     vu48 = p82
     if vu45 then
         vu55()
     end
 end)
+
 v79:OnChanged(function(p83)
     vu49 = p83
     if vu45 then
         vu55()
     end
 end)
+
 v44:OnChanged(function(p84)
     vu45 = p84
     state.esp = p84
@@ -1369,14 +1745,18 @@ v44:OnChanged(function(p84)
         vu55()
     end
     pushLog("ESP " .. (state.esp and "enabled" or "disabled"))
-    alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-        :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    if alwaysVisibleStatus then
+        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+    end
 end)
-RunService.RenderStepped:Connect(function()
+
+game:GetService("RunService").RenderStepped:Connect(function()
     if vu45 then
         vu75()
     end
 end)
+
 v5.Teleport:AddSection("Teleport Locations")
 v5.Teleport:AddButton({
     Title = "Criminal Base",
@@ -1385,6 +1765,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Criminal Base")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Prison",
     Callback = function()
@@ -1392,6 +1773,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Prison")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Jewelry Store",
     Callback = function()
@@ -1399,6 +1781,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Jewelry Store")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Bank",
     Callback = function()
@@ -1406,6 +1789,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Bank")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Museum",
     Callback = function()
@@ -1413,6 +1797,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Museum")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Power Plant",
     Callback = function()
@@ -1420,6 +1805,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Power Plant")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Casino",
     Callback = function()
@@ -1427,6 +1813,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Casino")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Tomb",
     Callback = function()
@@ -1434,6 +1821,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Tomb")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Mansion",
     Callback = function()
@@ -1441,6 +1829,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Mansion")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Oil Rig",
     Callback = function()
@@ -1448,6 +1837,7 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Oil Rig")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Cargo Ship",
     Callback = function()
@@ -1455,20 +1845,81 @@ v5.Teleport:AddButton({
         pushLog("Teleporting to Cargo Ship")
     end
 })
+
 v5.Teleport:AddButton({
     Title = "Abort Teleport",
     Callback = function()
         stopActiveTeleport()
     end
 })
+
 v5.Keybinds:AddParagraph({
     Title = "Keybinds",
-    Content = "No keybinds implemented yet"
+    Content = "Bind keys to features (implementation pending)"
 })
+
+v5.Keybinds:AddDropdown("BindKillAura", {
+    Title = "Bind KillAura",
+    Values = {"Q", "E", "R", "F"},
+    Callback = function(value)
+        state.keybinds.KillAura = Enum.KeyCode[value]
+        pushLog("KillAura bound to " .. value)
+    end
+})
+
+v5.Keybinds:AddDropdown("BindSilentAim", {
+    Title = "Bind Silent Aim",
+    Values = {"Q", "E", "R", "F"},
+    Callback = function(value)
+        state.keybinds.SilentAim = Enum.KeyCode[value]
+        pushLog("Silent Aim bound to " .. value)
+    end
+})
+
+v5.Keybinds:AddDropdown("BindESP", {
+    Title = "Bind ESP",
+    Values = {"Q", "E", "R", "F"},
+    Callback = function(value)
+        state.keybinds.ESP = Enum.KeyCode[value]
+        pushLog("ESP bound to " .. value)
+    end
+})
+
+v5.Keybinds:AddDropdown("BindInfJump", {
+    Title = "Bind Inf Jump",
+    Values = {"Q", "E", "R", "F"},
+    Callback = function(value)
+        state.keybinds.InfJump = Enum.KeyCode[value]
+        pushLog("Inf Jump bound to " .. value)
+    end
+})
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == state.keybinds.KillAura then
+        state.killAura = not state.killAura
+        pushLog("KillAura toggled via keybind")
+    end
+    if input.KeyCode == state.keybinds.SilentAim then
+        state.silentAim = not state.silentAim
+        pushLog("Silent Aim toggled via keybind")
+    end
+    if input.KeyCode == state.keybinds.ESP then
+        state.esp = not state.esp
+        vu45 = state.esp
+        pushLog("ESP toggled via keybind")
+    end
+    if input.KeyCode == state.keybinds.InfJump then
+        state.infJump = not state.infJump
+        pushLog("Inf Jump toggled via keybind")
+    end
+end)
+
 v5.Credits:AddParagraph({
     Title = "Credits",
     Content = "UI - Smile B\nScripting - Smile B\nAnything else - Still Smile B"
 })
+
 local alwaysVisibleStatus = Instance.new("TextLabel")
 alwaysVisibleStatus.Name = "StatusStrip"
 alwaysVisibleStatus.Size = UDim2.new(0, 640, 0, 30)
@@ -1486,8 +1937,9 @@ alwaysVisibleStatus.Parent = PlayerGui
 local c = Instance.new("UICorner")
 c.CornerRadius = UI_CORNER_RADIUS
 c.Parent = alwaysVisibleStatus
-alwaysVisibleStatus.ZIndex = 10
+alwaysVisibleStatus.ZIndex = 1
 alwaysVisibleStatus.Active = false
+
 local policeStatus = Instance.new("TextLabel")
 policeStatus.Name = "PoliceStatus"
 policeStatus.Size = UDim2.new(0, 640, 0, 24)
@@ -1506,22 +1958,33 @@ policeStatus.Visible = false
 local c2 = Instance.new("UICorner")
 c2.CornerRadius = UI_CORNER_RADIUS
 c2.Parent = policeStatus
-policeStatus.ZIndex = 10
+policeStatus.ZIndex = 1
 policeStatus.Active = false
+
 task.spawn(function()
+    local pistolCheckId = 0
     while true do
+        pistolCheckId = pistolCheckId + 1
+        local localId = pistolCheckId
         if LocalPlayer.Backpack:FindFirstChild("Pistol") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Pistol")) then
             state.hasPistol = true
         else
             state.hasPistol = false
         end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        if alwaysVisibleStatus then
+            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+        end
         task.wait(PISTOL_CHECK_INTERVAL)
+        if localId ~= pistolCheckId then break end
     end
 end)
+
 task.spawn(function()
+    local killLoopId = 0
     while true do
+        killLoopId = killLoopId + 1
+        local currentLoop = killLoopId
         if state.killAura and state.hasPistol then
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1556,18 +2019,22 @@ task.spawn(function()
                         end
                     end
                 end
-                if closest and closest:FindFirstChild("Head") then
+                if closest then
                     state.currentTarget = closest
-                    pistol.Fire:FireServer(closest.Head.Position)
-                    task.wait(FIRE_DELAY)
+                    if closest:FindFirstChild("Head") then
+                        pistol.Fire:FireServer(closest:FindFirstChild("Head").Position)
+                        task.wait(FIRE_DELAY)
+                    end
                 else
                     state.currentTarget = nil
                 end
             end
         end
         task.wait(KILLAURA_TICK)
+        if currentLoop ~= killLoopId then break end
     end
 end)
+
 task.spawn(function()
     while true do
         if state.policeIndicator then
@@ -1600,6 +2067,7 @@ task.spawn(function()
         task.wait(0.1)
     end
 end)
+
 LocalPlayer.CharacterAdded:Connect(function(char)
     local humanoid = char:WaitForChild("Humanoid")
     lastHealth = humanoid.Health
@@ -1608,14 +2076,15 @@ LocalPlayer.CharacterAdded:Connect(function(char)
             local damage = lastHealth - newHealth
             local now = tick()
             if now - lastDamageTime <= DAMAGE_PRIORITY_WINDOW then
-                pushLog("Damage taken: " .. damage)
+                pushLog("Damage taken: " .. damage .. " (possible from " .. tostring(lastDamagePosition) .. ")")
             end
             lastDamageTime = now
             lastDamagePosition = char.HumanoidRootPart.Position
         end
         lastHealth = newHealth
-    end)
+    end
 end)
+
 UserInputService.JumpRequest:Connect(function()
     if state.infJump then
         local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -1624,6 +2093,7 @@ UserInputService.JumpRequest:Connect(function()
         end
     end
 end)
+
 RunService.Heartbeat:Connect(function()
     if state.hitbox then
         for _, plr in pairs(Players:GetPlayers()) do
@@ -1637,19 +2107,5 @@ RunService.Heartbeat:Connect(function()
         end
     end
 end)
-RunService.Heartbeat:Connect(function()
-    if state.antiRagdoll and LocalPlayer.Character then
-        local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
-        if humanoid and humanoid:GetState() == Enum.HumanoidStateType.Ragdoll then
-            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
-    end
-end)
-_G.SmileB = {
-    state = state,
-    pushLog = pushLog,
-    ensurePistol = ensurePistol,
-    teleportTo = teleportTo,
-    stopTeleport = stopActiveTeleport
-}
-pushLog("Smile B UI loaded and running")
+
+RunService.Heartbeat
