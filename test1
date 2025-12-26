@@ -1,0 +1,170 @@
+--[[
+_____/\\\\\\\\\\\______________________________/\\\\\\______________________________/\\\\\\\\\\\\\___        
+ ___/\\\/////////\\\___________________________\////\\\_____________________________\/\\\/////////\\\_       
+  __\//\\\______\///_______________________/\\\____\/\\\_____________________________\/\\\_______\/\\\_      
+   ___\////\\\____________/\\\\\__/\\\\\___\///_____\/\\\________/\\\\\\\\____________\/\\\\\\\\\\\\\\__     
+    ______\////\\\_______/\\\///\\\\\///\\\__/\\\____\/\\\______/\\\/////\\\___________\/\\\/////////\\\_    
+     _________\////\\\___\/\\\_\//\\\__\/\\\_\/\\\____\/\\\_____/\\\\\\\\\\\____________\/\\\_______\/\\\_   
+      __/\\\______\//\\\__\/\\\__\/\\\__\/\\\_\/\\\____\/\\\____\//\\///////_____________\/\\\_______\/\\\_  
+       _\///\\\\\\\\\\\/___\/\\\__\/\\\__\/\\\_\/\\\__/\\\\\\\\\__\//\\\\\\\\\\___________\/\\\\\\\\\\\\\/__ 
+        ___\///////////_____\///___\///___\///__\///__\/////////____\//////////____________\/////////////____
+
+    UI - Smile B
+    Scripting - Smile B
+    Anything else - Still Smile B
+]]--
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local DEFAULT_KILL_RANGE = 1000
+local KILLAURA_TICK = 0.22
+local GIVEITEM_ATTEMPT_DELAY = 0.18
+local GIVEITEM_MAX_ATTEMPTS = 5000
+local DAMAGE_PRIORITY_WINDOW = 3
+local LOG_CAP = 50
+local PISTOL_CHECK_INTERVAL = 0.5
+local EQUIP_WAIT_TIME = 0.12
+local FIRE_DELAY = 0.06
+local UI_CORNER_RADIUS = UDim.new(0, 12)
+
+local state = {
+    keyBypass = false,
+    esp = false,
+    killAura = false,
+    silentAim = false,
+    killRange = DEFAULT_KILL_RANGE,
+    silentAimRange = DEFAULT_KILL_RANGE,
+    hasPistol = false,
+    tryingToGetPistol = false,
+    currentTarget = nil,
+    localSpeed = 24,
+    infJump = false,
+    nerfEquip = false,
+    antiRagdoll = false,
+    npcAura = true,
+    hitbox = false,
+    teleportAbortRequested = false,
+    policeIndicator = false,
+    policeRange = 650
+}
+
+local logs = {}  -- Moved here to initialize early
+
+local RayCastModule = nil
+local oldRayIgnore = nil
+pcall(function()
+    if ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast") then
+        RayCastModule = require(ReplicatedStorage.Module.RayCast)
+        oldRayIgnore = RayCastModule.RayIgnoreNonCollideWithIgnoreList
+    end
+end)
+
+local function rawPushLog(msg)
+    if not logs then logs = {} end
+    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
+    table.insert(logs, entry)
+    if #logs > LOG_CAP then table.remove(logs, 1) end
+    print("[SmileB] " .. entry)
+end
+
+local function pushLog(msg)
+    rawPushLog(msg)
+end
+
+pushLog("Script started - loading Fluent...")
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+if not Fluent then
+    warn("[SmileB] Failed to load Fluent UI! Your executor may block GitHub HttpGet.")
+    return
+end
+
+pushLog("Fluent loaded successfully")
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+task.wait(2)
+
+local Window = Fluent:CreateWindow({
+    Title = "Smile B Scripts (Jailbreak)",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Acrylic = true,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.RightShift
+})
+
+local v5 = {
+    Robberies = Window:AddTab({Title = "Robberies", Icon = ""}),
+    MainSmileB = Window:AddTab({Title = "Main", Icon = ""}),
+    MiscSmileB = Window:AddTab({Title = "Misc", Icon = ""}),
+    LocalPlayerSmileB = Window:AddTab({Title = "LocalPlayer", Icon = ""}),
+    ESP = Window:AddTab({Title = "ESP", Icon = ""}),
+    Teleport = Window:AddTab({Title = "Teleport", Icon = ""}),
+    Keybinds = Window:AddTab({Title = "Keybinds", Icon = ""}),
+    Credits = Window:AddTab({Title = "Credits", Icon = ""})
+})
+
+-- [All your Robberies toggles, Main buttons/toggles, ESP code, Teleports, Keybinds, etc. go here exactly as before - no changes needed]
+
+-- Status bars (created after UI to avoid early errors)
+local alwaysVisibleStatus = Instance.new("TextLabel")
+alwaysVisibleStatus.Name = "StatusStrip"
+alwaysVisibleStatus.Size = UDim2.new(0, 640, 0, 30)
+alwaysVisibleStatus.Position = UDim2.new(0.5, 0, 0, 10)
+alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5, 0)
+alwaysVisibleStatus.BackgroundTransparency = 0.18
+alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
+alwaysVisibleStatus.BorderSizePixel = 0
+alwaysVisibleStatus.Font = Enum.Font.Gotham
+alwaysVisibleStatus.TextSize = 13
+alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Center
+alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
+alwaysVisibleStatus.Text = "Pistol: No KillAura: OFF SilentAim: OFF ESP: OFF KeyBypass: OFF"
+alwaysVisibleStatus.Parent = PlayerGui
+local c = Instance.new("UICorner")
+c.CornerRadius = UI_CORNER_RADIUS
+c.Parent = alwaysVisibleStatus
+alwaysVisibleStatus.ZIndex = 10
+
+local policeStatus = Instance.new("TextLabel")
+policeStatus.Name = "PoliceStatus"
+policeStatus.Size = UDim2.new(0, 640, 0, 24)
+policeStatus.Position = UDim2.new(0.5, 0, 0, 42)
+policeStatus.AnchorPoint = Vector2.new(0.5, 0)
+policeStatus.BackgroundTransparency = 0.18
+policeStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
+policeStatus.BorderSizePixel = 0
+policeStatus.Font = Enum.Font.Gotham
+policeStatus.TextSize = 12
+policeStatus.TextXAlignment = Enum.TextXAlignment.Center
+policeStatus.TextColor3 = Color3.fromRGB(255, 40, 40)
+policeStatus.Text = ""
+policeStatus.Parent = PlayerGui
+policeStatus.Visible = false
+local c2 = Instance.new("UICorner")
+c2.CornerRadius = UI_CORNER_RADIUS
+c2.Parent = policeStatus
+policeStatus.ZIndex = 10
+
+-- [All your task.spawn loops for pistol check, kill aura, police indicator, etc. go here]
+
+-- [Connections for CharacterAdded, JumpRequest, Heartbeat for hitbox/anti-ragdoll]
+
+_G.SmileB = {
+    state = state,
+    pushLog = pushLog,
+    ensurePistol = ensurePistol,
+    teleportTo = teleportTo,
+    stopTeleport = stopActiveTeleport
+}
+
+pushLog("Smile B UI loaded and running")
