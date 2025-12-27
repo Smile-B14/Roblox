@@ -1,3 +1,19 @@
+--[[
+_____/\\\\\\\\\\\______________________________/\\\\\\______________________________/\\\\\\\\\\\\\___        
+ ___/\\\/////////\\\___________________________\////\\\_____________________________\/\\\/////////\\\_       
+  __\//\\\______\///_______________________/\\\____\/\\\_____________________________\/\\\_______\/\\\_      
+   ___\////\\\____________/\\\\\__/\\\\\___\///_____\/\\\________/\\\\\\\\____________\/\\\\\\\\\\\\\\__     
+    ______\////\\\_______/\\\///\\\\\///\\\__/\\\____\/\\\______/\\\/////\\\___________\/\\\/////////\\\_    
+     _________\////\\\___\/\\\_\//\\\__\/\\\_\/\\\____\/\\\_____/\\\\\\\\\\\____________\/\\\_______\/\\\_   
+      __/\\\______\//\\\__\/\\\__\/\\\__\/\\\_\/\\\____\/\\\____\//\\///////_____________\/\\\_______\/\\\_  
+       _\///\\\\\\\\\\\/___\/\\\__\/\\\__\/\\\_\/\\\__/\\\\\\\\\__\//\\\\\\\\\\___________\/\\\\\\\\\\\\\/__ 
+        ___\///////////_____\///___\///___\///__\///__\/////////____\//////////____________\/////////////____
+
+    UI - Smile B
+    Scripting - Smile B
+    Anything else - Still Smile B
+]]--
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -42,9 +58,10 @@ local state = {
 local logs = {}
 
 local function rawPushLog(msg)
-    table.insert(logs, msg)
+    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
+    table.insert(logs, entry)
     if #logs > LOG_CAP then table.remove(logs, 1) end
-    print("[SmileB] " .. msg)
+    print("[SmileB] " .. entry)
 end
 
 local function pushLog(msg)
@@ -114,6 +131,14 @@ local v5 = {
     Credits = Window:AddTab({Title = "Credits", Icon = ""})
 }
 
-_G.SmileB = { ... }
+-- Add test button
+v5.MainSmileB:AddButton({
+    Title = "Test Button",
+    Callback = function()
+        pushLog("Test button clicked - Script is working!")
+    end
+})
 
-pushLog("Smile B UI loaded and running - Enjoy!")
+-- Add the rest of your full script code here, including the robberies toggles, main features, ESP, teleports, keybinds, credits, status bars, loops, etc.
+
+pushLog("Smile B UI loaded and running - Click the test button in Main tab!")
