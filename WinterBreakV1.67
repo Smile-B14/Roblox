@@ -12,7 +12,7 @@ _____/\\\\\\\\\\\______________________________/\\\\\\__________________________
     Scripting - Smile B
     Anything else - Still Smile B
     loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/WinterBreakV1.67"))()
-    loadstring(game:HttpGet("https://pastebin.com/raw/iASq7uwh"))()
+    loadstring(game:HttpGet("https://pastebin.com/raw/1q3Hs6FF"))()
 ]]--
 
 --[Smile B | Roblox Jailbreak V1.67]--
@@ -38,6 +38,7 @@ local IsMobile = ScreenSize.X < 800
 local WindowSize = IsMobile and UDim2.fromOffset(480, 340) or UDim2.fromOffset(600, 460)
 local OverlayWidth = IsMobile and 350 or 640
 
+-- [[ MAIN WINDOW ]] --
 local Window = Fluent:CreateWindow({
     Title = "Smile B",
     SubTitle = "Jailbreak V1.67",
@@ -45,7 +46,7 @@ local Window = Fluent:CreateWindow({
     Size = WindowSize,
     Acrylic = true,
     Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.RightShift
+    MinimizeKey = Enum.KeyCode.RightShift -- Standard minimize key
 })
 
 -- [[ CONSTANTS & CONFIG ]] --
@@ -57,7 +58,7 @@ local DAMAGE_PRIORITY_WINDOW = 3
 local LOG_CAP = 100
 local EQUIP_WAIT_TIME = 0.12
 local FIRE_DELAY = 0.06
-local POLICE_CHECK_RANGE = 3000 -- FIXED: 3000 Studs as requested
+local POLICE_CHECK_RANGE = 3000
 
 local state = {
     keyBypass = false,
@@ -73,7 +74,6 @@ local state = {
     keybinds = {},
     localSpeed = 24,
     infJump = false,
-    nerfEquip = false, -- Restored
     antiRagdoll = false,
     npcAura = false,
     teleportAbortRequested = false,
@@ -102,6 +102,7 @@ end
 local OverlayGui = Instance.new("ScreenGui")
 OverlayGui.Name = "SmileB_Overlay"
 OverlayGui.ResetOnSpawn = false
+-- Protected GUI parent
 if pcall(function() OverlayGui.Parent = CoreGui end) then
 else OverlayGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
@@ -111,72 +112,87 @@ local function addCorner(inst)
     c.Parent = inst
 end
 
--- 1. Status Bar (Top)
+-- 1. Status Bar (Moved UP)
 local statusStrip = Instance.new("TextLabel")
 statusStrip.Name = "StatusStrip"
-statusStrip.Size = UDim2.new(0, OverlayWidth, 0, 30)
-statusStrip.Position = UDim2.new(0.5, 0, 0, 10)
+statusStrip.Size = UDim2.new(0, OverlayWidth, 0, 26) -- Slightly thinner
+statusStrip.Position = UDim2.new(0.5, 0, 0, 2) -- Moved up to Y=2
 statusStrip.AnchorPoint = Vector2.new(0.5, 0)
 statusStrip.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 statusStrip.BackgroundTransparency = 0.2
 statusStrip.TextColor3 = Color3.fromRGB(230, 230, 230)
-statusStrip.TextSize = IsMobile and 11 or 14
+statusStrip.TextSize = IsMobile and 10 or 12
 statusStrip.Font = Enum.Font.GothamBold
 statusStrip.Text = "Loading..."
 statusStrip.Parent = OverlayGui
 addCorner(statusStrip)
 
--- 2. Police Indicator (Red Warning)
+-- 2. Police Indicator (Moved UP)
 local policeStrip = Instance.new("TextLabel")
 policeStrip.Name = "PoliceStrip"
-policeStrip.Size = UDim2.new(0, OverlayWidth, 0, 26)
-policeStrip.Position = UDim2.new(0.5, 0, 0, 45)
+policeStrip.Size = UDim2.new(0, OverlayWidth, 0, 24)
+policeStrip.Position = UDim2.new(0.5, 0, 0, 30) -- Moved up to Y=30 (right below status)
 policeStrip.AnchorPoint = Vector2.new(0.5, 0)
 policeStrip.BackgroundColor3 = Color3.fromRGB(40, 0, 0)
 policeStrip.BackgroundTransparency = 0.2
 policeStrip.TextColor3 = Color3.fromRGB(255, 50, 50)
-policeStrip.TextSize = IsMobile and 11 or 14
+policeStrip.TextSize = IsMobile and 10 or 12
 policeStrip.Font = Enum.Font.GothamBold
 policeStrip.Text = ""
 policeStrip.Visible = false
 policeStrip.Parent = OverlayGui
 addCorner(policeStrip)
 
--- 3. Floating Mobile/Minimize Button
+-- 3. Floating Mobile/Restore Button
 local restoreBtn = Instance.new("TextButton")
 restoreBtn.Name = "RestoreButton"
 restoreBtn.Size = UDim2.new(0, 45, 0, 45)
 restoreBtn.Position = UDim2.new(0, 10, 0.5, -22)
-restoreBtn.BackgroundColor3 = Color3.fromRGB(119, 56, 255) -- Purple accent
+restoreBtn.BackgroundColor3 = Color3.fromRGB(119, 56, 255)
 restoreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 restoreBtn.Font = Enum.Font.GothamBold
 restoreBtn.Text = "SB"
 restoreBtn.TextSize = 16
-restoreBtn.Visible = false -- Hidden initially
+restoreBtn.Visible = false
 restoreBtn.Parent = OverlayGui
 addCorner(restoreBtn)
 
--- Toggle Logic
-local menuOpen = true
-local function ToggleMenu()
-    menuOpen = not menuOpen
-    -- Find Fluent's internal frame
-    local fluentFrame = nil
-    for _, v in pairs(CoreGui:GetDescendants()) do
-        if v.Name == "Fluent" and v:FindFirstChild("Main") then
-            fluentFrame = v.Main
-            break
+-- [[ UI TOGGLE LOGIC (FIXED) ]] --
+-- This ensures we find the UI even if names change, and handles the custom button + keybind interaction
+local FluentUIReference = nil
+
+-- Helper to find the Fluent GUI
+local function GetFluentUI()
+    if FluentUIReference then return FluentUIReference end
+    -- Standard Fluent creates a ScreenGui named "Fluent" in CoreGui
+    local target = CoreGui:FindFirstChild("Fluent")
+    if target then 
+        FluentUIReference = target
+        return target 
+    end
+    -- Fallback search
+    for _, v in pairs(CoreGui:GetChildren()) do
+        if v:FindFirstChild("Main") and v.Name ~= "SmileB_Overlay" then
+             FluentUIReference = v
+             return v
         end
     end
-    
-    if fluentFrame then
-        fluentFrame.Visible = menuOpen
+    return nil
+end
+
+local isMenuVisible = true
+
+local function ToggleMenu()
+    local ui = GetFluentUI()
+    if ui then
+        isMenuVisible = not isMenuVisible
+        ui.Enabled = isMenuVisible
+        restoreBtn.Visible = not isMenuVisible
     end
-    
-    restoreBtn.Visible = not menuOpen
 end
 
 restoreBtn.MouseButton1Click:Connect(ToggleMenu)
+
 UserInputService.InputBegan:Connect(function(input, gp)
     if not gp and input.KeyCode == Enum.KeyCode.RightShift then
         ToggleMenu()
@@ -670,15 +686,6 @@ Tabs.LocalPlayer:AddToggle("InfJump", {
     Callback = function(Value)
         state.infJump = Value
         pushLog("Inf Jump: " .. tostring(Value))
-    end
-})
-
-Tabs.LocalPlayer:AddToggle("NerfEquip", {
-    Title = "Nerf Equip (Cosmetic)",
-    Default = false,
-    Callback = function(Value)
-        state.nerfEquip = Value
-        pushLog("Nerf Equip: " .. tostring(Value))
     end
 })
 
@@ -1382,28 +1389,23 @@ Tabs.Robberies:AddToggle("DisableNPCs", {
 
 -- [[ LOOPS & ESP & OVERLAY UPDATES ]] --
 
--- 1. General Loop (Jump, Speed, Nerf Equip)
+-- 1. General Loop (Jump, Speed)
 RunService.RenderStepped:Connect(function()
     pcall(function()
         if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
             LocalPlayer.Character.Humanoid.WalkSpeed = state.localSpeed or 24
         end
-        
-        -- Nerf Equip Logic (Smile B original logic)
-        if state.nerfEquip then
-             local ok, m = pcall(function() return require(ReplicatedStorage.Resource.Settings) end)
-             if ok and m then
-                if LocalPlayer.PlayerGui:FindFirstChild("GunShopGui") and LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
-                    local sld = LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider
-                    if sld:FindFirstChild("Revolver") then sld.Revolver.Top.Icon.Image = m.Images["NerfRevolver"] end
-                    if sld:FindFirstChild("Pistol") then sld.Pistol.Top.Icon.Image = m.Images["NerfPistol"] end
-                end
-             end
-        end
     end)
-    
-    if state.infJump and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-        pcall(function() LocalPlayer.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end)
+end)
+
+-- FIXED INFINITE JUMP
+UserInputService.JumpRequest:Connect(function()
+    if state.infJump then
+        pcall(function()
+            if LocalPlayer.Character then
+                LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
     end
 end)
 
@@ -1562,4 +1564,4 @@ Players.PlayerRemoving:Connect(removeEsp)
 
 -- [[ FINALIZATION ]] --
 Window:SelectTab(1)
-Fluent:Notify({Title = "Smile B", Content = "Script Loaded. Use RightShift or 'SB' button to toggle.", Duration = 5})
+Fluent:Notify({Title = "Smile B", Content = "Script Loaded. Use RightShift to toggle.", Duration = 5})
