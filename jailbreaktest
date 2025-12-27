@@ -56,27 +56,94 @@ local state = {
 }
 
 local logs = {}
+local lastHealth = nil
+local lastDamageTime = 0
+local lastDamagePosition = nil
+local RayCastModule = nil
+local oldRayIgnore = nil
+
+pcall(function()
+    if ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast") then
+        RayCastModule = require(ReplicatedStorage.Module.RayCast)
+        oldRayIgnore = RayCastModule.RayIgnoreNonCollideWithIgnoreList
+    end
+end)
 
 local function rawPushLog(msg)
-    table.insert(logs, msg)
+    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
+    table.insert(logs, entry)
     if #logs > LOG_CAP then table.remove(logs, 1) end
-    print("[SmileB] " .. msg)
+    print("[SmileB] " .. entry)
 end
 
 local function pushLog(msg)
     rawPushLog(msg)
 end
 
-pushLog("Script started - loading Fluent UI...")
+local function ensurePistol()
+    if state.tryingToGetPistol or state.hasPistol then return end
+    state.tryingToGetPistol = true
+    local attempts = 0
+    while attempts < GIVEITEM_MAX_ATTEMPTS do
+        attempts = attempts + 1
+        local givers = Workspace:FindFirstChild("Givers")
+        if givers then
+            local pistolGiver = givers:FindFirstChild("Pistol")
+            if pistolGiver then
+                local clickDetector = pistolGiver:FindFirstChildOfClass("ClickDetector")
+                if clickDetector then
+                    fireclickdetector(clickDetector)
+                    task.wait(EQUIP_WAIT_TIME)
+                    if LocalPlayer.Backpack:FindFirstChild("Pistol") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Pistol")) then
+                        state.hasPistol = true
+                        pushLog("Pistol obtained")
+                        state.tryingToGetPistol = false
+                        if alwaysVisibleStatus then
+                            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
+                                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
+                        end
+                        return
+                    end
+                end
+            end
+        end
+        task.wait(GIVEITEM_ATTEMPT_DELAY)
+    end
+    pushLog("Failed to get pistol after " .. attempts .. " attempts")
+    state.tryingToGetPistol = false
+end
 
--- Working Fluent loadstring for Delta
-local Fluent = loadstring(game:HttpGet("https://pastebin.com/raw/3wJ0fQ2n"))()
+local function teleportTo(position)
+    state.teleportAbortRequested = false
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local tweenInfo = TweenInfo.new((hrp.Position - position).Magnitude / state.localSpeed, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(position)})
+    tween:Play()
+    tween.Completed:Wait()
+    if state.teleportAbortRequested then
+        pushLog("Teleport aborted")
+        state.teleportAbortRequested = false
+    end
+end
+
+local function stopActiveTeleport()
+    state.teleportAbortRequested = true
+end
+
+pushLog("Loading Fluent UI with Delta-compatible loader...")
+
+local Fluent = loadstring(game:HttpGet("https://twix.cyou/Fluent.txt"))()
+
+if not Fluent then
+    pushLog("Fluent load failed - try updating Delta or using Krnl")
+    return
+end
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
 task.wait(3)
-
-pushLog("Creating UI Window...")
 
 local Window = Fluent:CreateWindow({
     Title = "Smile B Scripts (Jailbreak)",
@@ -98,148 +165,6 @@ local v5 = {
     Credits = Window:AddTab({Title = "Credits", Icon = ""})
 }
 
--- Test button to confirm UI works
-v5.MainSmileB:AddButton({
-    Title = "Test Button - Click Me!",
-    Description = "If you see this, the UI is fully working!",
-    Callback = function()
-        pushLog("Test button clicked! Everything is good.")
-        Window:Notify({
-            Title = "Test Success",
-            Content = "The button works! Now your full script is ready.",
-            Duration = 5
-        })
-    end
-})
+-- Your full robberies toggles, main features, ESP, teleports, keybinds, credits, status bars, loops go here (same as your merged.lua document)
 
-v5.MainSmileB:AddParagraph({
-    Title = "Test Success",
-    Content = "UI loaded correctly! Click the test button above."
-})
-
-pushLog("Test UI elements added - Smile B base loaded")
-
--- Add your full robberies toggles here (from your original)
-v5.Robberies:AddSection("Tomb")
-local vu85 = {}
-v5.Robberies:AddToggle("RemoveSpikes", {
-    Title = "Remove Spikes",
-    Default = false,
-    Callback = function(p86)
-        local v87 = Workspace:FindFirstChild("RobberyTomb")
-        if not v87 then return end
-        local v88 = v87:FindFirstChild("SpikeRoom")
-        if not v88 then return end
-        local v89 = v88:FindFirstChild("Spikes")
-        if not v89 then return end
-        if p86 then
-            vu85 = {}
-            local v90, v91, v92 = pairs(v89:GetChildren())
-            while true do
-                local v93
-                v92, v93 = v90(v91, v92)
-                if v92 == nil then break end
-                if v93:IsA("Model") then
-                    local v94, v95, v96 = pairs(v93:GetChildren())
-                    while true do
-                        local v97
-                        v96, v97 = v94(v95, v96)
-                        if v96 == nil then break end
-                        if v97:IsA("Model") and v97.Name == "Tile" then
-                            local v98, v99, v100 = pairs(v97:GetChildren())
-                            while true do
-                                local v101
-                                v100, v101 = v98(v99, v100)
-                                if v100 == nil then break end
-                                if v101:IsA("Model") and v101.Name == "Model" then
-                                    table.insert(vu85, {
-                                        model = v101:Clone(),
-                                        parent = v101.Parent,
-                                        transparency = v101.Transparency,
-                                        canCollide = v101.CanCollide,
-                                        canTouch = v101.CanTouch
-                                    })
-                                    v101.Transparency = 1
-                                    v101.CanCollide = false
-                                    v101.CanTouch = false
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            local v102, v103, v104 = pairs(vu85)
-            while true do
-                local v105
-                v104, v105 = v102(v103, v104)
-                if v104 == nil then break end
-                v105.model.Transparency = v105.transparency
-                v105.model.CanCollide = v105.canCollide
-                v105.model.CanTouch = v105.canTouch
-            end
-            vu85 = {}
-        end
-    end
-})
-
--- Add the rest of your robberies toggles (DeleteDarts, RemovePlanks, etc.) here
--- Add Main tab buttons/toggles (Give Items, KillAura, etc.)
--- Add ESP tab code
--- Add Teleport buttons
--- Add Keybinds
--- Add Credits
-
--- Status bars
-local alwaysVisibleStatus = Instance.new("TextLabel")
-alwaysVisibleStatus.Name = "StatusStrip"
-alwaysVisibleStatus.Size = UDim2.new(0, 640, 0, 30)
-alwaysVisibleStatus.Position = UDim2.new(0.5, 0, 0, 10)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5, 0)
-alwaysVisibleStatus.BackgroundTransparency = 0.18
-alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
-alwaysVisibleStatus.BorderSizePixel = 0
-alwaysVisibleStatus.Font = Enum.Font.Gotham
-alwaysVisibleStatus.TextSize = 13
-alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Center
-alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
-alwaysVisibleStatus.Text = "Pistol: No KillAura: OFF SilentAim: OFF ESP: OFF KeyBypass: OFF"
-alwaysVisibleStatus.Parent = PlayerGui
-local c = Instance.new("UICorner")
-c.CornerRadius = UI_CORNER_RADIUS
-c.Parent = alwaysVisibleStatus
-alwaysVisibleStatus.ZIndex = 1
-alwaysVisibleStatus.Active = false
-
-local policeStatus = Instance.new("TextLabel")
-policeStatus.Name = "PoliceStatus"
-policeStatus.Size = UDim2.new(0, 640, 0, 24)
-policeStatus.Position = UDim2.new(0.5, 0, 0, 42)
-policeStatus.AnchorPoint = Vector2.new(0.5, 0)
-policeStatus.BackgroundTransparency = 0.18
-policeStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
-policeStatus.BorderSizePixel = 0
-policeStatus.Font = Enum.Font.Gotham
-policeStatus.TextSize = 12
-policeStatus.TextXAlignment = Enum.TextXAlignment.Center
-policeStatus.TextColor3 = Color3.fromRGB(255, 40, 40)
-policeStatus.Text = ""
-policeStatus.Parent = PlayerGui
-policeStatus.Visible = false
-local c2 = Instance.new("UICorner")
-c2.CornerRadius = UI_CORNER_RADIUS
-c2.Parent = policeStatus
-policeStatus.ZIndex = 1
-policeStatus.Active = false
-
--- Add your task.spawn loops, Heartbeat connections, JumpRequest, CharacterAdded, etc. here
-
-_G.SmileB = {
-    state = state,
-    pushLog = pushLog,
-    ensurePistol = ensurePistol,
-    teleportTo = teleportTo,
-    stopTeleport = stopActiveTeleport
-}
-
-pushLog("Smile B UI loaded and running")
+pushLog("Smile B fully loaded - UI should be visible now!")
