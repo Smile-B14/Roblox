@@ -9,43 +9,63 @@ _____/\\\\\\\\\\\______________________________/\\\\\\__________________________
        _\///\\\\\\\\\\\/___\/\\\__\/\\\__\/\\\_\/\\\__/\\\\\\\\\__\//\\\\\\\\\\___________\/\\\\\\\\\\\\\/__ 
         ___\///////////_____\///___\///___\///__\///__\/////////____\//////////____________\/////////////____
 
-    UI - Smile B
     Scripting - Smile B
     Anything else - Still Smile B
     loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/WinterBreakV1.67"))()
+    loadstring(game:HttpGet("https://pastebin.com/raw/iASq7uwh"))()
 ]]--
 
 --[Smile B | Roblox Jailbreak V1.67]--
+-- [[ FLUENT UI LIBRARY SETUP ]] --
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+-- [[ SERVICES ]] --
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
--- config
+local Camera = Workspace.CurrentCamera
+
+-- [[ RESPONSIVE SCALING ]] --
+local ScreenSize = Camera.ViewportSize
+local IsMobile = ScreenSize.X < 800
+local WindowSize = IsMobile and UDim2.fromOffset(480, 340) or UDim2.fromOffset(600, 460)
+local OverlayWidth = IsMobile and 350 or 640
+
+local Window = Fluent:CreateWindow({
+    Title = "Smile B",
+    SubTitle = "Jailbreak V1.67",
+    TabWidth = 160,
+    Size = WindowSize,
+    Acrylic = true,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.RightShift
+})
+
+-- [[ CONSTANTS & CONFIG ]] --
 local DEFAULT_KILL_RANGE = 1000
 local KILLAURA_TICK = 0.22
 local GIVEITEM_ATTEMPT_DELAY = 0.18
 local GIVEITEM_MAX_ATTEMPTS = 5000
 local DAMAGE_PRIORITY_WINDOW = 3
-local LOG_CAP = 50
-local ESP_UPDATE_INTERVAL = 0.1
-local ESP_FULL_RELOAD_INTERVAL = 2.5
-local PISTOL_CHECK_INTERVAL = 0.5
+local LOG_CAP = 100
 local EQUIP_WAIT_TIME = 0.12
 local FIRE_DELAY = 0.06
-local UI_CORNER_RADIUS = UDim.new(0, 12)
-local BUTTON_DEBOUNCE_TIME = 0.18 -- prevents double-firing of both Activated & MouseButton1Click
--- state
+local POLICE_CHECK_RANGE = 3000 -- FIXED: 3000 Studs as requested
+
 local state = {
     keyBypass = false,
     esp = false,
     killAura = false,
     silentAim = false,
-    killRange = DEFAULT_KILL_RANGE,        -- KillAura range
-    silentAimRange = DEFAULT_KILL_RANGE,   -- Silent Aim range (separate)
+    killRange = DEFAULT_KILL_RANGE,
+    silentAimRange = DEFAULT_KILL_RANGE,
     hasPistol = false,
     tryingToGetPistol = false,
     killLoopId = 0,
@@ -53,772 +73,137 @@ local state = {
     keybinds = {},
     localSpeed = 24,
     infJump = false,
-    nerfEquip = false,
+    nerfEquip = false, -- Restored
     antiRagdoll = false,
-    npcAura = true,
-    hitbox = false,
+    npcAura = false,
     teleportAbortRequested = false,
-    policeIndicator = false, -- new: toggle for police indicator
-    policeRange = 650 -- new: range for police indicator
+    policeIndicator = false,
+    policeRange = POLICE_CHECK_RANGE,
+    hitbox = false
 }
+
 local logs = {}
 local lastHealth = nil
 local lastDamageTime = 0
 local lastDamagePosition = nil
--- RayCast module references (may be nil initially)
 local RayCastModule = nil
 local oldRayIgnore = nil
--- try require optional ray module (best-effort)
+
+-- [[ LOGGING SYSTEM ]] --
+local function pushLog(msg)
+    local timestamp = os.date("%H:%M:%S")
+    local entry = string.format("[%s] %s", timestamp, tostring(msg))
+    table.insert(logs, 1, entry)
+    if #logs > LOG_CAP then table.remove(logs) end
+    print("[SmileB] " .. entry)
+end
+
+-- [[ OVERLAY & FLOATING BUTTON SYSTEM ]] --
+local OverlayGui = Instance.new("ScreenGui")
+OverlayGui.Name = "SmileB_Overlay"
+OverlayGui.ResetOnSpawn = false
+if pcall(function() OverlayGui.Parent = CoreGui end) then
+else OverlayGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local function addCorner(inst)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 8)
+    c.Parent = inst
+end
+
+-- 1. Status Bar (Top)
+local statusStrip = Instance.new("TextLabel")
+statusStrip.Name = "StatusStrip"
+statusStrip.Size = UDim2.new(0, OverlayWidth, 0, 30)
+statusStrip.Position = UDim2.new(0.5, 0, 0, 10)
+statusStrip.AnchorPoint = Vector2.new(0.5, 0)
+statusStrip.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+statusStrip.BackgroundTransparency = 0.2
+statusStrip.TextColor3 = Color3.fromRGB(230, 230, 230)
+statusStrip.TextSize = IsMobile and 11 or 14
+statusStrip.Font = Enum.Font.GothamBold
+statusStrip.Text = "Loading..."
+statusStrip.Parent = OverlayGui
+addCorner(statusStrip)
+
+-- 2. Police Indicator (Red Warning)
+local policeStrip = Instance.new("TextLabel")
+policeStrip.Name = "PoliceStrip"
+policeStrip.Size = UDim2.new(0, OverlayWidth, 0, 26)
+policeStrip.Position = UDim2.new(0.5, 0, 0, 45)
+policeStrip.AnchorPoint = Vector2.new(0.5, 0)
+policeStrip.BackgroundColor3 = Color3.fromRGB(40, 0, 0)
+policeStrip.BackgroundTransparency = 0.2
+policeStrip.TextColor3 = Color3.fromRGB(255, 50, 50)
+policeStrip.TextSize = IsMobile and 11 or 14
+policeStrip.Font = Enum.Font.GothamBold
+policeStrip.Text = ""
+policeStrip.Visible = false
+policeStrip.Parent = OverlayGui
+addCorner(policeStrip)
+
+-- 3. Floating Mobile/Minimize Button
+local restoreBtn = Instance.new("TextButton")
+restoreBtn.Name = "RestoreButton"
+restoreBtn.Size = UDim2.new(0, 45, 0, 45)
+restoreBtn.Position = UDim2.new(0, 10, 0.5, -22)
+restoreBtn.BackgroundColor3 = Color3.fromRGB(119, 56, 255) -- Purple accent
+restoreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+restoreBtn.Font = Enum.Font.GothamBold
+restoreBtn.Text = "SB"
+restoreBtn.TextSize = 16
+restoreBtn.Visible = false -- Hidden initially
+restoreBtn.Parent = OverlayGui
+addCorner(restoreBtn)
+
+-- Toggle Logic
+local menuOpen = true
+local function ToggleMenu()
+    menuOpen = not menuOpen
+    -- Find Fluent's internal frame
+    local fluentFrame = nil
+    for _, v in pairs(CoreGui:GetDescendants()) do
+        if v.Name == "Fluent" and v:FindFirstChild("Main") then
+            fluentFrame = v.Main
+            break
+        end
+    end
+    
+    if fluentFrame then
+        fluentFrame.Visible = menuOpen
+    end
+    
+    restoreBtn.Visible = not menuOpen
+end
+
+restoreBtn.MouseButton1Click:Connect(ToggleMenu)
+UserInputService.InputBegan:Connect(function(input, gp)
+    if not gp and input.KeyCode == Enum.KeyCode.RightShift then
+        ToggleMenu()
+    end
+end)
+
+-- [[ TABS DEFINITION ]] --
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map" }),
+    LocalPlayer = Window:AddTab({ Title = "LocalPlayer", Icon = "user" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "box" }),
+    Robberies = Window:AddTab({ Title = "Robberies", Icon = "dollar-sign" }), 
+    Logs = Window:AddTab({ Title = "Logs", Icon = "file-text" }),
+    Credits = Window:AddTab({ Title = "Credits", Icon = "info" })
+}
+
+-- [[ LOGIC FUNCTIONS ]] --
+
+-- Attempt to require RayCast module
 pcall(function()
     if ReplicatedStorage:FindFirstChild("Module") and ReplicatedStorage.Module:FindFirstChild("RayCast") then
         RayCastModule = require(ReplicatedStorage.Module.RayCast)
         oldRayIgnore = RayCastModule and RayCastModule.RayIgnoreNonCollideWithIgnoreList
     end
 end)
--- small helper: safe print to dev console and internal logs
-local function rawPushLog(msg)
-    local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
-    table.insert(logs, entry)
-    if #logs > LOG_CAP then table.remove(logs, 1) end
-    print("[SmileB] " .. entry)
-end
--- GUI cleanup (remove old if present)
-pcall(function()
-    for _,v in ipairs(PlayerGui:GetChildren()) do
-        if v.Name == "SmileB_JailbreakUI" then v:Destroy() end
-    end
-end)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SmileB_JailbreakUI"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = PlayerGui
-screenGui.IgnoreGuiInset = true
-local function addCorner(inst)
-    if not inst then return end
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UI_CORNER_RADIUS
-    c.Parent = inst
-    return c
-end
--- status strip
-local alwaysVisibleStatus = Instance.new("TextLabel")
-alwaysVisibleStatus.Name = "StatusStrip"
-alwaysVisibleStatus.Size = UDim2.new(0, 640, 0, 30)
-alwaysVisibleStatus.Position = UDim2.new(0.5, 0, 0, 10)
-alwaysVisibleStatus.AnchorPoint = Vector2.new(0.5, 0)
-alwaysVisibleStatus.BackgroundTransparency = 0.18
-alwaysVisibleStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
-alwaysVisibleStatus.BorderSizePixel = 0
-alwaysVisibleStatus.Font = Enum.Font.Gotham
-alwaysVisibleStatus.TextSize = 13
-alwaysVisibleStatus.TextXAlignment = Enum.TextXAlignment.Center
-alwaysVisibleStatus.TextColor3 = Color3.fromRGB(230,230,230)
-alwaysVisibleStatus.Text = "Pistol: No KillAura: OFF SilentAim: OFF ESP: OFF KeyBypass: OFF"
-alwaysVisibleStatus.Parent = screenGui
-addCorner(alwaysVisibleStatus)
-alwaysVisibleStatus.ZIndex = 1
-alwaysVisibleStatus.Active = false
--- new: police status bar (smaller, red, beneath main status)
-local policeStatus = Instance.new("TextLabel")
-policeStatus.Name = "PoliceStatus"
-policeStatus.Size = UDim2.new(0, 640, 0, 24)
-policeStatus.Position = UDim2.new(0.5, 0, 0, 42)
-policeStatus.AnchorPoint = Vector2.new(0.5, 0)
-policeStatus.BackgroundTransparency = 0.18
-policeStatus.BackgroundColor3 = Color3.fromRGB(40,40,40)
-policeStatus.BorderSizePixel = 0
-policeStatus.Font = Enum.Font.Gotham
-policeStatus.TextSize = 12
-policeStatus.TextXAlignment = Enum.TextXAlignment.Center
-policeStatus.TextColor3 = Color3.fromRGB(255, 40, 40) -- red
-policeStatus.Text = ""
-policeStatus.Parent = screenGui
-policeStatus.Visible = false
-addCorner(policeStatus)
-policeStatus.ZIndex = 1
-policeStatus.Active = false
--- main container
-local main = Instance.new("Frame")
-main.Name = "Main"
-main.Size = UDim2.new(0, 820, 0, 520)
-main.Position = UDim2.new(0.5, -410, 0.5, -260)
-main.BackgroundColor3 = Color3.fromRGB(30,30,30)
-main.BorderSizePixel = 0
-main.Active = true
-main.Parent = screenGui
-addCorner(main)
-main.ZIndex = 1
--- header
-local header = Instance.new("Frame", main)
-header.Name = "Header"
-header.Size = UDim2.new(1,0,0,46)
-header.BackgroundColor3 = Color3.fromRGB(28,28,30)
-header.BorderSizePixel = 0
-addCorner(header)
-header.ZIndex = 2
-header.Active = true -- allow input
-header.ClipsDescendants = false
-local title = Instance.new("TextLabel", header)
-title.Name = "Title"
-title.Position = UDim2.new(0,12,0,0)
-title.Size = UDim2.new(1,-300,1,0)
-title.BackgroundTransparency = 1
-title.Text = "Jailbreak | Smile B"
-title.Font = Enum.Font.GothamBold
-title.TextSize = 16
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextColor3 = Color3.fromRGB(200,200,255)
-title.ZIndex = 2
-title.Active = true
--- robust button helper with debounce
-local function makeRobustButton(btn, name, handler)
-    if not btn then return end
-    btn.AutoButtonColor = true
-    btn.ZIndex = 10
-    btn.Active = true
-    local lastFired = 0
-    local firedFlag = false
-    local function wrapper()
-        local now = tick()
-        if firedFlag and (now - lastFired) < BUTTON_DEBOUNCE_TIME then
-            return
-        end
-        firedFlag = true
-        lastFired = now
-        task.delay(BUTTON_DEBOUNCE_TIME, function()
-            firedFlag = false
-        end)
-        local ok, err = pcall(function()
-            if rawPushLog then rawPushLog("UI Click: " .. tostring(name)) end
-            handler()
-        end)
-        if not ok then
-            if rawPushLog then rawPushLog("Error in button '" .. tostring(name) .. "': " .. tostring(err)) end
-            warn("[SmileB] Error in button '" .. tostring(name) .. "':", err)
-        end
-    end
-    btn.Activated:Connect(wrapper)
-    btn.MouseButton1Click:Connect(wrapper)
-end
--- logs panel + pushLog
-local logsPanel = Instance.new("Frame")
-logsPanel.Name = "LogsPanel"
-logsPanel.Size = UDim2.new(0.32, -12, 1, -120)
-logsPanel.Position = UDim2.new(0.66, 8, 0, 100)
-logsPanel.BackgroundColor3 = Color3.fromRGB(14,14,16)
-logsPanel.BorderSizePixel = 0
-logsPanel.ClipsDescendants = true
-logsPanel.Parent = main
-addCorner(logsPanel)
-logsPanel.ZIndex = 2
-logsPanel.Active = false
-local logsTitleMain = Instance.new("TextLabel", logsPanel)
-logsTitleMain.Size = UDim2.new(1,0,0,26)
-logsTitleMain.Position = UDim2.new(0,0,0,6)
-logsTitleMain.BackgroundTransparency = 1
-logsTitleMain.Text = "Logs (last " .. LOG_CAP .. ")"
-logsTitleMain.Font = Enum.Font.GothamBold
-logsTitleMain.TextSize = 14
-logsTitleMain.TextColor3 = Color3.fromRGB(220,220,220)
-logsTitleMain.ZIndex = 3
-logsTitleMain.Active = false
-local clearBtnMain = Instance.new("TextButton", logsPanel)
-clearBtnMain.Size = UDim2.new(0,72,0,28)
-clearBtnMain.Position = UDim2.new(1,-84,0,6)
-clearBtnMain.Text = "Clear"
-clearBtnMain.Font = Enum.Font.Gotham
-clearBtnMain.TextSize = 12
-clearBtnMain.BackgroundColor3 = Color3.fromRGB(80,80,80)
-clearBtnMain.TextColor3 = Color3.fromRGB(240,240,240)
-clearBtnMain.BorderSizePixel = 0
-addCorner(clearBtnMain)
-clearBtnMain.ZIndex = 10
-clearBtnMain.Active = true
-local logsScrollMain = Instance.new("ScrollingFrame", logsPanel)
-logsScrollMain.Name = "LogsScrollMain"
-logsScrollMain.Size = UDim2.new(1,-12,1,-56)
-logsScrollMain.Position = UDim2.new(0,6,0,36)
-logsScrollMain.BackgroundTransparency = 1
-logsScrollMain.ScrollBarThickness = 8
-addCorner(logsScrollMain)
-logsScrollMain.ZIndex = 2
-logsScrollMain.Active = false
-local logsListMain = Instance.new("Frame", logsScrollMain)
-logsListMain.Name = "LogsListMain"
-logsListMain.Size = UDim2.new(1,0,1,0)
-logsListMain.BackgroundTransparency = 1
-local logsLayoutMain = Instance.new("UIListLayout", logsListMain)
-logsLayoutMain.SortOrder = Enum.SortOrder.LayoutOrder
-logsLayoutMain.Padding = UDim.new(0,4)
-logsLayoutMain:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    logsScrollMain.CanvasSize = UDim2.new(0,0,0, logsLayoutMain.AbsoluteContentSize.Y + 8)
-    logsScrollMain.CanvasPosition = Vector2.new(0, logsLayoutMain.AbsoluteContentSize.Y + 8)
-end)
-local function pushLog(msg)
-    rawPushLog(msg)
-    if logsListMain and logsScrollMain then
-        local entry = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(msg))
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, -8, 0, 18)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = entry
-        lbl.Font = Enum.Font.Gotham
-        lbl.TextSize = 14
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.TextColor3 = Color3.fromRGB(220,220,220)
-        lbl.ZIndex = 3
-        lbl.Parent = logsListMain
-    end
-end
-clearBtnMain.MouseButton1Click:Connect(function()
-    for _,c in ipairs(logsListMain:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
-    logs = {}
-    pushLog("Logs cleared")
-end)
--- content base and frames
-local contentBase = Instance.new("Frame", main)
-contentBase.Name = "ContentBase"
-contentBase.Size = UDim2.new(0.66, -12, 1, -120)
-contentBase.Position = UDim2.new(0,8,0,100)
-contentBase.BackgroundTransparency = 1
-addCorner(contentBase)
-contentBase.ZIndex = 2
-contentBase.Active = false
-local function makeContentFrame(name)
-    local f = Instance.new("Frame", contentBase)
-    f.Name = name
-    f.Size = UDim2.new(1,0,1,0)
-    f.Position = UDim2.new(0,0,0,0)
-    f.BackgroundTransparency = 1
-    f.Visible = false
-    addCorner(f)
-    f.ZIndex = 2
-    f.Active = false
-    local scroll = Instance.new("ScrollingFrame", f)
-    scroll.Name = "Scroll"
-    scroll.Size = UDim2.new(1, 0, 1, 0)
-    scroll.Position = UDim2.new(0,0,0,0)
-    scroll.CanvasSize = UDim2.new(0,0,0,0)
-    scroll.ScrollBarThickness = 8
-    scroll.BackgroundTransparency = 1
-    addCorner(scroll)
-    scroll.ZIndex = 2
-    scroll.Active = false
-    local content = Instance.new("Frame", scroll)
-    content.Name = "Content"
-    content.Size = UDim2.new(1,0,0,0)
-    content.Position = UDim2.new(0,0,0,0)
-    content.BackgroundTransparency = 1
-    local layout = Instance.new("UIListLayout", content)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0,8)
-    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        scroll.CanvasSize = UDim2.new(0,0,0, layout.AbsoluteContentSize.Y + 12)
-    end)
-    return f, scroll, content, layout
-end
-local contentMain, mainScroll, mainContent, mainLayout = makeContentFrame("ContentMain")
-local contentKeybinds, keybindsScroll, keybindsContent, keybindsLayout = makeContentFrame("ContentKeybinds")
-local contentTeleport, teleportScroll, teleportContent, teleportLayout = makeContentFrame("ContentTeleport")
-local contentLocalPlayer, localPlayerScroll, localPlayerContent, localPlayerLayout = makeContentFrame("ContentLocalPlayer")
-local contentMisc, miscScroll, miscContent, miscLayout = makeContentFrame("ContentMisc")
-local contentCredits, creditsScroll, creditsContent, creditsLayout = makeContentFrame("ContentCredits")
--- two-column main layout inside mainContent
-local leftColumn = Instance.new("Frame", mainContent)
-leftColumn.Name = "LeftColumn"
-leftColumn.Size = UDim2.new(0.62, 0, 1, 0)
-leftColumn.Position = UDim2.new(0,0,0,0)
-leftColumn.BackgroundTransparency = 1
-addCorner(leftColumn)
-leftColumn.ZIndex = 3
-leftColumn.Active = false
-local leftLayout = Instance.new("UIListLayout", leftColumn)
-leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
-leftLayout.Padding = UDim.new(0,8)
-local rightColumn = Instance.new("Frame", mainContent)
-rightColumn.Name = "RightColumn"
-rightColumn.Size = UDim2.new(0.36, 0, 1, 0)
-rightColumn.Position = UDim2.new(0.62, 8, 0, 0)
-rightColumn.BackgroundTransparency = 1
-addCorner(rightColumn)
-rightColumn.ZIndex = 3
-rightColumn.Active = false
-local rightLayout = Instance.new("UIListLayout", rightColumn)
-rightLayout.SortOrder = Enum.SortOrder.LayoutOrder
-rightLayout.Padding = UDim.new(0,8)
-local function newRow(parentContent, height)
-    height = height or 36
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(1,0,0,height)
-    f.BackgroundTransparency = 1
-    f.Parent = parentContent
-    f.ZIndex = 3
-    f.Active = false
-    return f
-end
-local function createToggle(parentContent, labelText, default, callback)
-    local row = newRow(parentContent)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = labelText
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(230,230,230)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28)
-    btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = default and "ON" or "OFF"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = default and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn)
-    btn.ZIndex = 10
-    btn.Active = true
-    makeRobustButton(btn, labelText, function()
-        default = not default
-        btn.Text = default and "ON" or "OFF"
-        btn.BackgroundColor3 = default and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-        callback(default)
-    end)
-    return row, btn, callback
-end
-local function createSlider(parentContent, name, min, max, default, callback)
-    local row = newRow(parentContent,44)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.6,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = name .. ": " .. tostring(default)
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(220,220,220)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    local slider = Instance.new("Frame", row)
-    slider.Size = UDim2.new(0.36,0,0.52,0)
-    slider.Position = UDim2.new(0.62,0,0.24,0)
-    slider.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    slider.BorderSizePixel = 0
-    slider.ClipsDescendants = true
-    addCorner(slider)
-    slider.ZIndex = 3
-    slider.Active = true
-    local fill = Instance.new("Frame", slider)
-    local pct = math.clamp((default - min) / (max - min), 0, 1)
-    fill.Size = UDim2.new(pct,0,1,0)
-    fill.BackgroundColor3 = Color3.fromRGB(128,0,128)
-    fill.BorderSizePixel = 0
-    addCorner(fill)
-    fill.ZIndex = 4
-    local dragging = false
-    local conn
-    local function updateFromPos(pos)
-        local x = math.clamp(pos.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
-        local pct = x / slider.AbsoluteSize.X
-        local value = math.floor(min + pct * (max - min))
-        fill.Size = UDim2.new(pct,0,1,0)
-        lbl.Text = name .. ": " .. tostring(value)
-        callback(value)
-    end
-    slider.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            conn = UserInputService.InputChanged:Connect(function(move)
-                if dragging and (move.UserInputType == Enum.UserInputType.MouseMovement or move.UserInputType == Enum.UserInputType.Touch) then
-                    updateFromPos(move.Position)
-                end
-            end)
-        end
-    end)
-    slider.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            if conn then conn:Disconnect(); conn = nil end
-        end
-    end)
-    return row, slider, fill, lbl
-end
--- helper wrappers
-local function safeToggleVisual(btn, stateValue)
-    if not btn then return end
-    btn.Text = stateValue and "ON" or "OFF"
-    btn.BackgroundColor3 = stateValue and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-end
--- create tabs
-local tabBar = Instance.new("Frame", main)
-tabBar.Name = "TabBar"
-tabBar.Size = UDim2.new(1, -16, 0, 36)
-tabBar.Position = UDim2.new(0,8,0,52)
-tabBar.BackgroundTransparency = 1
-tabBar.ZIndex = 3
-local tabLayout = Instance.new("UIListLayout", tabBar)
-tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tabLayout.Padding = UDim.new(0,6)
-local function makeTab(label)
-    local b = Instance.new("TextButton", tabBar)
-    b.Size = UDim2.new(0, 120, 1, 0)
-    b.Text = label
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 14
-    b.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    b.TextColor3 = Color3.fromRGB(255,255,255)
-    b.BorderSizePixel = 0
-    addCorner(b)
-    b.ZIndex = 10
-    b.Active = true
-    return b
-end
-local tabMainBtn = makeTab("Main")
-local tabKeybindBtn = makeTab("Keybinds")
-local tabTeleportBtn = makeTab("Teleport")
-local tabLocalPlayerBtn = makeTab("LocalPlayer")
-local tabMiscBtn = makeTab("Misc")
-local tabCreditsBtn = makeTab("Credits")
--- utility to swap tabs
-local function hideAllContent()
-    contentMain.Visible = false; mainScroll.Visible = false
-    contentKeybinds.Visible = false; keybindsScroll.Visible = false
-    contentTeleport.Visible = false; teleportScroll.Visible = false
-    contentLocalPlayer.Visible = false; localPlayerScroll.Visible = false
-    contentMisc.Visible = false; miscScroll.Visible = false
-    contentCredits.Visible = false; creditsScroll.Visible = false
-end
-local function showTab(tabName)
-    hideAllContent()
-    if tabName == "Main" then contentMain.Visible = true; mainScroll.Visible = true end
-    if tabName == "Keybinds" then contentKeybinds.Visible = true; keybindsScroll.Visible = true end
-    if tabName == "Teleport" then contentTeleport.Visible = true; teleportScroll.Visible = true end
-    if tabName == "LocalPlayer" then contentLocalPlayer.Visible = true; localPlayerScroll.Visible = true end
-    if tabName == "Misc" then contentMisc.Visible = true; miscScroll.Visible = true end
-    if tabName == "Credits" then contentCredits.Visible = true; creditsScroll.Visible = true end
-end
-tabMainBtn.MouseButton1Click:Connect(function() showTab("Main") end)
-tabKeybindBtn.MouseButton1Click:Connect(function() showTab("Keybinds") end)
-tabTeleportBtn.MouseButton1Click:Connect(function() showTab("Teleport") end)
-tabLocalPlayerBtn.MouseButton1Click:Connect(function() showTab("LocalPlayer") end)
-tabMiscBtn.MouseButton1Click:Connect(function() showTab("Misc") end)
-tabCreditsBtn.MouseButton1Click:Connect(function() showTab("Credits") end)
-showTab("Main")
--- main content building (Main tab controls)
-local function newMainRowLeft(h) return newRow(leftColumn, h) end
-local function newMainRowRight(h) return newRow(rightColumn, h) end
--- Keycard Bypass (Main)
-local keyRow = newMainRowLeft()
-local keyBtn = Instance.new("TextButton", keyRow)
-do
-    local lbl = Instance.new("TextLabel", keyRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Keycard Bypass"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    keyBtn.Size = UDim2.new(0,84,0,28); keyBtn.Position = UDim2.new(1,-92,0,4)
-    keyBtn.Text = state.keyBypass and "ON" or "OFF"
-    keyBtn.Font = Enum.Font.GothamBold; keyBtn.TextSize = 13; keyBtn.BorderSizePixel = 0
-    keyBtn.BackgroundColor3 = state.keyBypass and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    keyBtn.TextColor3 = Color3.fromRGB(255,255,255); addCorner(keyBtn)
-    makeRobustButton(keyBtn, "Keycard Bypass", function()
-        state.keyBypass = not state.keyBypass
-        safeToggleVisual(keyBtn, state.keyBypass)
-        local ok, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
-        if ok and plrUtils then
-            if state.keyBypass then
-                if not rawget(_G, "SmileB_original_hasKey") then pcall(function() rawset(_G, "SmileB_original_hasKey", require(plrUtils).hasKey) end) end
-                pcall(function() require(plrUtils).hasKey = function() return true end end)
-                pushLog("Keycard bypass enabled")
-            else
-                pcall(function() require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey") or require(plrUtils).hasKey end)
-                pushLog("Keycard bypass disabled")
-            end
-        else
-            pushLog("Keycard bypass: PlayerUtils not found")
-        end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-    end)
-end
--- KillAura (Main)
-local kaRow = newMainRowLeft()
-local kaBtn = Instance.new("TextButton", kaRow)
-do
-    local lbl = Instance.new("TextLabel", kaRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "KillAura (player-targeting)"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    kaBtn.Size = UDim2.new(0,84,0,28); kaBtn.Position = UDim2.new(1,-92,0,4)
-    kaBtn.Text = state.killAura and "ON" or "OFF"; kaBtn.Font = Enum.Font.GothamBold; kaBtn.TextSize = 13; kaBtn.BorderSizePixel = 0
-    kaBtn.BackgroundColor3 = state.killAura and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    kaBtn.TextColor3 = Color3.fromRGB(255,255,255); addCorner(kaBtn)
-    makeRobustButton(kaBtn, "KillAura", function()
-        state.killAura = not state.killAura
-        safeToggleVisual(kaBtn, state.killAura)
-        pushLog("KillAura toggled: " .. tostring(state.killAura))
-        if state.killAura and LocalPlayer.Character then
-            spawn(function() runKillAura(LocalPlayer.Character) end)
-        else
-            state.killLoopId = state.killLoopId + 1
-        end
-        updateOverrideState()
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-    end)
-end
--- NPC Aura (Main)
-local npcRow = newMainRowLeft()
-local npcBtn = Instance.new("TextButton", npcRow)
-do
-    local lbl = Instance.new("TextLabel", npcRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "NPC Aura (auto-kill NPCs & guards)"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    npcBtn.Size = UDim2.new(0,84,0,28); npcBtn.Position = UDim2.new(1,-92,0,4)
-    npcBtn.Text = state.npcAura and "ON" or "OFF"; npcBtn.Font = Enum.Font.GothamBold; npcBtn.TextSize = 13; npcBtn.BorderSizePixel = 0
-    npcBtn.BackgroundColor3 = state.npcAura and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    npcBtn.TextColor3 = Color3.fromRGB(255,255,255); addCorner(npcBtn)
-    makeRobustButton(npcBtn, "NPC Aura", function()
-        state.npcAura = not state.npcAura
-        safeToggleVisual(npcBtn, state.npcAura)
-        pushLog("NPC Aura toggled: " .. tostring(state.npcAura))
-    end)
-end
--- Silent Aim (Main)
-local saRow = newMainRowLeft()
-local saBtn = Instance.new("TextButton", saRow)
-do
-    local lbl = Instance.new("TextLabel", saRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Silent Aim"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    saBtn.Size = UDim2.new(0,84,0,28); saBtn.Position = UDim2.new(1,-92,0,4)
-    saBtn.Text = state.silentAim and "ON" or "OFF"; saBtn.Font = Enum.Font.GothamBold; saBtn.TextSize = 13; saBtn.BorderSizePixel = 0
-    saBtn.BackgroundColor3 = state.silentAim and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    saBtn.TextColor3 = Color3.fromRGB(255,255,255); addCorner(saBtn)
-    makeRobustButton(saBtn, "Silent Aim", function()
-        state.silentAim = not state.silentAim
-        safeToggleVisual(saBtn, state.silentAim)
-        pushLog("Silent Aim toggled: " .. tostring(state.silentAim))
-        updateOverrideState()
-        if state.silentAim then ensurePistol() end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-    end)
-end
--- === SEPARATE SLIDERS ===
--- KillAura Range slider
--- === SLIDERS WITH EXACT VALUE INPUT (TAP "SET" TO TYPE) ===
-local function createSliderWithInput(parentContent, name, min, max, default, stateKey)
-    local row = newRow(parentContent, 52)  -- taller row for input
 
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.5, 0, 1, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = name .. ": " .. tostring(default)
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    lbl.Name = "Label"
-
-    local slider = Instance.new("Frame", row)
-    slider.Size = UDim2.new(0.36, 0, 0.45, 0)
-    slider.Position = UDim2.new(0.52, 0, 0.15, 0)
-    slider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    slider.BorderSizePixel = 0
-    slider.ClipsDescendants = true
-    addCorner(slider)
-    slider.ZIndex = 3
-
-    local fill = Instance.new("Frame", slider)
-    local pct = math.clamp((default - min) / (max - min), 0, 1)
-    fill.Size = UDim2.new(pct, 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(128, 0, 128)
-    fill.BorderSizePixel = 0
-    addCorner(fill)
-    fill.ZIndex = 4
-
-    local setBtn = Instance.new("TextButton", row)
-    setBtn.Size = UDim2.new(0, 60, 0, 28)
-    setBtn.Position = UDim2.new(0.9, -4, 0.3, 0)
-    setBtn.Text = "Set"
-    setBtn.Font = Enum.Font.GothamBold
-    setBtn.TextSize = 13
-    setBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    setBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    setBtn.BorderSizePixel = 0
-    addCorner(setBtn)
-    setBtn.ZIndex = 10
-
-    -- Popup for typing exact value
-    local inputGui = Instance.new("Frame")
-    inputGui.Size = UDim2.new(0, 220, 0, 100)
-    inputGui.Position = UDim2.new(0.5, -110, 0.5, -50)
-    inputGui.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    inputGui.Visible = false
-    inputGui.ZIndex = 100
-    addCorner(inputGui)
-    inputGui.Parent = screenGui
-
-    local inputTitle = Instance.new("TextLabel", inputGui)
-    inputTitle.Size = UDim2.new(1, 0, 0, 30)
-    inputTitle.BackgroundTransparency = 1
-    inputTitle.Text = "Set " .. name
-    inputTitle.Font = Enum.Font.GothamBold
-    inputTitle.TextSize = 15
-    inputTitle.TextColor3 = Color3.fromRGB(220, 220, 220)
-    inputTitle.ZIndex = 101
-
-    local inputBox = Instance.new("TextBox", inputGui)
-    inputBox.Size = UDim2.new(0.9, 0, 0, 34)
-    inputBox.Position = UDim2.new(0.05, 0, 0.35, 0)
-    inputBox.Text = tostring(default)
-    inputBox.Font = Enum.Font.Gotham
-    inputBox.TextSize = 16
-    inputBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    inputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    addCorner(inputBox)
-    inputBox.ZIndex = 101
-    inputBox.ClearTextOnFocus = false
-
-    local okBtn = Instance.new("TextButton", inputGui)
-    okBtn.Size = UDim2.new(0.45, -6, 0, 30)
-    okBtn.Position = UDim2.new(0.05, 0, 0.7, 0)
-    okBtn.Text = "OK"
-    okBtn.BackgroundColor3 = Color3.fromRGB(128, 0, 128)
-    okBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    okBtn.Font = Enum.Font.GothamBold
-    addCorner(okBtn)
-    okBtn.ZIndex = 101
-
-    local cancelBtn = Instance.new("TextButton", inputGui)
-    cancelBtn.Size = UDim2.new(0.45, -6, 0, 30)
-    cancelBtn.Position = UDim2.new(0.5, 6, 0.7, 0)
-    cancelBtn.Text = "Cancel"
-    cancelBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    addCorner(cancelBtn)
-    cancelBtn.ZIndex = 101
-
-    local dragging = false
-    local conn
-    local function updateSlider(value)
-        value = math.clamp(value, min, max)
-        state[stateKey] = value
-        local pct = (value - min) / (max - min)
-        fill.Size = UDim2.new(pct, 0, 1, 0)
-        lbl.Text = name .. ": " .. tostring(value)
-    end
-
-    slider.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            conn = UserInputService.InputChanged:Connect(function(move)
-                if dragging and (move.UserInputType == Enum.UserInputType.MouseMovement or move.UserInputType == Enum.UserInputType.Touch) then
-                    local x = math.clamp(move.Position.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
-                    local pct = x / slider.AbsoluteSize.X
-                    local value = math.floor(min + pct * (max - min))
-                    updateSlider(value)
-                end
-            end)
-        end
-    end)
-
-    slider.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            if conn then conn:Disconnect(); conn = nil end
-        end
-    end)
-
-    makeRobustButton(setBtn, "Set " .. name, function()
-        inputBox.Text = tostring(state[stateKey])
-        inputBox:CaptureFocus()
-        inputGui.Visible = true
-    end)
-
-    okBtn.MouseButton1Click:Connect(function()
-        local num = tonumber(inputBox.Text)
-        if num and num >= min and num <= max then
-            updateSlider(num)
-        else
-            pushLog("Invalid value for " .. name .. ": " .. inputBox.Text)
-        end
-        inputGui.Visible = false
-    end)
-
-    inputBox.FocusLost:Connect(function(enterPressed)
-        if enterPressed then
-            okBtn.MouseButton1Click:Fire()
-        end
-    end)
-
-    cancelBtn.MouseButton1Click:Connect(function()
-        inputGui.Visible = false
-    end)
-
-    updateSlider(default)
-    return row, lbl
-end
-
--- KillAura Range (with Set button)
-createSliderWithInput(leftColumn, "KillAura Range", 100, 5000, state.killRange, "killRange")
-
--- Silent Aim Range (with Set button)
-createSliderWithInput(leftColumn, "Silent Aim Range", 100, 5000, state.silentAimRange, "silentAimRange")
-
--- ESP toggle
-local espRow = newMainRowLeft()
-local espBtn = Instance.new("TextButton", espRow)
-do
-    local lbl = Instance.new("TextLabel", espRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "ESP"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    espBtn.Size = UDim2.new(0,84,0,28); espBtn.Position = UDim2.new(1,-92,0,4)
-    espBtn.Text = state.esp and "ON" or "OFF"; espBtn.Font = Enum.Font.GothamBold; espBtn.TextSize = 13; espBtn.BorderSizePixel = 0
-    espBtn.BackgroundColor3 = state.esp and Color3.fromRGB(128,0,128) or Color3.fromRGB(70,70,70)
-    espBtn.TextColor3 = Color3.fromRGB(255,255,255); addCorner(espBtn)
-    makeRobustButton(espBtn, "ESP", function()
-        state.esp = not state.esp
-        safeToggleVisual(espBtn, state.esp)
-        pushLog("ESP toggled: " .. tostring(state.esp))
-        if state.esp then
-            getgenv().ESPSettings.box = true
-            getgenv().ESPSettings.chams = true
-            getgenv().ESPSettings.tracers = true
-            getgenv().ESPSettings.health = true
-            getgenv().ESPSettings.distance = true
-            getgenv().ESPAPI.Enable()
-        else
-            getgenv().ESPAPI.Disable()
-        end
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-    end)
-end
--- Grab Items
-local grabRow = newMainRowLeft()
-do
-    local lbl = Instance.new("TextLabel", grabRow)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Grab Items"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    local grabBtn = Instance.new("TextButton", grabRow)
-    grabBtn.Size = UDim2.new(0,84,0,28); grabBtn.Position = UDim2.new(1,-92,0,4)
-    grabBtn.Text = "Grab"; grabBtn.Font = Enum.Font.GothamBold; grabBtn.TextSize = 13; grabBtn.BorderSizePixel = 0
-    grabBtn.BackgroundColor3 = Color3.fromRGB(70,70,70); grabBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(grabBtn); grabBtn.ZIndex = 10; grabBtn.Active = true
-    makeRobustButton(grabBtn, "Grab Items", function()
-        grabAllItems()
-    end)
-end
--- minimize note
-local minimizeRow = newMainRowLeft()
-do
-    local lbl = Instance.new("TextLabel", minimizeRow)
-    lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Minimize / Restore: press the Minimize keybind (default RightShift)"
-    lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-end
--- pistol acquisition / grabbing logic
 local function tryClickGiversOnce()
     if not Workspace:FindFirstChild("Givers") then return false end
     for _,g in ipairs(Workspace.Givers:GetChildren()) do
@@ -832,6 +217,7 @@ local function tryClickGiversOnce()
     end
     return false
 end
+
 local function tryPickupDroppedOnce()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -858,6 +244,7 @@ local function tryPickupDroppedOnce()
     end
     return found
 end
+
 function ensurePistol()
     if state.tryingToGetPistol or state.hasPistol then return end
     state.tryingToGetPistol = true
@@ -870,21 +257,19 @@ function ensurePistol()
             attempts = attempts + 1
             if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
                 state.hasPistol = true
-                pushLog("Pistol obtained after " .. tostring(attempts) .. " attempts")
+                pushLog("Pistol obtained")
                 break
             end
             task.wait(GIVEITEM_ATTEMPT_DELAY)
         end
-        if not state.hasPistol then pushLog("Pistol acquisition: failed after attempts") end
         state.tryingToGetPistol = false
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
     end)
 end
+
 function grabAllItems()
     if state.tryingToGetPistol then pushLog("Already attempting to get items"); return end
     state.tryingToGetPistol = true
-    pushLog("Item grabber: starting aggressive gather...")
+    pushLog("Starting Item Grabber...")
     spawn(function()
         local startCount = LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() or 0
         local attempts = 0
@@ -894,54 +279,38 @@ function grabAllItems()
             attempts = attempts + 1
             local nowCount = LocalPlayer:FindFirstChild("Folder") and #LocalPlayer.Folder:GetChildren() or 0
             if nowCount > startCount then
-                pushLog("Item grabber: new items obtained after " .. tostring(attempts) .. " attempts")
+                pushLog("New items obtained!")
                 break
             end
             task.wait(GIVEITEM_ATTEMPT_DELAY)
         end
-        if attempts >= GIVEITEM_MAX_ATTEMPTS then pushLog("Item grabber: finished with no new items") end
         state.tryingToGetPistol = false
     end)
 end
--- pistol loss watcher
+
 spawn(function()
-    local folder = LocalPlayer:FindFirstChild("Folder", 10)
-    if folder then
-        folder.ChildRemoved:Connect(function(child)
-            if child.Name == "Pistol" then
+    while true do
+        pcall(function()
+            if state.hasPistol and not (LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol")) then
                 state.hasPistol = false
-                pushLog("Pistol lost from inventory")
-                alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
                 if state.killAura or state.silentAim then ensurePistol() end
             end
         end)
-    end
-    while true do
-        if state.hasPistol and not (LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol")) then
-            state.hasPistol = false
-            pushLog("Pistol no longer detected")
-            alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-                :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-            if state.killAura or state.silentAim then ensurePistol() end
-        end
-        task.wait(PISTOL_CHECK_INTERVAL)
+        task.wait(0.5)
     end
 end)
--- helpers for selection and kill aura
+
 local function teamString(pl)
     if not pl then return "" end
     return tostring(pl.Team)
 end
+
 local function isEnemyTeam(myTeam, theirTeam)
-    if myTeam == "Police" then
-        return theirTeam == "Criminal"
-    end
-    if myTeam == "Criminal" or myTeam == "Prisoner" then
-        return theirTeam == "Police"
-    end
+    if myTeam == "Police" then return theirTeam == "Criminal" end
+    if myTeam == "Criminal" or myTeam == "Prisoner" then return theirTeam == "Police" end
     return myTeam ~= theirTeam
 end
+
 local function getNearestEnemy(maxRange)
     maxRange = maxRange or DEFAULT_KILL_RANGE
     local nearestDistance = maxRange
@@ -958,9 +327,7 @@ local function getNearestEnemy(maxRange)
                 if priorityActive then
                     local pdist = (v.Character.HumanoidRootPart.Position - lastDamagePosition).Magnitude
                     dist = pdist
-                    if distToMyPos > maxRange then
-                        continue
-                    end
+                    if distToMyPos > maxRange then continue end
                 end
                 if dist < nearestDistance then
                     nearestDistance = dist
@@ -971,58 +338,7 @@ local function getNearestEnemy(maxRange)
     end
     return nearestEnemy
 end
--- new: get nearby police (for indicator)
-local function getNearbyPolice(maxRange)
-    maxRange = maxRange or state.policeRange
-    local policeList = {}
-    local myTeam = teamString(LocalPlayer)
-    if myTeam ~= "Criminal" then return policeList end
-    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return policeList end
-    local myPos = myHRP.Position
-    local forward = myHRP.CFrame.LookVector
-    local right = myHRP.CFrame.RightVector
-    for _,v in pairs(Players:GetPlayers()) do
-        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
-            local theirTeam = teamString(v)
-            if theirTeam == "Police" then
-                local theirHRP = v.Character.HumanoidRootPart
-                local dist = (theirHRP.Position - myPos).Magnitude
-                if dist <= maxRange then
-                    local toTarget = (theirHRP.Position - myPos).Unit
-                    local dotF = forward:Dot(toTarget)
-                    local dotR = right:Dot(toTarget)
-                    local angle = math.atan2(dotR, dotF)
-                    local normalized = (angle + 2 * math.pi) % (2 * math.pi)
-                    local index = math.round(normalized * 4 / math.pi) % 8 + 1
-                    local arrows = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
-                    local arrow = arrows[index]
-                    table.insert(policeList, {player = v, dist = dist, arrow = arrow})
-                end
-            end
-        end
-    end
-    table.sort(policeList, function(a, b) return a.dist < b.dist end)
-    return policeList
-end
-spawn(function()
-    while main and main.Parent do
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("Humanoid") then
-            local hum = char.Humanoid
-            if lastHealth == nil then lastHealth = hum.Health end
-            if hum.Health < lastHealth then
-                lastDamageTime = tick()
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then lastDamagePosition = hrp.Position end
-                pushLog("Local damage detected; prioritization active for " .. tostring(DAMAGE_PRIORITY_WINDOW) .. "s")
-            end
-            lastHealth = hum.Health
-        end
-        task.wait(0.25)
-    end
-end)
--- updateOverrideState: use correct range based on which feature is active
+
 function updateOverrideState()
     if not RayCastModule then
         local ok, mod = pcall(function()
@@ -1033,13 +349,10 @@ function updateOverrideState()
         if ok and mod then
             RayCastModule = mod
             oldRayIgnore = oldRayIgnore or RayCastModule.RayIgnoreNonCollideWithIgnoreList
-            pushLog("RayCast module acquired on-demand")
         end
     end
-    if not RayCastModule or not oldRayIgnore then
-        pushLog("RayCast module not found or incompatible")
-        return
-    end
+    if not RayCastModule or not oldRayIgnore then return end
+
     if state.silentAim or state.killAura then
         RayCastModule.RayIgnoreNonCollideWithIgnoreList = function(...)
             local args = {oldRayIgnore(...)}
@@ -1055,18 +368,16 @@ function updateOverrideState()
             end
             return unpack(args)
         end
-        pushLog("Conditional override applied (silentAim or killAura)")
         ensurePistol()
     else
         pcall(function() RayCastModule.RayIgnoreNonCollideWithIgnoreList = oldRayIgnore end)
-        pushLog("Override removed (both off)")
     end
 end
+
 function runKillAura(character)
     if not character then return end
     state.killLoopId = state.killLoopId + 1
     local myLoopId = state.killLoopId
-    pushLog("KillAura loop started (id " .. tostring(myLoopId) .. ")")
     if not state.hasPistol then ensurePistol() end
     spawn(function()
         while true do
@@ -1075,94 +386,56 @@ function runKillAura(character)
             if not character or not character.Parent then break end
             local hrp = character:FindFirstChild("HumanoidRootPart")
             if not hrp then break end
-            if not state.hasPistol then
-                if not state.tryingToGetPistol then ensurePistol() end
-                task.wait(KILLAURA_TICK)
-            else
-                local nearestEnemy = getNearestEnemy(state.killRange)
-                if nearestEnemy then
-                    if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
-                        local shotCount = 0
-                        pcall(function() LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(true) end)
-                        task.wait(EQUIP_WAIT_TIME)
-                        while state.killAura and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and nearestEnemy.Character.Humanoid.Health > 0 and (nearestEnemy.Character.HumanoidRootPart.Position - hrp.Position).Magnitude < state.killRange do
-                            local currentGun = nil
-                            pcall(function()
-                                currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
-                            end)
-                            if currentGun then
-                                pcall(function()
+            
+            pcall(function()
+                if not state.hasPistol then
+                    if not state.tryingToGetPistol then ensurePistol() end
+                    task.wait(KILLAURA_TICK)
+                else
+                    local nearestEnemy = getNearestEnemy(state.killRange)
+                    if nearestEnemy then
+                        if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
+                            LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(true)
+                            task.wait(EQUIP_WAIT_TIME)
+                            while state.killAura and nearestEnemy and nearestEnemy.Character and nearestEnemy.Character:FindFirstChild("HumanoidRootPart") and nearestEnemy.Character:FindFirstChild("Humanoid") and nearestEnemy.Character.Humanoid.Health > 0 and (nearestEnemy.Character.HumanoidRootPart.Position - hrp.Position).Magnitude < state.killRange do
+                                local currentGun = require(ReplicatedStorage.Game.ItemSystem.ItemSystem).GetLocalEquipped()
+                                if currentGun then
                                     require(ReplicatedStorage.Game.Item.Gun)._attemptShoot(currentGun)
-                                end)
-                                shotCount = shotCount + 1
-                                if shotCount % 50 == 0 then pushLog("Fired " .. tostring(shotCount) .. " shots at " .. nearestEnemy.Name) end
+                                end
+                                task.wait(FIRE_DELAY)
                             end
-                            task.wait(FIRE_DELAY)
+                            LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(false)
                         end
-                        pcall(function() LocalPlayer.Folder.Pistol.InventoryEquipRemote:FireServer(false) end)
                     end
                 end
-                task.wait(KILLAURA_TICK)
-            end
+            end)
+            task.wait(KILLAURA_TICK)
         end
-        pushLog("KillAura loop stopped (id " .. tostring(myLoopId) .. ")")
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
     end)
 end
--- respawn handling
-LocalPlayer.CharacterAdded:Connect(function(char)
-    pushLog("Character respawned")
-    lastHealth = char:FindFirstChild("Humanoid") and char.Humanoid.Health or nil
-    if state.killAura then spawn(function() runKillAura(char) end) end
-    updateOverrideState()
-    if state.keyBypass then
-        pcall(function()
-            local plrUtils = ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils")
-            if plrUtils then require(plrUtils).hasKey = function() return true end end
-        end)
-    end
-end)
-if LocalPlayer:FindFirstChild("Folder") and LocalPlayer.Folder:FindFirstChild("Pistol") then
-    state.hasPistol = true
-    pushLog("Pistol present on load")
-end
--- NPC Aura loop
+
+-- NPC Aura
 spawn(function()
-    while main and main.Parent do
+    while true do
         if state.npcAura then
             pcall(function()
                 local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if not myHRP then return end
-                if Workspace:FindFirstChild("Drop") and Workspace.Drop:FindFirstChild("NPCs") then
-                    for _, npc in ipairs(Workspace.Drop.NPCs:GetChildren()) do
-                        if Players:GetPlayerFromCharacter(npc) then continue end
-                        if npc and npc:FindFirstChild("HumanoidRootPart") and npc:FindFirstChild("Humanoid") then
-                            if (npc.HumanoidRootPart.Position - myHRP.Position).magnitude <= 300 then
-                                pcall(function() npc.Humanoid.Health = 0 end)
+                if myHRP then
+                    local function killNPC(target)
+                        if target and target:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("Humanoid") then
+                            if (target.HumanoidRootPart.Position - myHRP.Position).magnitude <= 300 then
+                                target.Humanoid.Health = 0
                             end
                         end
                     end
-                end
-                -- OilRig & Mansion guards
-                if Workspace:FindFirstChild("OilRig") and Workspace.OilRig:FindFirstChild("GuardsFolder") then
-                    for _, g in ipairs(Workspace.OilRig.GuardsFolder:GetChildren()) do
-                        if Players:GetPlayerFromCharacter(g) then continue end
-                        if g and g:FindFirstChild("HumanoidRootPart") and g:FindFirstChild("Humanoid") then
-                            if (g.HumanoidRootPart.Position - myHRP.Position).magnitude <= 300 then
-                                pcall(function() g.Humanoid.Health = 0 end)
-                            end
-                        end
+                    if Workspace:FindFirstChild("Drop") and Workspace.Drop:FindFirstChild("NPCs") then
+                        for _, npc in ipairs(Workspace.Drop.NPCs:GetChildren()) do if not Players:GetPlayerFromCharacter(npc) then killNPC(npc) end end
                     end
-                end
-                if Workspace:FindFirstChild("MansionRobbery") and Workspace.MansionRobbery:FindFirstChild("GuardsFolder") then
-                    for _, g in ipairs(Workspace.MansionRobbery.GuardsFolder:GetChildren()) do
-                        if Players:GetPlayerFromCharacter(g) then continue end
-                        if g and g:FindFirstChild("HumanoidRootPart") and g:FindFirstChild("Humanoid") then
-                            if (g.HumanoidRootPart.Position - myHRP.Position).magnitude <= 300 then
-                                pcall(function() g.Humanoid.Health = 0 end)
-                            end
-                        end
+                    if Workspace:FindFirstChild("OilRig") and Workspace.OilRig:FindFirstChild("GuardsFolder") then
+                        for _, g in ipairs(Workspace.OilRig.GuardsFolder:GetChildren()) do if not Players:GetPlayerFromCharacter(g) then killNPC(g) end end
+                    end
+                    if Workspace:FindFirstChild("MansionRobbery") and Workspace.MansionRobbery:FindFirstChild("GuardsFolder") then
+                        for _, g in ipairs(Workspace.MansionRobbery.GuardsFolder:GetChildren()) do if not Players:GetPlayerFromCharacter(g) then killNPC(g) end end
                     end
                 end
             end)
@@ -1170,17 +443,7 @@ spawn(function()
         task.wait(1)
     end
 end)
--- teleport helpers
-local function stopActiveTeleport()
-    state.teleportAbortRequested = true
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        local hrp = LocalPlayer.Character.HumanoidRootPart
-        if hrp:FindFirstChild("Vel") then
-            pcall(function() hrp.Vel:Destroy() end)
-        end
-    end
-    pushLog("Emergency teleport STOP requested")
-end
+
 local function teleportTo(pos)
     if not pos then return end
     state.teleportAbortRequested = false
@@ -1215,294 +478,265 @@ local function teleportTo(pos)
     end
     doTeleport(pos)
 end
-local function findClosestKeywordPosition(keywords)
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local bestPos, bestDist = nil, (1/0)
-    for _,obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            local name = tostring(obj.Name):lower()
-            for _,kw in ipairs(keywords) do
-                if string.find(name, kw) then
-                    local pos
-                    if obj:IsA("BasePart") then pos = obj.Position
-                    else
-                        if obj.PrimaryPart then pos = obj.PrimaryPart.Position
-                        else
-                            for _,d in ipairs(obj:GetDescendants()) do
-                                if d:IsA("BasePart") then pos = d.Position; break end
-                            end
-                        end
-                    end
-                    if pos and hrp then
-                        local dist = (pos - hrp.Position).magnitude
-                        if dist < bestDist then bestDist = dist; bestPos = pos end
-                    elseif pos and not hrp then
-                        bestPos = pos; break
-                    end
-                    break
-                end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    lastHealth = char:FindFirstChild("Humanoid") and char.Humanoid.Health or nil
+    if state.killAura then spawn(function() runKillAura(char) end) end
+    updateOverrideState()
+    if state.keyBypass then
+        pcall(function()
+            local plrUtils = ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils")
+            if plrUtils then require(plrUtils).hasKey = function() return true end end
+        end)
+    end
+end)
+
+-- [[ UI IMPLEMENTATION ]] --
+
+-- MAIN TAB
+Tabs.Main:AddToggle("KeycardBypass", {
+    Title = "Keycard Bypass",
+    Default = false,
+    Callback = function(Value)
+        state.keyBypass = Value
+        local ok, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
+        if ok and plrUtils then
+            if state.keyBypass then
+                if not rawget(_G, "SmileB_original_hasKey") then pcall(function() rawset(_G, "SmileB_original_hasKey", require(plrUtils).hasKey) end) end
+                pcall(function() require(plrUtils).hasKey = function() return true end end)
+                pushLog("Keycard Bypass Enabled")
+            else
+                pcall(function() require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey") or require(plrUtils).hasKey end)
+                pushLog("Keycard Bypass Disabled")
             end
         end
     end
-    return bestPos
-end
-local robberyTeleports = {
-    {"Plane", Vector3.new(-1292.0791015625, 41.271751403808594, 2852.651611328125)},
-    {"Power Plant", Vector3.new(54.766014099121094, 20.965660095214844, 2326.134765625)},
-    {"Jeweler", Vector3.new(149.5464630126953, 17.965538024902344, 1368.3978271484375)},
-    {"Criminal Base", Vector3.new(-295.552978515625, 17.965667724609375, 1602.01806640625)},
-    {"City Bank", Vector3.new(-8.082767486572266, 17.965639114379883, 857.6124267578125)},
-    {"Museum", Vector3.new(1123.495849609375, 139.15896606445312, 1293.735107421875)},
-    {"1M Shop", Vector3.new(551.2893676757812, 63.955833435058594, -1647.752197265625)},
-    {"Volcano", Vector3.new(2212.631591796875, 328.26995849609375, -2503.282958984375)},
-    {"Casino", Vector3.new(-69.00199890136719, 154.98049926757812, -4707.578125)},
-    {"Create Bank", Vector3.new(-749.2611694335938, 19.252309799194336, -5957.173828125)},
-    {"OilRig", Vector3.new(-2838.67578125, 134.25027465820312, -3973.582275390625)}
-}
-local function makeTeleportButton(parentContent, label, posOrFunc)
-    local row = newRow(parentContent,36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = label; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28); btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "TP"; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60); btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn); btn.ZIndex = 10; btn.Active = true
-    makeRobustButton(btn, "TP "..label, function()
-        spawn(function()
-            pcall(function()
-                if type(posOrFunc) == "function" then
-                    local pos = posOrFunc()
-                    if pos then teleportTo(pos) else pushLog("Teleport: " .. label .. " not found") end
-                else
-                    teleportTo(posOrFunc)
-                end
-            end)
-        end)
-    end)
-end
-for _,t in ipairs(robberyTeleports) do
-    makeTeleportButton(teleportContent, t[1], t[2])
-end
-makeTeleportButton(teleportContent, "Teleport: Drop (if exists)", function()
-    if Workspace:FindFirstChild("Drop") and Workspace.Drop:FindFirstChild("Root") then
-        return Workspace.Drop.Root.Position
-    else
-        pushLog("Drop not found")
-        return nil
+})
+
+Tabs.Main:AddToggle("KillAura", {
+    Title = "KillAura (Player Targeting)",
+    Default = false,
+    Callback = function(Value)
+        state.killAura = Value
+        pushLog("KillAura: " .. tostring(Value))
+        if state.killAura and LocalPlayer.Character then
+            spawn(function() runKillAura(LocalPlayer.Character) end)
+        else
+            state.killLoopId = state.killLoopId + 1
+        end
+        updateOverrideState()
     end
-end)
-makeTeleportButton(teleportContent, "Find & TP: Nearest Police Station/Base", function()
-    local keywords = {"police","policestation","cop","station","hq","command","squad"}
-    local pos = findClosestKeywordPosition and findClosestKeywordPosition(keywords) or nil
-    if pos then pushLog("Found nearest police station/base, teleporting"); return pos
-    else pushLog("No police station/base found in workspace"); return nil end
-end)
-makeTeleportButton(teleportContent, "Escape from Prison", function()
-    local keywords = {"prison","jail","cell","penitentiary","prison_exit","jail_exit","escape"}
-    local pos = findClosestKeywordPosition and findClosestKeywordPosition(keywords) or nil
-    if pos then pushLog("Found prison/jail area, teleporting (Escape from Prison)"); return pos
-    else pushLog("Escape from Prison: Couldn't locate prison/jail parts in workspace"); return nil end
-end)
-do
-    local row = newRow(teleportContent,36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Emergency TP Stop"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28); btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "STOP"; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(180,40,40); btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn); btn.ZIndex = 10; btn.Active = true
-    makeRobustButton(btn, "Emergency TP Stop", function() stopActiveTeleport() end)
+})
+
+Tabs.Main:AddSlider("KillRange", {
+    Title = "KillAura Range",
+    Default = 1000,
+    Min = 100,
+    Max = 5000,
+    Rounding = 0,
+    Callback = function(Value)
+        state.killRange = Value
+    end
+})
+
+Tabs.Main:AddToggle("NPCAura", {
+    Title = "NPC Aura (Guards/NPCs)",
+    Default = false,
+    Callback = function(Value)
+        state.npcAura = Value
+        pushLog("NPC Aura: " .. tostring(Value))
+    end
+})
+
+Tabs.Main:AddToggle("SilentAim", {
+    Title = "Silent Aim",
+    Default = false,
+    Callback = function(Value)
+        state.silentAim = Value
+        pushLog("Silent Aim: " .. tostring(Value))
+        updateOverrideState()
+        if state.silentAim then ensurePistol() end
+    end
+})
+
+Tabs.Main:AddSlider("SilentAimRange", {
+    Title = "Silent Aim Range",
+    Default = 1000,
+    Min = 100,
+    Max = 5000,
+    Rounding = 0,
+    Callback = function(Value)
+        state.silentAimRange = Value
+    end
+})
+
+Tabs.Main:AddToggle("ESP", {
+    Title = "ESP",
+    Default = false,
+    Callback = function(Value)
+        state.esp = Value
+        pushLog("ESP: " .. tostring(Value))
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Grab All Items",
+    Callback = function()
+        grabAllItems()
+    end
+})
+
+-- TELEPORT TAB
+local robberyTeleports = {
+    {"Plane", Vector3.new(-1292.07, 41.27, 2852.65)},
+    {"Power Plant", Vector3.new(54.76, 20.96, 2326.13)},
+    {"Jeweler", Vector3.new(149.54, 17.96, 1368.39)},
+    {"Criminal Base", Vector3.new(-295.55, 17.96, 1602.01)},
+    {"City Bank", Vector3.new(-8.08, 17.96, 857.61)},
+    {"Museum", Vector3.new(1123.49, 139.15, 1293.73)},
+    {"1M Shop", Vector3.new(551.28, 63.95, -1647.75)},
+    {"Volcano", Vector3.new(2212.63, 328.26, -2503.28)},
+    {"Casino", Vector3.new(-69.00, 154.98, -4707.57)},
+    {"Create Bank", Vector3.new(-749.26, 19.25, -5957.17)},
+    {"OilRig", Vector3.new(-2838.67, 134.25, -3973.58)}
+}
+
+for _, t in ipairs(robberyTeleports) do
+    Tabs.Teleport:AddButton({
+        Title = "TP: " .. t[1],
+        Callback = function() spawn(function() teleportTo(t[2]) end) end
+    })
 end
--- LocalPlayer controls
-do
-    local row, slider, fill, lbl = createSlider(localPlayerContent, "Walk Speed", 0, 200, state.localSpeed, function(v)
-        state.localSpeed = v
-    end)
-    lbl.Text = "Walk Speed: " .. tostring(state.localSpeed)
-end
-do
-    local row, btn, cb = createToggle(localPlayerContent, "Infinite Jump", state.infJump, function(v)
-        state.infJump = v; pushLog("Inf Jump: " .. tostring(v))
-    end)
-end
-do
-    local row, btn, cb = createToggle(localPlayerContent, "Nerf Equip (cosmetic)", state.nerfEquip, function(v)
-        state.nerfEquip = v; pushLog("Nerf Equip: " .. tostring(v))
-    end)
-end
-do
-    local row, btn, cb = createToggle(localPlayerContent, "Anti Ragdoll", state.antiRagdoll, function(v)
-        state.antiRagdoll = v; pushLog("Anti Ragdoll: " .. tostring(v))
+
+Tabs.Teleport:AddButton({
+    Title = "Escape Prison",
+    Callback = function()
+        local keywords = {"prison","jail","cell","penitentiary","prison_exit","jail_exit","escape"}
+        local bestPos, bestDist = nil, (1/0)
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        for _,obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                local name = tostring(obj.Name):lower()
+                for _,kw in ipairs(keywords) do
+                    if string.find(name, kw) then
+                        local pos
+                        if obj:IsA("BasePart") then pos = obj.Position
+                        else
+                            if obj.PrimaryPart then pos = obj.PrimaryPart.Position else
+                                for _,d in ipairs(obj:GetDescendants()) do if d:IsA("BasePart") then pos = d.Position; break end end
+                            end
+                        end
+                        if pos and hrp then
+                            local dist = (pos - hrp.Position).magnitude
+                            if dist < bestDist then bestDist = dist; bestPos = pos end
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if bestPos then teleportTo(bestPos) else pushLog("Prison not found") end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "STOP Teleport",
+    Description = "Emergency Stop",
+    Callback = function()
+        state.teleportAbortRequested = true
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            if hrp:FindFirstChild("Vel") then pcall(function() hrp.Vel:Destroy() end) end
+        end
+        pushLog("Teleport Stopped")
+    end
+})
+
+-- LOCALPLAYER TAB
+Tabs.LocalPlayer:AddSlider("WalkSpeed", {
+    Title = "Walk Speed",
+    Default = 24,
+    Min = 16,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        state.localSpeed = Value
+    end
+})
+
+Tabs.LocalPlayer:AddToggle("InfJump", {
+    Title = "Infinite Jump",
+    Default = false,
+    Callback = function(Value)
+        state.infJump = Value
+        pushLog("Inf Jump: " .. tostring(Value))
+    end
+})
+
+Tabs.LocalPlayer:AddToggle("NerfEquip", {
+    Title = "Nerf Equip (Cosmetic)",
+    Default = false,
+    Callback = function(Value)
+        state.nerfEquip = Value
+        pushLog("Nerf Equip: " .. tostring(Value))
+    end
+})
+
+Tabs.LocalPlayer:AddToggle("AntiRagdoll", {
+    Title = "Anti Ragdoll",
+    Default = false,
+    Callback = function(Value)
+        state.antiRagdoll = Value
         spawn(function()
             local ok, tagUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Tag") and require(ReplicatedStorage.Tag.TagUtils) end)
             if ok and tagUtils then
                 if not rawget(_G, "SmileB_old_isPointInTag") then rawset(_G, "SmileB_old_isPointInTag", tagUtils.isPointInTag) end
                 tagUtils.isPointInTag = function(point, tag)
-                    if tag == "NoRagdoll" or tag == "NoFallDamage" then
-                        return v
-                    end
+                    if tag == "NoRagdoll" or tag == "NoFallDamage" then return Value end
                     return rawget(_G, "SmileB_old_isPointInTag")(point, tag)
                 end
-                pushLog("Anti Ragdoll patched TagUtils")
-            else
-                pushLog("Anti Ragdoll: TagUtils not found")
             end
         end)
-    end)
-end
-RunService.RenderStepped:Connect(function()
-    pcall(function()
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("Humanoid") then
-            char.Humanoid.WalkSpeed = state.localSpeed or 24
-        end
-        if state.nerfEquip then
-            local ok, m = pcall(function() return require(ReplicatedStorage.Resource.Settings) end)
-            if ok and m then
-                pcall(function()
-                    if LocalPlayer.PlayerGui:FindFirstChild("GunShopGui") and LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
-                        local sld = LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider
-                        if sld:FindFirstChild("Revolver") and sld:FindFirstChild("Pistol") then
-                            sld.Revolver.Top.Icon.Image = m.Images["NerfRevolver"] or sld.Revolver.Top.Icon.Image
-                            sld.Pistol.Top.Icon.Image = m.Images["NerfPistol"] or sld.Pistol.Top.Icon.Image
-                        end
-                    end
-                    if LocalPlayer:FindFirstChild("Folder") then
-                        if LocalPlayer.Folder:FindFirstChild("Pistol") then LocalPlayer.Folder.Pistol:SetAttribute("HotbarImageSrc", m.Images["NerfPistol"] or LocalPlayer.Folder.Pistol:GetAttribute("HotbarImageSrc")) end
-                        if LocalPlayer.Folder:FindFirstChild("Revolver") then LocalPlayer.Folder.Revolver:SetAttribute("HotbarImageSrc", m.Images["NerfRevolver"] or LocalPlayer.Folder.Revolver:GetAttribute("HotbarImageSrc")) end
-                    end
-                end)
-            end
-        end
-    end)
-end)
--- Misc tab buttons (Vehicle Fly loader, Open Gun Shop, etc.) -- (existing)
-do
-    local row = newRow(miscContent,36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = "Vehicle Fly (T to toggle, H to boost) - Load external script"; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 3
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28); btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "Load"; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60); btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn); btn.ZIndex = 10; btn.Active = true
-    makeRobustButton(btn, "Load Vehicle Fly", function()
-        local ok, err = pcall(function()
+        pushLog("Anti Ragdoll: " .. tostring(Value))
+    end
+})
+
+-- MISC TAB
+Tabs.Misc:AddButton({
+    Title = "Load Vehicle Fly",
+    Callback = function()
+        pcall(function()
             local _ = getgenv() or _G
             _["ToggleKey"] = "T"
-            _["BoostKey"] = "H"
-            _["BaseSpeed"] = 200
-            _["BoostMultiplier"] = 2.3
-            _["Acceleration"] = 5
-            _["RotationSpeed"] = 10
-            local url = "https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/CarFly"
-            local src = game:HttpGet(url)
-            if src and #src > 10 then
-                loadstring(src)()
-            else
-                error("CarFly script not found or empty at URL")
-            end
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/CarFly"))()
+            pushLog("Vehicle Fly Loaded")
         end)
-        if ok then pushLog("Vehicle Fly script loaded (attempt)")
-        else pushLog("Vehicle Fly load failed: " .. tostring(err)) end
-    end)
-end
--- Open Gun Shop UI (via module, works correctly)
-do
-    local row = newRow(miscContent, 36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = "Open Gun Shop UI"
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(230,230,230)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28)
-    btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "Open"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn)
-    makeRobustButton(btn, "GunShopBtn", function()
-        local ok, uiModule = pcall(function()
-            return require(ReplicatedStorage.Game.GunShop.GunShopUI)
-        end)
-        if ok and uiModule and uiModule.open then
-            pcall(function() uiModule.open() end)
-            pushLog("GunShop UI open attempted")
-        else
-            pushLog("GunShop UI not available")
-        end
-    end)
-end
--- === RESTORED: No wait E (reduce CircleAction durations) ===
-do
-    local row = newRow(miscContent, 36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = "No wait E (reduce CircleAction durations)"
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(230,230,230)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28)
-    btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "Apply"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn)
-    makeRobustButton(btn, "No wait E", function()
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Open Gun Shop UI",
+    Callback = function()
+        pcall(function() require(ReplicatedStorage.Game.GunShop.GunShopUI).open() end)
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "No Wait E",
+    Callback = function()
         local ok, UI = pcall(function() return require(ReplicatedStorage.Module:WaitForChild("UI")) end)
         if ok and UI and UI.CircleAction and UI.CircleAction.Specs then
             for i,v in pairs(UI.CircleAction.Specs) do
                 pcall(function() v.Duration = 0; v.Timed = true end)
             end
-            pushLog("No wait E applied to CircleAction.Specs")
-        else
-            pushLog("No wait E: UI.CircleAction.Specs not found")
+            pushLog("No Wait E Applied")
         end
-    end)
-end
--- === RESTORED: Delete Doors & Lasers (disable collisions & hide) ===
-do
-    local row = newRow(miscContent, 36)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.62,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = "Delete Doors & Lasers (disable collisions & hide)"
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 14
-    lbl.TextColor3 = Color3.fromRGB(230,230,230)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(0,84,0,28)
-    btn.Position = UDim2.new(1,-92,0,4)
-    btn.Text = "Run"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.BorderSizePixel = 0
-    btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    addCorner(btn)
-    makeRobustButton(btn, "Delete Doors & Lasers", function()
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Delete Doors & Lasers",
+    Callback = function()
         spawn(function()
             for _, v in ipairs(Workspace:GetDescendants()) do
                 pcall(function()
@@ -1511,929 +745,821 @@ do
                         if pcall(function() v.CanCollide = false end) then end
                         if pcall(function() v.Transparency = 1 end) then end
                     end
-                    if v.Name == "SlideDoor" or v.Name == "SwingDoor" or v.Name == "Doors" or v.Name == "BankDoor" then
-                        for _, f in ipairs(v:GetDescendants()) do
-                            if f:IsA("Part") or f:IsA("MeshPart") then
-                                pcall(function() f.CanCollide = false end)
-                                pcall(function() f.Transparency = 1 end)
+                end)
+            end
+            pushLog("Doors/Lasers Deleted")
+        end)
+    end
+})
+
+Tabs.Misc:AddToggle("PoliceIndicator", {
+    Title = "Police Indicator",
+    Description = "Shows direction of police nearby on Overlay",
+    Default = false,
+    Callback = function(Value)
+        state.policeIndicator = Value
+        if not Value then policeStrip.Visible = false end
+    end
+})
+
+-- LOGS TAB
+Tabs.Logs:AddButton({
+    Title = "Copy Logs to Clipboard",
+    Callback = function()
+        local text = table.concat(logs, "\n")
+        if setclipboard then
+            setclipboard(text)
+            Fluent:Notify({Title="Success", Content="Logs copied!", Duration=3})
+        else
+            Fluent:Notify({Title="Error", Content="Your executor doesn't support setclipboard", Duration=3})
+        end
+    end
+})
+
+local LogDisplay = Tabs.Logs:AddParagraph({
+    Title = "Log Output",
+    Content = "Logs will appear here..."
+})
+
+-- Update logs in UI periodically
+spawn(function()
+    while true do
+        pcall(function()
+            if #logs > 0 then
+                LogDisplay:SetDesc(table.concat(logs, "\n"))
+            end
+        end)
+        task.wait(1)
+    end
+end)
+
+
+-- CREDITS TAB
+Tabs.Credits:AddParagraph({
+    Title = "Smile B | Jailbreak UI",
+    Content = "Tiktok: @SmileB.BS\n\nSuggest changes: ContactSmileB@gmail.com"
+})
+
+-- [[ ROBBERIES TAB (AOI CODE) ]] --
+local vu3 = game:GetService("Workspace")
+
+Tabs.Robberies:AddSection("Tomb")
+local vu85 = {}
+Tabs.Robberies:AddToggle("RemoveSpikes", {
+    Title = "Remove Spikes",
+    Default = false,
+    Callback = function(p86)
+        local v87 = vu3:FindFirstChild("RobberyTomb"):FindFirstChild("SpikeRoom")
+        local v88 = v87 and v87:FindFirstChild("Spikes")
+        if v88 then
+            if p86 then
+                vu85 = {}
+                local v89, v90, v91 = pairs(v88:GetChildren())
+                while true do
+                    local v92
+                    v91, v92 = v89(v90, v91)
+                    if v91 == nil then break end
+                    if v92:IsA("Model") then
+                        local v93, v94, v95 = pairs(v92:GetChildren())
+                        while true do
+                            local v96
+                            v95, v96 = v93(v94, v95)
+                            if v95 == nil then break end
+                            if v96:IsA("Model") and v96.Name == "Tile" then
+                                local v97, v98, v99 = pairs(v96:GetChildren())
+                                while true do
+                                    local v100
+                                    v99, v100 = v97(v98, v99)
+                                    if v99 == nil then break end
+                                    if v100:IsA("Model") and v100.Name == "Model" then
+                                        table.insert(vu85, {v100:Clone(), v96})
+                                        v100:Destroy()
+                                    end
+                                end
                             end
                         end
                     end
-                end)
-            end
-            pushLog("Delete Doors & Lasers: Ran scan and disabled many parts (best-effort)")
-        end)
-    end)
-end
--- new: Police Nearby Indicator toggle in Misc
-do
-    local row, piBtn, cb = createToggle(miscContent, "Police Nearby Indicator", state.policeIndicator, function(v)
-        state.policeIndicator = v
-        pushLog("Police Indicator: " .. tostring(v))
-        if not v then policeStatus.Visible = false end
-    end)
-end
--- new: Police Indicator Range slider
-do
-    local row, slider, fill, lbl = createSlider(miscContent, "Police Indicator Range", 100, 5000, state.policeRange, function(v)
-        state.policeRange = v
-    end)
-    lbl.Text = "Police Indicator Range: " .. tostring(state.policeRange)
-end
--- Keybinds tab UI
-local function makeKeybindRow(actionName)
-    local row = newRow(keybindsContent)
-    local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.5,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.Text = actionName; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(230,230,230); lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 3
-    local keyLabel = Instance.new("TextLabel", row)
-    keyLabel.Size = UDim2.new(0,120,0,28); keyLabel.Position = UDim2.new(0.5, 8, 0, 4); keyLabel.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    local current = state.keybinds[actionName]
-    keyLabel.Text = current and tostring(current):gsub("Enum.KeyCode.", "") or "Unset"
-    keyLabel.Font = Enum.Font.Gotham; keyLabel.TextSize = 14; keyLabel.TextColor3 = Color3.fromRGB(230,230,230); addCorner(keyLabel)
-    keyLabel.ZIndex = 10; keyLabel.Active = false
-    local setBtn = Instance.new("TextButton", row)
-    setBtn.Size = UDim2.new(0,80,0,28); setBtn.Position = UDim2.new(1, -88, 0, 4)
-    setBtn.Text = "Set"; setBtn.Font = Enum.Font.GothamBold; setBtn.TextSize = 13; setBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
-    setBtn.BorderSizePixel = 0; addCorner(setBtn); setBtn.ZIndex = 10; setBtn.Active = true
-    makeRobustButton(setBtn, "Set Keybind "..actionName, function()
-        setBtn.Text = "Press Key."
-        local conn
-        conn = UserInputService.InputBegan:Connect(function(inp, gp)
-            if gp then return end
-            if inp.UserInputType == Enum.UserInputType.Keyboard and inp.KeyCode ~= Enum.KeyCode.Unknown then
-                state.keybinds[actionName] = inp.KeyCode
-                keyLabel.Text = tostring(inp.KeyCode):gsub("Enum.KeyCode.", "")
-                setBtn.Text = "Set"
-                conn:Disconnect()
-                pushLog("Keybind set: " .. actionName .. " = " .. tostring(inp.KeyCode):gsub("Enum.KeyCode.", ""))
-            end
-        end)
-        delay(6, function()
-            if conn and conn.Connected then
-                conn:Disconnect()
-                setBtn.Text = "Set"
-            end
-        end)
-    end)
-    return keyLabel
-end
-if not state.keybinds["Minimize"] then state.keybinds["Minimize"] = Enum.KeyCode.RightShift end
-makeKeybindRow("KillAura")
-makeKeybindRow("SilentAim")
-makeKeybindRow("ESP")
-makeKeybindRow("Keycard")
-makeKeybindRow("Grab")
-makeKeybindRow("Minimize")
--- Credits
-local titleCredits = Instance.new("TextLabel", creditsContent)
-titleCredits.Size = UDim2.new(1,0,0,26); titleCredits.BackgroundTransparency = 1
-titleCredits.Text = "Credits & Contact"; titleCredits.Font = Enum.Font.GothamBold; titleCredits.TextSize = 16; titleCredits.TextColor3 = Color3.fromRGB(220,220,220)
-local creditsText = Instance.new("TextLabel", creditsContent)
-creditsText.Size = UDim2.new(1,0,0,160); creditsText.Position = UDim2.new(0,0,0,36); creditsText.BackgroundTransparency = 1; creditsText.TextWrapped = true
-creditsText.Text = "Smile B | Jailbreak UI\nTiktok: @SmileB.BS\n\n\nSuggest changes: ContactSmileB@gmail.com"
-creditsText.Font = Enum.Font.Gotham; creditsText.TextSize = 14; creditsText.TextColor3 = Color3.fromRGB(220,220,220)
--- minimize and minimized button
-local btnMin = Instance.new("TextButton", header)
-btnMin.Name = "BtnMin"; btnMin.Size = UDim2.new(0,34,0,30); btnMin.Position = UDim2.new(1,-194,0,8); btnMin.Text = "-"
-btnMin.Font = Enum.Font.GothamBold; btnMin.BackgroundColor3 = Color3.fromRGB(36,36,40); btnMin.TextColor3 = Color3.fromRGB(255,223,120); btnMin.BorderSizePixel = 0; addCorner(btnMin); btnMin.ZIndex = 10; btnMin.Active = true
-local btnClose = Instance.new("TextButton", header)
-btnClose.Name = "BtnClose"; btnClose.Size = UDim2.new(0,34,0,30); btnClose.Position = UDim2.new(1,-148,0,8); btnClose.Text = "x"
-btnClose.Font = Enum.Font.GothamBold; btnClose.BackgroundColor3 = Color3.fromRGB(36,36,40); btnClose.TextColor3 = Color3.fromRGB(255,120,120); btnClose.BorderSizePixel = 0; addCorner(btnClose); btnClose.ZIndex = 10; btnClose.Active = true
-local minimizedBtn = Instance.new("TextButton")
-minimizedBtn.Name = "MinimizedBtn"; minimizedBtn.Parent = screenGui
-minimizedBtn.Size = UDim2.new(0, 56, 0, 56)
-minimizedBtn.Position = UDim2.new(0, 10, 0, 100)
-minimizedBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-minimizedBtn.Text = "≡"
-minimizedBtn.TextScaled = true
-minimizedBtn.Font = Enum.Font.GothamBold
-minimizedBtn.Visible = false
-minimizedBtn.Active = true
-addCorner(minimizedBtn)
-minimizedBtn.ZIndex = 12
-local savedMainPosition, savedMainSize = nil, nil
-local savedMinimizedPosition = nil -- remember where user placed the minimized button
--- Helper to compute fallback minimized position (if no savedMinimizedPosition)
-local function computeFallbackMinimizedPos()
-    return UDim2.new(0, math.clamp(main.AbsolutePosition.X, 4, workspace.CurrentCamera.ViewportSize.X - minimizedBtn.AbsoluteSize.X - 4),
-                      0, math.clamp(main.AbsolutePosition.Y, 4, workspace.CurrentCamera.ViewportSize.Y - minimizedBtn.AbsoluteSize.Y - 4))
-end
-makeRobustButton(btnMin, "Minimize Btn", function()
-    savedMainPosition = main.Position; savedMainSize = main.Size
-    main.Visible = false
-    if savedMinimizedPosition then
-        minimizedBtn.Position = savedMinimizedPosition
-    else
-        minimizedBtn.Position = computeFallbackMinimizedPos()
-    end
-    minimizedBtn.Visible = true
-    pushLog("UI minimized (button)")
-end)
-makeRobustButton(minimizedBtn, "Restore Minimized", function()
-    minimizedBtn.Visible = false
-    main.Visible = true
-    main.Position = savedMainPosition or main.Position
-    main.Size = savedMainSize or main.Size
-    pushLog("UI restored (hamburger)")
-end)
--- Close button: create a confirmation modal that warns "you will not be able to open menu again"
--- Close button with readable confirmation modal (overlay + white text + robust cleanup)
--- Close button with confirmation modal (guaranteed visible buttons)
-makeRobustButton(btnClose, "Close Btn", function()
-    local overlay = Instance.new("Frame")
-    overlay.Size = UDim2.new(1, 0, 1, 0)
-    overlay.Position = UDim2.new(0, 0, 0, 0)
-    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    overlay.BackgroundTransparency = 0.45
-    overlay.BorderSizePixel = 0
-    overlay.ZIndex = 1000
-    overlay.Parent = screenGui
-    local modal = Instance.new("Frame")
-    modal.Size = UDim2.new(0, 520, 0, 180)
-    modal.Position = UDim2.new(0.5, -260, 0.5, -90)
-    modal.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    modal.BorderSizePixel = 0
-    modal.ZIndex = 1001
-    addCorner(modal)
-    modal.Parent = screenGui
-    local titleText = Instance.new("TextLabel", modal)
-    titleText.Size = UDim2.new(1, -24, 0, 34)
-    titleText.Position = UDim2.new(0, 12, 0, 12)
-    titleText.BackgroundTransparency = 1
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 16
-    titleText.TextColor3 = Color3.fromRGB(255,255,255)
-    titleText.TextStrokeTransparency = 0.5
-    titleText.Text = "Confirm Close Menu"
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.ZIndex = 1005
-    local txt = Instance.new("TextLabel", modal)
-    txt.Size = UDim2.new(1, -24, 0, 88)
-    txt.Position = UDim2.new(0, 12, 0, 44)
-    txt.BackgroundTransparency = 1
-    txt.Font = Enum.Font.Gotham
-    txt.TextSize = 15
-    txt.TextColor3 = Color3.fromRGB(255,255,255)
-    txt.TextStrokeTransparency = 0.5
-    txt.TextWrapped = true
-    txt.Text = "Are you sure you want to close the menu?\n\nIf you confirm, the menu will be permanently closed for this session and you will NOT be able to re-open it without restarting the script."
-    txt.TextXAlignment = Enum.TextXAlignment.Left
-    txt.ZIndex = 1005
-    local btnContainer = Instance.new("Frame", modal)
-    btnContainer.Size = UDim2.new(1, -24, 0, 44)
-    btnContainer.Position = UDim2.new(0, 12, 1, -56)
-    btnContainer.BackgroundTransparency = 1
-    btnContainer.ZIndex = 1005
-    -- Yes button
-    local btnYes = Instance.new("TextButton", btnContainer)
-    btnYes.Size = UDim2.new(0, 140, 1, 0)
-    btnYes.Position = UDim2.new(0.5, -160, 0, 0)
-    btnYes.BackgroundColor3 = Color3.fromRGB(180,40,40)
-    btnYes.BorderSizePixel = 0
-    btnYes.ZIndex = 1005
-    btnYes.TextTransparency = 1 -- hide default text
-    addCorner(btnYes)
-    local lblYes = Instance.new("TextLabel", btnYes)
-    lblYes.Size = UDim2.new(1,0,1,0)
-    lblYes.BackgroundTransparency = 1
-    lblYes.Font = Enum.Font.GothamBold
-    lblYes.TextSize = 14
-    lblYes.Text = "Yes, Close"
-    lblYes.TextColor3 = Color3.fromRGB(255,255,255)
-    lblYes.TextStrokeTransparency = 0.5
-    lblYes.ZIndex = 1006
-    -- No button
-    local btnNo = Instance.new("TextButton", btnContainer)
-    btnNo.Size = UDim2.new(0, 140, 1, 0)
-    btnNo.Position = UDim2.new(0.5, 20, 0, 0)
-    btnNo.BackgroundColor3 = Color3.fromRGB(80,80,80)
-    btnNo.BorderSizePixel = 0
-    btnNo.ZIndex = 1005
-    btnNo.TextTransparency = 1
-    addCorner(btnNo)
-    local lblNo = Instance.new("TextLabel", btnNo)
-    lblNo.Size = UDim2.new(1,0,1,0)
-    lblNo.BackgroundTransparency = 1
-    lblNo.Font = Enum.Font.GothamBold
-    lblNo.TextSize = 14
-    lblNo.Text = "Cancel"
-    lblNo.TextColor3 = Color3.fromRGB(255,255,255)
-    lblNo.TextStrokeTransparency = 0.5
-    lblNo.ZIndex = 1006
-    local function cleanup()
-        pcall(function() overlay:Destroy() end)
-        pcall(function() modal:Destroy() end)
-    end
-    makeRobustButton(btnNo, "Close Cancel", function()
-        cleanup()
-        pushLog("UI close cancelled")
-    end)
-    makeRobustButton(btnYes, "Close Confirm", function()
-        pushLog("UI closed by user (confirmed)")
-        _G.SmileB = nil
-        _G.SmileB_Closed = true
-        if minimizedBtn then pcall(function() minimizedBtn:Destroy() end) end
-        if screenGui and screenGui.Parent then
-            pcall(function() screenGui:Destroy() end)
-        end
-        cleanup()
-    end)
-end)
--- keybind handler
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if not input or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    local kc = input.KeyCode
-    if not state.keybinds["Minimize"] then state.keybinds["Minimize"] = Enum.KeyCode.RightShift end
-    if kc == state.keybinds["Minimize"] then
-        if main and main.Visible then
-            savedMainPosition = main.Position; savedMainSize = main.Size
-            main.Visible = false
-            if savedMinimizedPosition then
-                minimizedBtn.Position = savedMinimizedPosition
+                end
             else
-                minimizedBtn.Position = computeFallbackMinimizedPos()
-            end
-            minimizedBtn.Visible = true
-            pcall(function() pushLog("UI minimized (keybind)") end)
-        else
-            if minimizedBtn then minimizedBtn.Visible = false end
-            if main then
-                main.Visible = true
-                main.Position = savedMainPosition or UDim2.new(0.5, -410, 0.5, -260)
-                main.Size = savedMainSize or UDim2.new(0, 820, 0, 520)
-            end
-            pcall(function() pushLog("UI restored (keybind)") end)
-        end
-        return
-    end
-    for action, bind in pairs(state.keybinds or {}) do
-        if bind == kc then
-            pcall(function()
-                if action == "KillAura" then
-                    state.killAura = not state.killAura
-                    if kaBtn then safeToggleVisual(kaBtn, state.killAura) end
-                    if state.killAura and LocalPlayer.Character then spawn(function() runKillAura(LocalPlayer.Character) end) end
-                    pushLog("Keybind toggled KillAura: " .. tostring(state.killAura))
-                    updateOverrideState()
-                elseif action == "SilentAim" then
-                    state.silentAim = not state.silentAim
-                    if saBtn then safeToggleVisual(saBtn, state.silentAim) end
-                    updateOverrideState()
-                    if state.silentAim then ensurePistol() end
-                    pushLog("Keybind toggled SilentAim: " .. tostring(state.silentAim))
-                elseif action == "ESP" then
-                    state.esp = not state.esp
-                    if espBtn then safeToggleVisual(espBtn, state.esp) end
-                    pushLog("Keybind toggled ESP: " .. tostring(state.esp))
-                    if state.esp then
-                        getgenv().ESPSettings.box = true
-                        getgenv().ESPSettings.chams = true
-                        getgenv().ESPSettings.tracers = true
-                        getgenv().ESPSettings.health = true
-                        getgenv().ESPSettings.distance = true
-                        getgenv().ESPAPI.Enable()
-                    else
-                        getgenv().ESPAPI.Disable()
-                    end
-                elseif action == "Keycard" then
-                    state.keyBypass = not state.keyBypass
-                    if keyBtn then safeToggleVisual(keyBtn, state.keyBypass) end
-                    local ok2, plrUtils = pcall(function() return ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("PlayerUtils") end)
-                    if ok2 and plrUtils then
-                        if state.keyBypass then
-                            if not rawget(_G, "SmileB_original_hasKey") then pcall(function() rawset(_G, "SmileB_original_hasKey", require(plrUtils).hasKey) end) end
-                            pcall(function() require(plrUtils).hasKey = function() return true end end)
-                            pushLog("Keycard bypass enabled (keybind)")
-                        else
-                            pcall(function() require(plrUtils).hasKey = rawget(_G, "SmileB_original_hasKey") or require(plrUtils).hasKey end)
-                            pushLog("Keycard bypass disabled (keybind)")
-                        end
-                    else
-                        pushLog("Keycard bypass: PlayerUtils not found (keybind)")
-                    end
-                elseif action == "Grab" then
-                    pushLog("Keybind: Grab pressed")
-                    grabAllItems()
+                local v101, v102, v103 = pairs(vu85)
+                while true do
+                    local v104
+                    v103, v104 = v101(v102, v103)
+                    if v103 == nil then break end
+                    v104[1].Parent = v104[2]
                 end
-            end)
-            if alwaysVisibleStatus then
-                alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-                    :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-            end
-            break
-        end
-    end
-end)
--- JumpRequest handler for Infinite Jump
-UserInputService.JumpRequest:Connect(function()
-    if not state.infJump then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if humanoid and humanoid.Health > 0 then
-        -- Force a jump / jumping state
-        pcall(function()
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        end)
-    end
-end)
--- hitbox loop
-spawn(function()
-    while main and main.Parent do
-        for _, v in ipairs(Players:GetPlayers()) do
-            if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") then
-                pcall(function()
-                    if state.hitbox and v.Team ~= LocalPlayer.Team then
-                        local hrp = v.Character.HumanoidRootPart
-                        hrp.Transparency = 0.8
-                        hrp.CanCollide = false
-                        hrp.Size = Vector3.new(7,7,7)
-                    else
-                        local hrp = v.Character.HumanoidRootPart
-                        hrp.Transparency = 1
-                        hrp.CanCollide = true
-                        hrp.Size = Vector3.new(1.8, 2.1, 0.95)
-                    end
-                end)
+                vu85 = {}
             end
         end
-        task.wait(0.6)
     end
-end)
--- update status
-spawn(function()
-    while main and main.Parent do
-        alwaysVisibleStatus.Text = ("Pistol: %s KillAura: %s SilentAim: %s ESP: %s KeyBypass: %s")
-            :format((state.hasPistol and "Yes" or "No"), (state.killAura and "ON" or "OFF"), (state.silentAim and "ON" or "OFF"), (state.esp and "ON" or "OFF"), (state.keyBypass and "ON" or "OFF"))
-        task.wait(0.5)
-    end
-end)
--- new: police indicator update loop
-spawn(function()
-    while main and main.Parent do
-        if state.policeIndicator then
-            local nearbyPolice = getNearbyPolice()
-            if #nearbyPolice > 0 then
-                local textParts = {}
-                for _, info in ipairs(nearbyPolice) do
-                    table.insert(textParts, info.arrow .. " " .. math.floor(info.dist) .. " studs")
-                end
-                policeStatus.Text = "Police Nearby: " .. table.concat(textParts, " ")
-                policeStatus.Visible = true
-            else
-                policeStatus.Visible = false
-            end
-        else
-            policeStatus.Visible = false
-        end
-        task.wait(0.1)
-    end
-end)
--- expose API
-_G.SmileB = {
-    state = state,
-    pushLog = pushLog,
-    ensurePistol = ensurePistol,
-    teleportTo = teleportTo,
-    stopTeleport = stopActiveTeleport
-}
--- ------------------------
--- Dragging: header -> move main window (mouse/touch) + persist savedMainPosition on drag end
--- (NO logging of coordinates)
--- ------------------------
-do
-    local dragging = false
-    local dragStart = Vector2.new()
-    local windowStart = Vector2.new()
-    header.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            windowStart = Vector2.new(main.AbsolutePosition.X, main.AbsolutePosition.Y)
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    -- persist the final position but do not log coordinates
-                    savedMainPosition = main.Position
-                end
-            end)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            local delta = input.Position - dragStart
-            local newPos = windowStart + Vector2.new(delta.X, delta.Y)
-            local camSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-            local maxX = math.max(0, camSize.X - main.AbsoluteSize.X)
-            local maxY = math.max(0, camSize.Y - main.AbsoluteSize.Y)
-            newPos = Vector2.new(math.clamp(newPos.X, 4, maxX - 4), math.clamp(newPos.Y, 4, maxY - 4))
-            main.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
-        end
-    end)
-end
--- ------------------------
--- Dragging: minimized hamburger -> move minimizedBtn (mouse/touch) + persist savedMinimizedPosition on drag end
--- (NO logging of coordinates)
--- ------------------------
-do
-    local draggingMini = false
-    local dragStartMini = Vector2.new()
-    local miniStart = Vector2.new()
-    minimizedBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            draggingMini = true
-            dragStartMini = input.Position
-            miniStart = Vector2.new(minimizedBtn.AbsolutePosition.X, minimizedBtn.AbsolutePosition.Y)
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    draggingMini = false
-                    -- persist minimized button position; do not log
-                    savedMinimizedPosition = minimizedBtn.Position
-                end
-            end)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not draggingMini then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            local delta = input.Position - dragStartMini
-            local newPos = miniStart + Vector2.new(delta.X, delta.Y)
-            local camSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-            local maxX = math.max(0, camSize.X - minimizedBtn.AbsoluteSize.X)
-            local maxY = math.max(0, camSize.Y - minimizedBtn.AbsoluteSize.Y)
-            newPos = Vector2.new(math.clamp(newPos.X, 4, maxX - 4), math.clamp(newPos.Y, 4, maxY - 4))
-            minimizedBtn.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
-        end
-    end)
-end
-pushLog("Smile B UI loaded and running")
+})
 
--- Minimal ESP module with distance studs
--- Place as a LocalScript (StarterPlayerScripts)
--- Control via getgenv().ESPSettings or getgenv().ESPAPI functions from your UI script
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local CoreGui = game:GetService("CoreGui")
-local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
-local env = (type(getgenv) == "function" and getgenv()) or _G
--- Default settings. Your UI should write to env.ESPSettings to control behavior.
-env.ESPSettings = env.ESPSettings or {
-    master = false, -- master on/off
-    box = true, -- box ESP
-    chams = true, -- highlight chams
-    tracers = true, -- beam tracers
-    health = true, -- health bars
-    distance = true, -- show studs above heads
-    teamFilter = true, -- remove friendly ESP per your rule
-    -- map logical role names to team names used in game. Adjust via UI if needed
-    teamNames = {
-        police = "Police",
-        criminal = "Criminal",
-        prisoner = "Prisoner"
-    }
-}
-env.ESPAPI = env.ESPAPI or {}
--- Internal containers
-local boxes = {}
-local highlights = {}
-local beamTracers = {}
-local healthBars = {}
-local distanceLabels = {} -- new: text labels for distance
--- Helpers
-local function safeDestroy(inst)
-    if inst and inst.Destroy then
-        pcall(function() inst:Destroy() end)
-    end
-end
-local function safeRemoveDrawing(d)
-    if d and d.Remove then
-        pcall(function() d:Remove() end)
-    end
-end
-local function getTeamString(plr)
-    if not plr or not plr.Team then return "" end
-    return tostring(plr.Team)
-end
-local function getPlayerColor(plr)
-    local tn = env.ESPSettings.teamNames
-    local tstr = getTeamString(plr)
-    if tstr == tn.police then
-        return Color3.fromRGB(0, 122, 255)
-    elseif tstr == tn.criminal then
-        return Color3.fromRGB(255, 40, 40)
-    elseif tstr == tn.prisoner then
-        return Color3.fromRGB(200, 200, 200)
-    else
-        return plr.TeamColor and plr.TeamColor.Color or Color3.fromRGB(0, 255, 0)
-    end
-end
-local function shouldShowPlayer(plr)
-    if not env.ESPSettings.teamFilter then
-        return true
-    end
-    local tn = env.ESPSettings.teamNames
-    local myTeam = player.Team and tostring(player.Team) or ""
-    local theirTeam = plr.Team and tostring(plr.Team) or ""
-    if myTeam == tn.police then
-        return theirTeam == tn.criminal
-    end
-    if myTeam == tn.criminal or myTeam == tn.prisoner then
-        return theirTeam == tn.police
-    end
-    return true
-end
--- Drawing availability
-local DrawingAvailable = pcall(function() return Drawing end)
-local function createBoxDrawing()
-    if not DrawingAvailable then return nil end
-    local box = Drawing.new("Square")
-    box.Visible = false
-    box.Filled = false
-    box.Thickness = 2
-    box.Transparency = 1
-    return box
-end
-local function createHealthDrawing()
-    if not DrawingAvailable then return nil end
-    local hb = {}
-    hb.background = Drawing.new("Square")
-    hb.background.Visible = false
-    hb.background.Filled = true
-    hb.background.Transparency = 1
-    hb.background.Thickness = 1
-    hb.background.Color = Color3.fromRGB(0, 0, 0)
-    hb.health = Drawing.new("Square")
-    hb.health.Visible = false
-    hb.health.Filled = true
-    hb.health.Transparency = 1
-    hb.health.Thickness = 1
-    hb.health.Color = Color3.fromRGB(0, 255, 0)
-    return hb
-end
--- Distance label creation
-local function createDistanceLabel()
-    if not DrawingAvailable then return nil end
-    local txt = Drawing.new("Text")
-    txt.Visible = false
-    txt.Center = true
-    txt.Outline = true
-    txt.OutlineColor = Color3.fromRGB(0,0,0)
-    txt.Size = 16
-    txt.Font = Drawing.Fonts.UI
-    txt.Transparency = 1
-    txt.Color = Color3.fromRGB(255,255,255)
-    return txt
-end
--- Chams helpers
-local function addHighlight(plr)
-    if highlights[plr] then return end
-    if not plr.Character or not plr.Character.Parent then return end
-    if not shouldShowPlayer(plr) then return end
-    local ok, parent = pcall(function() return player:FindFirstChildOfClass("PlayerGui") or CoreGui end)
-    parent = ok and parent or CoreGui
-    local h = Instance.new("Highlight")
-    h.Name = "ESP_Highlight"
-    h.Adornee = plr.Character
-    h.FillColor = getPlayerColor(plr)
-    h.OutlineColor = Color3.new(0, 0, 0)
-    h.FillTransparency = 0.5
-    h.OutlineTransparency = 0
-    h.Parent = parent
-    highlights[plr] = h
-end
-local function removeHighlight(plr)
-    if highlights[plr] then
-        safeDestroy(highlights[plr])
-        highlights[plr] = nil
-    end
-end
-local function updateAllHighlights()
-    for plr, hl in pairs(highlights) do
-        if not shouldShowPlayer(plr) then
-            removeHighlight(plr)
-        else
-            if plr.Character and plr.Character.Parent then
-                hl.Adornee = plr.Character
-                hl.FillColor = getPlayerColor(plr)
-            else
-                removeHighlight(plr)
-            end
-        end
-    end
-end
--- Beam tracers
-local function createBeamFor(plr)
-    if beamTracers[plr] then
-        local old = beamTracers[plr]
-        safeDestroy(old.Beam); safeDestroy(old.Attachment0); safeDestroy(old.Attachment1)
-        beamTracers[plr] = nil
-    end
-    if not plr.Character then return nil end
-    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-    local localHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp or not localHRP then return nil end
-    if not shouldShowPlayer(plr) then return nil end
-    local att0 = Instance.new("Attachment"); att0.Name = "esp_att0"; att0.Parent = localHRP
-    local att1 = Instance.new("Attachment"); att1.Name = "esp_att1"; att1.Parent = hrp
-    local beam = Instance.new("Beam")
-    beam.Name = "ESP_Beam"
-    beam.Attachment0 = att0
-    beam.Attachment1 = att1
-    beam.FaceCamera = true
-    beam.Width0 = 0.05
-    beam.Width1 = 0.05
-    beam.Color = ColorSequence.new(getPlayerColor(plr))
-    beam.Transparency = NumberSequence.new(0)
-    beam.Enabled = false
-    beam.Parent = workspace
-    beamTracers[plr] = {Attachment0 = att0, Attachment1 = att1, Beam = beam}
-    return beamTracers[plr]
-end
-local function destroyBeamFor(plr)
-    local d = beamTracers[plr]
-    if not d then return end
-    safeDestroy(d.Beam); safeDestroy(d.Attachment0); safeDestroy(d.Attachment1)
-    beamTracers[plr] = nil
-end
-local function updateTracers()
-    local localHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not localHRP then
-        for _, d in pairs(beamTracers) do if d.Beam then d.Beam.Enabled = false end end
-        return
-    end
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr == player then continue end
-        if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            if not shouldShowPlayer(plr) then
-                if beamTracers[plr] and beamTracers[plr].Beam then beamTracers[plr].Beam.Enabled = false end
-            else
-                local data = beamTracers[plr] or createBeamFor(plr)
-                if data then
-                    data.Attachment0.WorldPosition = localHRP.Position
-                    data.Attachment1.WorldPosition = plr.Character.HumanoidRootPart.Position
-                    if data.Beam then
-                        data.Beam.Color = ColorSequence.new(getPlayerColor(plr))
-                        data.Beam.Enabled = env.ESPSettings.tracers and env.ESPSettings.master
+local vu105 = {}
+Tabs.Robberies:AddToggle("DeleteDarts", {
+    Title = "Remove Darts",
+    Default = false,
+    Callback = function(p106)
+        local v107 = vu3:FindFirstChild("RobberyTomb"):FindFirstChild("DartRoom")
+        local v108 = v107 and v107:FindFirstChild("Darts")
+        if v108 then
+            if p106 then
+                vu105 = {}
+                local v109, v110, v111 = pairs(v108:GetChildren())
+                while true do
+                    local v112
+                    v111, v112 = v109(v110, v111)
+                    if v111 == nil then break end
+                    if v112:IsA("BasePart") then
+                        table.insert(vu105, v112:Clone())
+                        v112:Destroy()
                     end
                 end
-            end
-        else
-            if beamTracers[plr] and beamTracers[plr].Beam then beamTracers[plr].Beam.Enabled = false end
-        end
-    end
-end
--- Box update
-local function updateBoxes()
-    if not DrawingAvailable then return end
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr == player then continue end
-        if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
-            if boxes[plr] then boxes[plr].Visible = false end
-            continue
-        end
-        if not shouldShowPlayer(plr) then
-            if boxes[plr] then boxes[plr].Visible = false end
-            continue
-        end
-        local hrp = plr.Character.HumanoidRootPart
-        local box = boxes[plr]
-        if not box then
-            box = createBoxDrawing()
-            boxes[plr] = box
-        end
-        local rootPos, onScreen = camera:WorldToViewportPoint(hrp.Position)
-        local distance = math.clamp(rootPos.Z, 0.1, 1000)
-        if onScreen then
-            local sizeY = (1500 / distance) * 1.3
-            local sizeX = sizeY * 1.0
-            box.Size = Vector2.new(sizeX, sizeY)
-            box.Position = Vector2.new(rootPos.X - sizeX/2, rootPos.Y - sizeY/2)
-            box.Color = getPlayerColor(plr)
-            box.Visible = env.ESPSettings.box and env.ESPSettings.master
-        else
-            box.Visible = false
-        end
-    end
-end
--- Health bars
-local function updateHealthBars()
-    if not DrawingAvailable then return end
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr == player then continue end
-        if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
-            if healthBars[plr] then
-                healthBars[plr].background.Visible = false
-                healthBars[plr].health.Visible = false
-            end
-            continue
-        end
-        if not shouldShowPlayer(plr) then
-            if healthBars[plr] then
-                healthBars[plr].background.Visible = false
-                healthBars[plr].health.Visible = false
-            end
-            continue
-        end
-        if not healthBars[plr] then
-            healthBars[plr] = createHealthDrawing()
-        end
-        local char = plr.Character
-        local humanoid = char:FindFirstChild("Humanoid")
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not humanoid or not hrp then
-            healthBars[plr].background.Visible = false
-            healthBars[plr].health.Visible = false
-            continue
-        end
-        local rootPos, onScreen = camera:WorldToViewportPoint(hrp.Position)
-        if not onScreen then
-            healthBars[plr].background.Visible = false
-            healthBars[plr].health.Visible = false
-            continue
-        end
-        local distance = math.clamp(rootPos.Z, 0.1, 1000)
-        local barHeight = (600 / distance) * 1.3
-        local barWidth = 6
-        local backgroundWidth = 8
-        local barX = rootPos.X - (barHeight * 1.0 / 2) - backgroundWidth - 10
-        local barY = rootPos.Y - barHeight / 2
-        healthBars[plr].background.Size = Vector2.new(backgroundWidth, barHeight + 2)
-        healthBars[plr].background.Position = Vector2.new(barX - 1, barY - 1)
-        healthBars[plr].background.Visible = env.ESPSettings.health and env.ESPSettings.master
-        local healthPercent = math.clamp(humanoid.Health / (humanoid.MaxHealth or 100), 0, 1)
-        if healthPercent <= 0 then
-            healthBars[plr].health.Visible = false
-        else
-            local healthBarHeight = barHeight * healthPercent
-            healthBars[plr].health.Size = Vector2.new(barWidth, healthBarHeight)
-            healthBars[plr].health.Position = Vector2.new(barX, barY + (barHeight - healthBarHeight))
-            healthBars[plr].health.Visible = env.ESPSettings.health and env.ESPSettings.master
-            if healthPercent > 0.6 then
-                healthBars[plr].health.Color = Color3.fromRGB(0,255,0)
-            elseif healthPercent > 0.3 then
-                healthBars[plr].health.Color = Color3.fromRGB(255,255,0)
             else
-                healthBars[plr].health.Color = Color3.fromRGB(255,0,0)
+                local v113, v114, v115 = pairs(vu105)
+                while true do
+                    local v116
+                    v115, v116 = v113(v114, v115)
+                    if v115 == nil then break end
+                    v116.Parent = v108
+                end
+                vu105 = {}
             end
         end
     end
+})
+
+local vu117 = {}
+local function vu121()
+    local v118 = vu3:FindFirstChild("RobberyTomb")
+    if v118 then
+        local v119 = v118:FindFirstChild("Cart")
+        local v120 = v119 and v119:FindFirstChild("Planks")
+        if v120 then
+            table.insert(vu117, {model = v120:Clone(), parent = v120.Parent})
+            v120:Destroy()
+        end
+    end
 end
--- Distance update
-local function updateDistanceLabels()
-    if not DrawingAvailable then return end
-    local localHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr == player then
-            -- hide if exists
-            if distanceLabels[plr] then distanceLabels[plr].Visible = false end
-            continue
+local function vu126()
+    local v122, v123, v124 = ipairs(vu117)
+    while true do
+        local v125
+        v124, v125 = v122(v123, v124)
+        if v124 == nil then break end
+        if v125.model.Parent == nil then v125.model.Parent = v125.parent end
+    end
+    vu117 = {}
+end
+Tabs.Robberies:AddToggle("RemovePlanks", {
+    Title = "Remove Planks",
+    Default = false,
+    Callback = function(p127) if p127 then vu121() else vu126() end end
+})
+
+local vu128 = {}
+local function vu131()
+    local v129 = vu3:FindFirstChild("RobberyTomb")
+    local v130 = v129 and v129:FindFirstChild("Kill")
+    if v130 then
+        table.insert(vu128, {model = v130:Clone(), parent = v130.Parent})
+        v130:Destroy()
+    end
+end
+local function vu136()
+    local v132, v133, v134 = ipairs(vu128)
+    while true do
+        local v135
+        v134, v135 = v132(v133, v134)
+        if v134 == nil then break end
+        if v135.model.Parent == nil then v135.model.Parent = v135.parent end
+    end
+    vu128 = {}
+end
+Tabs.Robberies:AddToggle("RemoveKillModel", {
+    Title = "Remove Lava Damage",
+    Default = false,
+    Callback = function(p137) if p137 then vu131() else vu136() end end
+})
+
+Tabs.Robberies:AddSection("PowerPlant")
+local vu138 = {}
+local function vu149(p139)
+    local v140, v141, v142 = pairs(p139:GetChildren())
+    while true do
+        while true do
+            local v143
+            v142, v143 = v140(v141, v142)
+            if v142 == nil then return end
+            if not v143:IsA("Model") or v143.Name ~= "Model" then break end
+            local v144, v145, v146 = pairs(v143:GetDescendants())
+            local v147 = false
+            while true do
+                local v148
+                v146, v148 = v144(v145, v146)
+                if v146 == nil then break end
+                if v148:IsA("BasePart") and v148.Name == "BarbedWire" then v147 = true break end
+            end
+            if v147 then
+                table.insert(vu138, v143:Clone())
+                v143:Destroy()
+            end
         end
-        if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
-            if distanceLabels[plr] then distanceLabels[plr].Visible = false end
-            continue
-        end
-        if not shouldShowPlayer(plr) then
-            if distanceLabels[plr] then distanceLabels[plr].Visible = false end
-            continue
-        end
-        if not distanceLabels[plr] then
-            distanceLabels[plr] = createDistanceLabel()
-        end
-        local hrp = plr.Character.HumanoidRootPart
-        local rootPos, onScreen = camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2.5, 0)) -- slightly above head
-        if not onScreen or not localHRP then
-            distanceLabels[plr].Visible = false
+        vu149(v143)
+    end
+end
+Tabs.Robberies:AddToggle("RemoveBarbedWireModel", {
+    Title = "Remove Lasers",
+    Default = false,
+    Callback = function(p150)
+        if p150 then
+            vu149(workspace)
         else
-            local dist = (localHRP.Position - hrp.Position).Magnitude
-            local distStr = string.format("%.1f studs", dist)
-            distanceLabels[plr].Position = Vector2.new(rootPos.X, rootPos.Y - 10)
-            distanceLabels[plr].Text = distStr
-            distanceLabels[plr].Color = getPlayerColor(plr)
-            distanceLabels[plr].Visible = env.ESPSettings.distance and env.ESPSettings.master
+            local v151, v152, v153 = pairs(vu138)
+            while true do
+                local v154
+                v153, v154 = v151(v152, v153)
+                if v153 == nil then break end
+                v154.Parent = workspace
+            end
+            vu138 = {}
+        end
+    end
+})
+
+Tabs.Robberies:AddSection("Bank")
+local vu155 = {}
+local function vu161(p156)
+    local v157, v158, v159 = pairs(p156:GetChildren())
+    while true do
+        local v160
+        v159, v160 = v157(v158, v159)
+        if v159 == nil then break end
+        if v160:IsA("Model") and v160.Name == "Lasers" then
+            table.insert(vu155, v160:Clone())
+            v160:Destroy()
+        else
+            vu161(v160)
         end
     end
 end
--- cleanup all visuals
-local function cleanupAll()
-    for plr, box in pairs(boxes) do
-        pcall(function() box.Visible = false box:Remove() end)
-        boxes[plr] = nil
+Tabs.Robberies:AddToggle("RemoveLasersBank1", {
+    Title = "Remove 1st city Bank Lasers",
+    Default = false,
+    Callback = function(p162)
+        local v163 = workspace:FindFirstChild("Banks")
+        local v164 = v163 and v163:FindFirstChild("Bank")
+        if v164 then
+            if p162 then vu161(v164)
+            else
+                local v165, v166, v167 = pairs(vu155)
+                while true do
+                    local v168
+                    v167, v168 = v165(v166, v167)
+                    if v167 == nil then break end
+                    v168.Parent = v164
+                end
+                vu155 = {}
+            end
+        end
     end
-    for plr, hl in pairs(highlights) do
-        safeDestroy(hl)
-        highlights[plr] = nil
-    end
-    for plr, d in pairs(beamTracers) do
-        destroyBeamFor(plr)
-        beamTracers[plr] = nil
-    end
-    for plr, hb in pairs(healthBars) do
-        pcall(function() hb.background.Visible = false; hb.health.Visible = false; hb.background:Remove(); hb.health:Remove() end)
-        healthBars[plr] = nil
-    end
-    for plr, lbl in pairs(distanceLabels) do
-        safeRemoveDrawing(lbl)
-        distanceLabels[plr] = nil
+})
+
+local vu169 = {}
+local function vu175(p170)
+    local v171, v172, v173 = pairs(p170:GetChildren())
+    while true do
+        local v174
+        v173, v174 = v171(v172, v173)
+        if v173 == nil then break end
+        if v174:IsA("Model") and v174.Name == "Lasers" then
+            table.insert(vu169, v174:Clone())
+            v174:Destroy()
+        else
+            vu175(v174)
+        end
     end
 end
--- Player events
-Players.PlayerRemoving:Connect(function(plr)
-    if boxes[plr] then pcall(function() boxes[plr].Visible = false boxes[plr]:Remove() end) boxes[plr] = nil end
-    if highlights[plr] then safeDestroy(highlights[plr]) highlights[plr] = nil end
-    destroyBeamFor(plr)
-    if healthBars[plr] then pcall(function() healthBars[plr].background:Remove(); healthBars[plr].health:Remove() end) healthBars[plr] = nil end
-    if distanceLabels[plr] then safeRemoveDrawing(distanceLabels[plr]) distanceLabels[plr] = nil end
-end)
-Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if env.ESPSettings.master and env.ESPSettings.chams and shouldShowPlayer(plr) then
-            addHighlight(plr)
+Tabs.Robberies:AddToggle("RemoveBank2Lasers", {
+    Title = "Remove 2nd city Bank Lasers",
+    Default = false,
+    Callback = function(p176)
+        local v177 = workspace:FindFirstChild("Banks")
+        if v177 then
+            local v178 = v177:FindFirstChild("Bank2")
+            local v179 = v178 and v178:FindFirstChild("Layout")
+            if v179 then
+                if p176 then vu175(v179)
+                else
+                    local v180, v181, v182 = pairs(vu169)
+                    while true do
+                        local v183
+                        v182, v183 = v180(v181, v182)
+                        if v182 == nil then break end
+                        v183.Parent = v179
+                    end
+                    vu169 = {}
+                end
+            end
         end
-        if env.ESPSettings.master and env.ESPSettings.tracers and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and shouldShowPlayer(plr) then
-            createBeamFor(plr)
+    end
+})
+
+Tabs.Robberies:AddSection("Casino")
+local vu184 = {}
+local function vu191(p185, p186)
+    local v187, v188, v189 = pairs(p185:GetChildren())
+    while true do
+        local v190
+        v189, v190 = v187(v188, v189)
+        if v189 == nil then break end
+        if v190:IsA("Model") and table.find(p186, v190.Name) then
+            vu184[v190.Name] = v190:Clone()
+            v190:Destroy()
+        else
+            vu191(v190, p186)
         end
-        if env.ESPSettings.master and env.ESPSettings.health then
-            if not healthBars[plr] then healthBars[plr] = createHealthDrawing() end
+    end
+end
+local function vu196()
+    local v192, v193, v194 = pairs(vu184)
+    while true do
+        local v195
+        v194, v195 = v192(v193, v194)
+        if v194 == nil then break end
+        v195.Parent = workspace
+    end
+    vu184 = {}
+end
+Tabs.Robberies:AddToggle("RemoveCasinoModels", {
+    Title = "Remove Lasers",
+    Default = false,
+    Callback = function(p197)
+        if p197 then
+            vu191(workspace, {"Lasers","CamerasMoving","LaserCarousel","LasersMoving","VaultLaserControl"})
+        else
+            vu196()
         end
-        if env.ESPSettings.master and env.ESPSettings.distance and DrawingAvailable then
-            if not distanceLabels[plr] then distanceLabels[plr] = createDistanceLabel() end
+    end
+})
+
+Tabs.Robberies:AddSection("Museum")
+local vu198 = nil
+local function vu202(p199)
+    local v200 = p199:FindFirstChild("Museum")
+    local v201 = v200 and v200:FindFirstChild("Lights")
+    if v201 then
+        vu198 = v201:Clone()
+        v201:Destroy()
+    end
+end
+local function vu203()
+    if vu198 then vu198.Parent = workspace.Museum; vu198 = nil end
+end
+Tabs.Robberies:AddToggle("RemoveMuseumLaser", {
+    Title = "Remove Lasers",
+    Default = false,
+    Callback = function(p204) if p204 then vu202(workspace) else vu203() end end
+})
+
+Tabs.Robberies:AddSection("Mansion")
+local vu205 = {}
+local vu206 = {}
+local vu207 = {}
+local vu208 = {}
+local vu209 = {}
+local function vu220()
+    local v210 = vu3:FindFirstChild("MansionDecorative")
+    if v210 then
+        local v211, v212, v213 = pairs(v210:GetDescendants())
+        while true do
+            local v214
+            v213, v214 = v211(v212, v213)
+            if v213 == nil then break end
+            if v214:IsA("BasePart") and v214.Name == "BarbedWire" then
+                table.insert(vu205, {part = v214:Clone(), parent = v214.Parent})
+                v214:Destroy()
+            end
+        end
+    end
+    local v215 = vu3
+    local v216, v217, v218 = pairs(v215:GetChildren())
+    while true do
+        local v219
+        v218, v219 = v216(v217, v218)
+        if v218 == nil then break end
+        if v219:IsA("BasePart") and v219.Name == "BarbedWire" then
+            table.insert(vu205, {part = v219:Clone(), parent = v219.Parent})
+            v219:Destroy()
+        end
+    end
+end
+local function vu225()
+    local v221, v222, v223 = ipairs(vu205)
+    while true do
+        local v224
+        v223, v224 = v221(v222, v223)
+        if v223 == nil then break end
+        if v224.part.Parent == nil then v224.part.Parent = v224.parent end
+    end
+    vu205 = {}
+end
+local function vu228()
+    local v226 = vu3:FindFirstChild("MansionRobbery")
+    local v227 = v226 and v226:FindFirstChild("Lasers")
+    if v227 then
+        table.insert(vu206, {model = v227:Clone(), parent = v227.Parent})
+        v227:Destroy()
+    end
+end
+local function vu233()
+    local v229, v230, v231 = ipairs(vu206)
+    while true do
+        local v232
+        v231, v232 = v229(v230, v231)
+        if v231 == nil then break end
+        if v232.model.Parent == nil then v232.model.Parent = v232.parent end
+    end
+    vu206 = {}
+end
+local function vu236()
+    local v234 = vu3:FindFirstChild("MansionRobbery")
+    local v235 = v234 and v234:FindFirstChild("LaserTraps")
+    if v235 then
+        table.insert(vu207, {model = v235:Clone(), parent = v235.Parent})
+        v235:Destroy()
+    end
+end
+local function vu241()
+    local v237, v238, v239 = ipairs(vu207)
+    while true do
+        local v240
+        v239, v240 = v237(v238, v239)
+        if v239 == nil then break end
+        if v240.model.Parent == nil then v240.model.Parent = v240.parent end
+    end
+    vu207 = {}
+end
+local function vu244()
+    local v242 = vu3:FindFirstChild("MansionRobbery")
+    local v243 = v242 and v242:FindFirstChild("GuardsFolder")
+    if v243 then
+        table.insert(vu208, {folder = v243:Clone(), parent = v243.Parent})
+        v243:Destroy()
+    end
+end
+local function vu249()
+    local v245, v246, v247 = ipairs(vu208)
+    while true do
+        local v248
+        v247, v248 = v245(v246, v247)
+        if v247 == nil then break end
+        if v248.folder.Parent == nil then v248.folder.Parent = v248.parent end
+    end
+    vu208 = {}
+end
+local function vu252()
+    local v250 = vu3:FindFirstChild("MansionRobbery")
+    local v251 = v250 and v250:FindFirstChild("Shields")
+    if v251 then
+        table.insert(vu209, {model = v251:Clone(), parent = v251.Parent})
+        v251:Destroy()
+    end
+end
+local function vu257()
+    local v253, v254, v255 = ipairs(vu209)
+    while true do
+        local v256
+        v255, v256 = v253(v254, v255)
+        if v255 == nil then break end
+        if v256.model.Parent == nil then v256.model.Parent = v256.parent end
+    end
+    vu209 = {}
+end
+Tabs.Robberies:AddToggle("RemoveBarbedWireAndLasers", {
+    Title = "Remove Lasers",
+    Default = false,
+    Callback = function(p258) if p258 then vu220(); vu228() else vu225(); vu233() end end
+})
+Tabs.Robberies:AddToggle("RemoveLaserTraps", {
+    Title = "Remove Laser Traps",
+    Default = false,
+    Callback = function(p259) if p259 then vu236() else vu241() end end
+})
+Tabs.Robberies:AddToggle("RemoveGuardsFolder", {
+    Title = "Remove NPCs",
+    Default = false,
+    Callback = function(p260) if p260 then vu244() else vu249() end end
+})
+Tabs.Robberies:AddToggle("RemoveShields", {
+    Title = "Remove CEO Walls",
+    Default = false,
+    Callback = function(p261) if p261 then vu252() else vu257() end end
+})
+
+Tabs.Robberies:AddSection("Oil Rig")
+local vu262 = {}
+local function vu265()
+    local v263 = vu3:FindFirstChild("OilRig")
+    local v264 = v263 and v263:FindFirstChild("GuardsFolder")
+    if v264 then
+        table.insert(vu262, {folder = v264:Clone(), parent = v264.Parent})
+        v264:Destroy()
+    end
+end
+local function vu270()
+    local v266, v267, v268 = ipairs(vu262)
+    while true do
+        local v269
+        v268, v269 = v266(v267, v268)
+        if v268 == nil then break end
+        if v269.folder.Parent == nil then v269.folder.Parent = v269.parent end
+    end
+    vu262 = {}
+end
+Tabs.Robberies:AddToggle("RemoveGuardsFolder", {
+    Title = "Remove NPCs",
+    Default = false,
+    Callback = function(p271) if p271 then vu265() else vu270() end end
+})
+local vu272 = {}
+local function vu275()
+    local v273 = vu3:FindFirstChild("OilRig")
+    local v274 = v273 and v273:FindFirstChild("MovingLasers")
+    if v274 then
+        table.insert(vu272, {model = v274:Clone(), parent = v274.Parent})
+        v274:Destroy()
+    end
+end
+local function vu280()
+    local v276, v277, v278 = ipairs(vu272)
+    while true do
+        local v279
+        v278, v279 = v276(v277, v278)
+        if v278 == nil then break end
+        if v279.model.Parent == nil then v279.model.Parent = v279.parent end
+    end
+    vu272 = {}
+end
+Tabs.Robberies:AddToggle("RemoveMovingLasers", {
+    Title = "Remove Lasers",
+    Default = false,
+    Callback = function(p281) if p281 then vu275() else vu280() end end
+})
+local vu282 = {}
+local function vu285()
+    local v283 = vu3:FindFirstChild("OilRig")
+    local v284 = v283 and v283:FindFirstChild("Turrets")
+    if v284 then
+        table.insert(vu282, {model = v284:Clone(), parent = v284.Parent})
+        v284:Destroy()
+    end
+end
+local function vu290()
+    local v286, v287, v288 = ipairs(vu282)
+    while true do
+        local v289
+        v288, v289 = v286(v287, v288)
+        if v288 == nil then break end
+        if v289.model.Parent == nil then v289.model.Parent = v289.parent end
+    end
+    vu282 = {}
+end
+Tabs.Robberies:AddToggle("RemoveTurrets", {
+    Title = "Remove Turrets",
+    Default = false,
+    Callback = function(p291) if p291 then vu285() else vu290() end end
+})
+
+Tabs.Robberies:AddSection("CargoShip")
+local vu292 = {}
+local function vu296()
+    local v293 = vu3:FindFirstChild("CargoShip")
+    if v293 then
+        local v294 = v293:FindFirstChild("TurretBack")
+        local v295 = v293:FindFirstChild("TurretFront")
+        if v294 and v295 then
+            table.insert(vu292, {back = v294:Clone(), front = v295:Clone(), parent = v294.Parent})
+            v294:Destroy()
+            v295:Destroy()
+        end
+    end
+end
+local function vu301()
+    local v297, v298, v299 = ipairs(vu292)
+    while true do
+        local v300
+        v299, v300 = v297(v298, v299)
+        if v299 == nil then break end
+        if v300.back.Parent == nil then v300.back.Parent = v300.parent end
+        if v300.front.Parent == nil then v300.front.Parent = v300.parent end
+    end
+    vu292 = {}
+end
+Tabs.Robberies:AddToggle("RemoveTurretsCargoShip", {
+    Title = "Remove Turrets",
+    Default = false,
+    Callback = function(p302) if p302 then vu296() else vu301() end end
+})
+
+Tabs.Robberies:AddSection("Airdrop")
+local vu303 = nil
+local function vu307(p304)
+    local v305 = p304:FindFirstChild("Drop")
+    local v306 = v305 and v305:FindFirstChild("NPCs")
+    if v306 then
+        vu303 = v306:Clone()
+        v306:Destroy()
+    end
+end
+local function vu308()
+    if vu303 then vu303.Parent = workspace.Drop; vu303 = nil end
+end
+Tabs.Robberies:AddToggle("DisableNPCs", {
+    Title = "Remove NPCs",
+    Default = false,
+    Callback = function(p309) if p309 then vu307(workspace) else vu308() end end
+})
+
+-- [[ LOOPS & ESP & OVERLAY UPDATES ]] --
+
+-- 1. General Loop (Jump, Speed, Nerf Equip)
+RunService.RenderStepped:Connect(function()
+    pcall(function()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            LocalPlayer.Character.Humanoid.WalkSpeed = state.localSpeed or 24
+        end
+        
+        -- Nerf Equip Logic (Smile B original logic)
+        if state.nerfEquip then
+             local ok, m = pcall(function() return require(ReplicatedStorage.Resource.Settings) end)
+             if ok and m then
+                if LocalPlayer.PlayerGui:FindFirstChild("GunShopGui") and LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container:FindFirstChild("Slider") then
+                    local sld = LocalPlayer.PlayerGui.GunShopGui.Container.Container.Main.Container.Slider
+                    if sld:FindFirstChild("Revolver") then sld.Revolver.Top.Icon.Image = m.Images["NerfRevolver"] end
+                    if sld:FindFirstChild("Pistol") then sld.Pistol.Top.Icon.Image = m.Images["NerfPistol"] end
+                end
+             end
         end
     end)
+    
+    if state.infJump and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        pcall(function() LocalPlayer.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    end
 end)
--- main loop
+
+-- 2. Status Bar Update
+spawn(function()
+    while OverlayGui and OverlayGui.Parent do
+        pcall(function()
+            statusStrip.Text = string.format("Pistol: %s | KillAura: %s | SilentAim: %s | ESP: %s | KeyBypass: %s",
+                (state.hasPistol and "Yes" or "No"), 
+                (state.killAura and "ON" or "OFF"), 
+                (state.silentAim and "ON" or "OFF"), 
+                (state.esp and "ON" or "OFF"), 
+                (state.keyBypass and "ON" or "OFF"))
+        end)
+        task.wait(0.5)
+    end
+end)
+
+-- 3. Police Indicator Logic (3000 Studs)
+local function getNearbyPolice()
+    local policeList = {}
+    local myTeam = teamString(LocalPlayer)
+    if myTeam ~= "Criminal" then return policeList end
+    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return policeList end
+    
+    local myPos = myHRP.Position
+    local forward = myHRP.CFrame.LookVector
+    local right = myHRP.CFrame.RightVector
+    
+    for _,v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
+             if teamString(v) == "Police" then
+                 local dist = (v.Character.HumanoidRootPart.Position - myPos).Magnitude
+                 if dist <= state.policeRange then -- Uses 3000 now
+                     local toTarget = (v.Character.HumanoidRootPart.Position - myPos).Unit
+                     local dotF = forward:Dot(toTarget)
+                     local dotR = right:Dot(toTarget)
+                     local angle = math.atan2(dotR, dotF)
+                     local index = math.round(((angle + 2 * math.pi) % (2 * math.pi)) * 4 / math.pi) % 8 + 1
+                     local arrows = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
+                     table.insert(policeList, {dist = dist, arrow = arrows[index]})
+                 end
+             end
+        end
+    end
+    table.sort(policeList, function(a,b) return a.dist < b.dist end)
+    return policeList
+end
+
+spawn(function()
+    while OverlayGui and OverlayGui.Parent do
+        if state.policeIndicator then
+            local nearby = getNearbyPolice()
+            if #nearby > 0 then
+                local txt = ""
+                for i = 1, math.min(3, #nearby) do
+                    txt = txt .. nearby[i].arrow .. " " .. math.floor(nearby[i].dist) .. "m  "
+                end
+                policeStrip.Text = "POLICE: " .. txt
+                policeStrip.Visible = true
+            else
+                policeStrip.Visible = false
+            end
+        else
+            policeStrip.Visible = false
+        end
+        task.wait(0.2)
+    end
+end)
+
+-- 4. Custom ESP Implementation (Robust)
+local function createDrawing(type, props)
+    local d = Drawing.new(type)
+    for k,v in pairs(props) do d[k] = v end
+    return d
+end
+
+local ESPStorage = {}
+
+local function removeEsp(plr)
+    if ESPStorage[plr] then
+        for _, d in pairs(ESPStorage[plr]) do d:Remove() end
+        ESPStorage[plr] = nil
+    end
+end
+
 RunService.RenderStepped:Connect(function()
-    if not env.ESPSettings.master then
-        for _, box in pairs(boxes) do if box then box.Visible = false end end
-        for _, d in pairs(beamTracers) do if d and d.Beam then d.Beam.Enabled = false end end
-        for _, hb in pairs(healthBars) do if hb then hb.background.Visible = false; hb.health.Visible = false end end
-        for _, lbl in pairs(distanceLabels) do if lbl then lbl.Visible = false end end
+    if not state.esp then
+        for plr, _ in pairs(ESPStorage) do removeEsp(plr) end
         return
     end
-    if env.ESPSettings.chams then
-        for _, plr in pairs(Players:GetPlayers()) do
-            if plr ~= player and plr.Character and shouldShowPlayer(plr) then
-                if not highlights[plr] then addHighlight(plr) end
+
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChild("Humanoid") then
+            local hrp = plr.Character.HumanoidRootPart
+            local hum = plr.Character.Humanoid
+            local vec, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+            local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
+            
+            -- Filter Teams
+            local myTeam = teamString(LocalPlayer)
+            local theirTeam = teamString(plr)
+            local isEnemy = true
+            if myTeam == "Police" and theirTeam == "Police" then isEnemy = false end
+            if (myTeam == "Criminal" or myTeam == "Prisoner") and (theirTeam == "Criminal" or theirTeam == "Prisoner") then isEnemy = false end
+
+            if onScreen and hum.Health > 0 and isEnemy then
+                if not ESPStorage[plr] then
+                    ESPStorage[plr] = {
+                        Box = createDrawing("Square", {Thickness = 1.5, Filled = false, Transparency = 1}),
+                        Name = createDrawing("Text", {Size = 13, Center = true, Outline = true, Color = Color3.new(1,1,1)}),
+                        Dist = createDrawing("Text", {Size = 11, Center = true, Outline = true, Color = Color3.new(1,1,1)}),
+                        HealthBar = createDrawing("Square", {Thickness = 1, Filled = true, Transparency = 1})
+                    }
+                end
+                
+                local d = ESPStorage[plr]
+                local color = (theirTeam == "Police" and Color3.fromRGB(0, 100, 255)) or (theirTeam == "Criminal" and Color3.fromRGB(255, 50, 50)) or Color3.fromRGB(255, 170, 0)
+                
+                local size = 2500 / vec.Z
+                local boxSize = Vector2.new(size * 0.6, size)
+                local boxPos = Vector2.new(vec.X - boxSize.X/2, vec.Y - boxSize.Y/2)
+
+                d.Box.Visible = true
+                d.Box.Size = boxSize
+                d.Box.Position = boxPos
+                d.Box.Color = color
+
+                d.Name.Visible = true
+                d.Name.Text = plr.Name
+                d.Name.Position = Vector2.new(vec.X, boxPos.Y - 16)
+                d.Name.Color = color
+
+                d.Dist.Visible = true
+                d.Dist.Text = math.floor(dist) .. " studs"
+                d.Dist.Position = Vector2.new(vec.X, boxPos.Y + boxSize.Y + 2)
+                
+                -- Health Bar
+                d.HealthBar.Visible = true
+                local healthPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                local barHeight = boxSize.Y * healthPct
+                d.HealthBar.Size = Vector2.new(2, barHeight)
+                d.HealthBar.Position = Vector2.new(boxPos.X - 5, boxPos.Y + (boxSize.Y - barHeight))
+                d.HealthBar.Color = Color3.fromHSV(healthPct * 0.3, 1, 1) -- Green to Red
             else
-                removeHighlight(plr)
+                removeEsp(plr)
             end
+        else
+            removeEsp(plr)
         end
-        updateAllHighlights()
-    else
-        for plr,_ in pairs(highlights) do removeHighlight(plr) end
-    end
-    if env.ESPSettings.box then
-        updateBoxes()
-    else
-        for _, b in pairs(boxes) do if b then b.Visible = false end end
-    end
-    if env.ESPSettings.tracers then
-        updateTracers()
-    else
-        for _, d in pairs(beamTracers) do if d and d.Beam then d.Beam.Enabled = false end end
-    end
-    if env.ESPSettings.health then
-        updateHealthBars()
-    else
-        for _, hb in pairs(healthBars) do if hb then hb.background.Visible = false; hb.health.Visible = false end end
-    end
-    if env.ESPSettings.distance then
-        updateDistanceLabels()
-    else
-        for _, lbl in pairs(distanceLabels) do if lbl then lbl.Visible = false end end
     end
 end)
--- API exposed in env.ESPAPI for direct control from your UI script
-env.ESPAPI.Enable = function() env.ESPSettings.master = true end
-env.ESPAPI.Disable = function() env.ESPSettings.master = false cleanupAll() end
-env.ESPAPI.Set = function(option, value)
-    if env.ESPSettings[option] ~= nil then
-        env.ESPSettings[option] = value and true or false
-        if option == "chams" and not value then
-            for plr,_ in pairs(highlights) do removeHighlight(plr) end
-        end
-        if option == "tracers" and not value then
-            for plr,_ in pairs(beamTracers) do destroyBeamFor(plr) end
-        end
-        if option == "box" and not value then
-            for _, b in pairs(boxes) do if b then b.Visible = false end end
-        end
-        if option == "health" and not value then
-            for _, hb in pairs(healthBars) do if hb then hb.background.Visible = false; hb.health.Visible = false end end
-        end
-        if option == "distance" and not value then
-            for _, lbl in pairs(distanceLabels) do if lbl then lbl.Visible = false end end
-        end
-    end
-end
-env.ESPAPI.SetTeamNames = function(policeName, criminalName, prisonerName)
-    env.ESPSettings.teamNames.police = policeName or env.ESPSettings.teamNames.police
-    env.ESPSettings.teamNames.criminal = criminalName or env.ESPSettings.teamNames.criminal
-    env.ESPSettings.teamNames.prisoner = prisonerName or env.ESPSettings.teamNames.prisoner
-end
--- start disabled by default. Your UI should set master to true to enable.
+
+Players.PlayerRemoving:Connect(removeEsp)
+
+-- [[ FINALIZATION ]] --
+Window:SelectTab(1)
+Fluent:Notify({Title = "Smile B", Content = "Script Loaded. Use RightShift or 'SB' button to toggle.", Duration = 5})
