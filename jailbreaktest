@@ -99,20 +99,7 @@ local v5 = {
     Keybinds = Window:AddTab({Title = "Keybinds", Icon = ""}),
     Credits = Window:AddTab({Title = "Credits", Icon = ""})
 }
--- All your Robberies toggles (Remove Spikes, Darts, Planks, Lava, Lasers, etc.) go here exactly as before
--- Main tab buttons/toggles (Give Items, Keycard Bypass, KillAura, Silent Aim, Get Pistol, etc.)
--- Misc, LocalPlayer, ESP tab (with your Drawing ESP code)
--- Teleport buttons
--- Keybinds
--- Credits paragraph
--- Status bars
 local alwaysVisibleStatus = Instance.new("TextLabel")
--- (your status bar code)
 local policeStatus = Instance.new("TextLabel")
--- (your police status code)
--- All task.spawn loops (pistol check, kill aura, police indicator)
--- Heartbeat connections (hitbox, anti-ragdoll)
--- JumpRequest for inf jump
--- CharacterAdded for damage logs
 _G.SmileB = { ... }
 pushLog("Smile B UI loaded and running - Enjoy!")
