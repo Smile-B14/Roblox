@@ -4,6 +4,10 @@ local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
+-- ცვლადები სტატისტიკისთვის
+local startTime = tick() -- დროის ათვლა
+local afkCount = 0 -- რამდენჯერ გადაგარჩინა
+
 -- ძველი UI-ის წაშლა თუ უკვე არსებობს
 for _, ui in pairs(CoreGui:GetChildren()) do
 	if ui.Name == "GenesisAntiAFK_GE" then
@@ -22,10 +26,10 @@ local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Parent = gui
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-mainFrame.Position = UDim2.new(0.5, -200, 0.5, -75) -- ცენტრში
-mainFrame.Size = UDim2.new(0, 400, 0, 150)
+mainFrame.Position = UDim2.new(0.5, -200, 0.5, -90) -- ცენტრში
+mainFrame.Size = UDim2.new(0, 400, 0, 180) -- სიმაღლე მოემატა
 mainFrame.Active = true
-mainFrame.Draggable = true -- გადაადგილება შესაძლებელია
+mainFrame.Draggable = true
 
 -- მომრგვალებული კუთხეები (UI Corner)
 local corner = Instance.new("UICorner")
@@ -39,7 +43,7 @@ header.BackgroundColor3 = Color3.fromRGB(40, 40, 100)
 header.BackgroundTransparency = 0
 header.Size = UDim2.new(1, 0, 0, 40)
 header.Font = Enum.Font.GothamBold
-header.Text = "  ანტი-AFK სისტემა" -- ქართული სათაური
+header.Text = "  ანტი-AFK სისტემა"
 header.TextColor3 = Color3.new(1, 1, 1)
 header.TextSize = 20
 header.TextXAlignment = Enum.TextXAlignment.Left
@@ -78,18 +82,40 @@ local statusLabel = Instance.new("TextLabel")
 statusLabel.Parent = mainFrame
 statusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Position = UDim2.new(0, 0, 0.35, 0)
-statusLabel.Size = UDim2.new(1, 0, 0, 40)
+statusLabel.Position = UDim2.new(0, 0, 0.25, 0)
+statusLabel.Size = UDim2.new(1, 0, 0, 30)
 statusLabel.Font = Enum.Font.Gotham
-statusLabel.Text = "სტატუსი: აქტიურია" -- ქართული
-statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) -- მწვანე ფერი
-statusLabel.TextSize = 22
+statusLabel.Text = "სტატუსი: აქტიურია"
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.TextSize = 20
+
+-- სტატისტიკის ტექსტი (რამდენჯერ დაგიცვა)
+local countLabel = Instance.new("TextLabel")
+countLabel.Parent = mainFrame
+countLabel.BackgroundTransparency = 1
+countLabel.Position = UDim2.new(0, 0, 0.45, 0)
+countLabel.Size = UDim2.new(1, 0, 0, 25)
+countLabel.Font = Enum.Font.GothamSemibold
+countLabel.Text = "AFK დაცვა: 0-ჯერ"
+countLabel.TextColor3 = Color3.fromRGB(255, 200, 100) -- ყვითელი ფერი
+countLabel.TextSize = 18
+
+-- დროის ტექსტი (რამდენი ხანია მუშაობს)
+local timeLabel = Instance.new("TextLabel")
+timeLabel.Parent = mainFrame
+timeLabel.BackgroundTransparency = 1
+timeLabel.Position = UDim2.new(0, 0, 0.60, 0)
+timeLabel.Size = UDim2.new(1, 0, 0, 25)
+timeLabel.Font = Enum.Font.Gotham
+timeLabel.Text = "მუშაობის დრო: 00:00:00"
+timeLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+timeLabel.TextSize = 18
 
 -- ფუტერი (ავტორი)
 local footer = Instance.new("TextLabel")
 footer.Parent = mainFrame
 footer.BackgroundTransparency = 1
-footer.Position = UDim2.new(0, 0, 0.8, 0)
+footer.Position = UDim2.new(0, 0, 0.85, 0)
 footer.Size = UDim2.new(1, 0, 0, 20)
 footer.Font = Enum.Font.Gotham
 footer.Text = "ავტორი: Smile B"
@@ -103,17 +129,17 @@ local openButton = Instance.new("TextButton")
 openButton.Name = "OpenButton"
 openButton.Parent = gui
 openButton.BackgroundColor3 = Color3.fromRGB(0, 0, 100)
-openButton.Position = UDim2.new(0.02, 0, 0.9, 0) -- მარცხენა ქვედა კუთხეში
+openButton.Position = UDim2.new(0.02, 0, 0.9, 0)
 openButton.Size = UDim2.new(0, 50, 0, 50)
 openButton.Font = Enum.Font.GothamBold
 openButton.Text = "AFK"
 openButton.TextColor3 = Color3.new(1, 1, 1)
 openButton.TextSize = 16
-openButton.Visible = false -- თავიდან დამალულია
-openButton.Draggable = true -- ამის გადაადგილებაც შეიძლება
+openButton.Visible = false
+openButton.Draggable = true
 
 local openCorner = Instance.new("UICorner")
-openCorner.CornerRadius = UDim.new(1, 0) -- სრულიად მრგვალი
+openCorner.CornerRadius = UDim.new(1, 0)
 openCorner.Parent = openButton
 
 local openStroke = Instance.new("UIStroke")
@@ -125,25 +151,38 @@ openStroke.Thickness = 2
 -- ლოგიკა (ფუნქციები)
 ----------------------------------------------------------------
 
--- ჩაკეცვის ფუნქცია
+-- ჩაკეცვა
 minButton.MouseButton1Click:Connect(function()
     mainFrame.Visible = false
     openButton.Visible = true
 end)
 
--- გახსნის ფუნქცია
+-- გახსნა
 openButton.MouseButton1Click:Connect(function()
     mainFrame.Visible = true
     openButton.Visible = false
 end)
+
+-- დროის ფორმატირების ფუნქცია (00:00:00)
+local function formatTime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = seconds % 60
+    return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
 
 -- Anti-AFK ლოგიკა
 local function activateAntiAfk()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
     
-    statusLabel.Text = "AFK გაგდებისაგან დაგიცავი! მოქმედება შესრულდა."
-    statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100) -- წითლდება როცა მოქმედებს
+    -- მთვლელის გაზრდა
+    afkCount = afkCount + 1
+    countLabel.Text = "AFK დაცვა: " .. afkCount .. "-ჯერ"
+    
+    -- ვიზუალური ეფექტი
+    statusLabel.Text = "AFK გაგდებისაგან დაგიცავი!"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
     
     wait(2)
     
@@ -151,16 +190,18 @@ local function activateAntiAfk()
     statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
 end
 
--- დაკავშირება Idled ივენთთან
 Players.LocalPlayer.Idled:Connect(activateAntiAfk)
 
--- დამატებითი დაცვა: ციკლი ყოველი შემთხვევისთვის
-spawn(function()
-    while wait(60) do -- ყოველ 60 წამში ერთხელ
-        statusLabel.Text = "სისტემის შემოწმება..."
-        wait(1)
-        statusLabel.Text = "სტატუსი: აქტიურია"
+-- დროის დამთვლელი ციკლი (ყოველ წამს განახლდება)
+task.spawn(function()
+    while true do
+        local currentTime = tick()
+        local elapsedTime = currentTime - startTime
+        
+        timeLabel.Text = "მუშაობის დრო: " .. formatTime(elapsedTime)
+        
+        task.wait(1)
     end
 end)
 
-print("Georgian Anti-AFK Loaded by Genesis_ui")
+print("Georgian Anti-AFK V2 Loaded by Smile B")
