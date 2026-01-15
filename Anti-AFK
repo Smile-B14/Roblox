@@ -1,0 +1,166 @@
+local Players = game:GetService("Players")
+local VirtualUser = game:GetService("VirtualUser")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+-- ძველი UI-ის წაშლა თუ უკვე არსებობს
+for _, ui in pairs(CoreGui:GetChildren()) do
+	if ui.Name == "GenesisAntiAFK_GE" then
+		ui:Destroy()
+	end
+end
+
+-- GUI-ის შექმნა
+local gui = Instance.new("ScreenGui")
+gui.Name = "GenesisAntiAFK_GE"
+gui.Parent = CoreGui
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- მთავარი ჩარჩო (Main Frame)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Parent = gui
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+mainFrame.Position = UDim2.new(0.5, -200, 0.5, -75) -- ცენტრში
+mainFrame.Size = UDim2.new(0, 400, 0, 150)
+mainFrame.Active = true
+mainFrame.Draggable = true -- გადაადგილება შესაძლებელია
+
+-- მომრგვალებული კუთხეები (UI Corner)
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = mainFrame
+
+-- ჰედერი (სათაური)
+local header = Instance.new("TextLabel")
+header.Parent = mainFrame
+header.BackgroundColor3 = Color3.fromRGB(40, 40, 100)
+header.BackgroundTransparency = 0
+header.Size = UDim2.new(1, 0, 0, 40)
+header.Font = Enum.Font.GothamBold
+header.Text = "  ანტი-AFK სისტემა" -- ქართული სათაური
+header.TextColor3 = Color3.new(1, 1, 1)
+header.TextSize = 20
+header.TextXAlignment = Enum.TextXAlignment.Left
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 10)
+headerCorner.Parent = header
+
+-- გასწორება (ქვედა კუთხეები რომ არ იყოს მრგვალი ჰედერზე)
+local fixHeader = Instance.new("Frame")
+fixHeader.Parent = header
+fixHeader.BackgroundColor3 = Color3.fromRGB(40, 40, 100)
+fixHeader.BorderSizePixel = 0
+fixHeader.Position = UDim2.new(0, 0, 1, -10)
+fixHeader.Size = UDim2.new(1, 0, 0, 10)
+fixHeader.ZIndex = 0
+
+-- ჩაკეცვის ღილაკი (Minimize Button)
+local minButton = Instance.new("TextButton")
+minButton.Parent = header
+minButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+minButton.Position = UDim2.new(1, -35, 0.15, 0)
+minButton.Size = UDim2.new(0, 25, 0, 25)
+minButton.Font = Enum.Font.GothamBold
+minButton.Text = "-"
+minButton.TextColor3 = Color3.new(1, 1, 1)
+minButton.TextSize = 20
+minButton.AutoButtonColor = true
+
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 6)
+minCorner.Parent = minButton
+
+-- სტატუსის ტექსტი
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Parent = mainFrame
+statusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Position = UDim2.new(0, 0, 0.35, 0)
+statusLabel.Size = UDim2.new(1, 0, 0, 40)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Text = "სტატუსი: აქტიურია" -- ქართული
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) -- მწვანე ფერი
+statusLabel.TextSize = 22
+
+-- ფუტერი (ავტორი)
+local footer = Instance.new("TextLabel")
+footer.Parent = mainFrame
+footer.BackgroundTransparency = 1
+footer.Position = UDim2.new(0, 0, 0.8, 0)
+footer.Size = UDim2.new(1, 0, 0, 20)
+footer.Font = Enum.Font.Gotham
+footer.Text = "ავტორი: Smile B"
+footer.TextColor3 = Color3.fromRGB(150, 150, 200)
+footer.TextSize = 14
+
+----------------------------------------------------------------
+-- პატარა გახსნის ღილაკი (Floating Open Button)
+----------------------------------------------------------------
+local openButton = Instance.new("TextButton")
+openButton.Name = "OpenButton"
+openButton.Parent = gui
+openButton.BackgroundColor3 = Color3.fromRGB(0, 0, 100)
+openButton.Position = UDim2.new(0.02, 0, 0.9, 0) -- მარცხენა ქვედა კუთხეში
+openButton.Size = UDim2.new(0, 50, 0, 50)
+openButton.Font = Enum.Font.GothamBold
+openButton.Text = "AFK"
+openButton.TextColor3 = Color3.new(1, 1, 1)
+openButton.TextSize = 16
+openButton.Visible = false -- თავიდან დამალულია
+openButton.Draggable = true -- ამის გადაადგილებაც შეიძლება
+
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(1, 0) -- სრულიად მრგვალი
+openCorner.Parent = openButton
+
+local openStroke = Instance.new("UIStroke")
+openStroke.Parent = openButton
+openStroke.Color = Color3.new(1,1,1)
+openStroke.Thickness = 2
+
+----------------------------------------------------------------
+-- ლოგიკა (ფუნქციები)
+----------------------------------------------------------------
+
+-- ჩაკეცვის ფუნქცია
+minButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    openButton.Visible = true
+end)
+
+-- გახსნის ფუნქცია
+openButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = true
+    openButton.Visible = false
+end)
+
+-- Anti-AFK ლოგიკა
+local function activateAntiAfk()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+    
+    statusLabel.Text = "AFK გაგდებისაგან დაგიცავი! მოქმედება შესრულდა."
+    statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100) -- წითლდება როცა მოქმედებს
+    
+    wait(2)
+    
+    statusLabel.Text = "სტატუსი: აქტიურია"
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+end
+
+-- დაკავშირება Idled ივენთთან
+Players.LocalPlayer.Idled:Connect(activateAntiAfk)
+
+-- დამატებითი დაცვა: ციკლი ყოველი შემთხვევისთვის
+spawn(function()
+    while wait(60) do -- ყოველ 60 წამში ერთხელ
+        statusLabel.Text = "სისტემის შემოწმება..."
+        wait(1)
+        statusLabel.Text = "სტატუსი: აქტიურია"
+    end
+end)
+
+print("Georgian Anti-AFK Loaded by Genesis_ui")
