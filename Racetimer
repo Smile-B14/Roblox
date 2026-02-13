@@ -1,0 +1,354 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
+
+-- // CONFIGURATION //
+local SNAP_THRESHOLD = 20
+local SAVE_FILE_NAME = "RobloxRaceBestTime.txt"
+
+local Player = Players.LocalPlayer
+local Mouse = Player:GetMouse()
+
+-- State Variables
+local StartHitbox, EndHitbox = nil, nil
+local SetupPoints = {} 
+local SetupStep = 0 
+local IsRacing = false
+local RaceStartTime = 0
+local BestTime = math.huge
+local Debounce = false 
+
+-- Visual Preview Variables
+local PreviewPart = nil
+local CurrentSnappedPos = nil 
+
+-- // UI SETUP //
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RaceTimerProFixed"
+ScreenGui.Parent = Player:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false 
+
+-- Setup Menu
+local SetupFrame = Instance.new("Frame")
+SetupFrame.Name = "SetupMenu"
+SetupFrame.Size = UDim2.new(0, 400, 0, 260)
+SetupFrame.Position = UDim2.new(0.5, -200, 0.5, -130)
+SetupFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+SetupFrame.BorderSizePixel = 2
+SetupFrame.BorderColor3 = Color3.fromRGB(0, 255, 128)
+SetupFrame.Parent = ScreenGui
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.new(1,1,1)
+Title.TextSize = 22
+Title.Font = Enum.Font.GothamBold
+Title.Text = "DEATH STOP & FILE SAVE"
+Title.Parent = SetupFrame
+
+local PasteBox = Instance.new("TextBox")
+PasteBox.Size = UDim2.new(0.9, 0, 0, 50)
+PasteBox.Position = UDim2.new(0.05, 0, 0.2, 0)
+PasteBox.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+PasteBox.TextColor3 = Color3.new(1,1,1)
+PasteBox.Text = "" 
+PasteBox.PlaceholderText = "Paste Save Code here (or leave empty for default)"
+PasteBox.TextWrapped = true
+PasteBox.Font = Enum.Font.Code
+PasteBox.TextSize = 12
+PasteBox.Parent = SetupFrame
+
+local LoadBtn = Instance.new("TextButton")
+LoadBtn.Size = UDim2.new(0.4, 0, 0, 40)
+LoadBtn.Position = UDim2.new(0.05, 0, 0.5, 0)
+LoadBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+LoadBtn.TextColor3 = Color3.new(1,1,1)
+LoadBtn.Text = "LOAD CODE"
+LoadBtn.Font = Enum.Font.GothamBold
+LoadBtn.Parent = SetupFrame
+
+local NewBtn = Instance.new("TextButton")
+NewBtn.Size = UDim2.new(0.4, 0, 0, 40)
+NewBtn.Position = UDim2.new(0.55, 0, 0.5, 0)
+NewBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 80)
+NewBtn.TextColor3 = Color3.new(1,1,1)
+NewBtn.Text = "NEW SETUP"
+NewBtn.Font = Enum.Font.GothamBold
+NewBtn.Parent = SetupFrame
+
+local InfoTxt = Instance.new("TextLabel")
+InfoTxt.Size = UDim2.new(0.9, 0, 0, 50)
+InfoTxt.Position = UDim2.new(0.05, 0, 0.75, 0)
+InfoTxt.BackgroundTransparency = 1
+InfoTxt.TextColor3 = Color3.fromRGB(180, 180, 180)
+InfoTxt.TextSize = 14
+InfoTxt.Text = "Features: Stops on Death (Red), Record (Green).\nSaves Best Time to .txt file."
+InfoTxt.Font = Enum.Font.Gotham
+InfoTxt.Parent = SetupFrame
+
+-- Timer HUD
+local RaceFrame = Instance.new("Frame")
+RaceFrame.Size = UDim2.new(0, 300, 0, 100)
+RaceFrame.Position = UDim2.new(0.5, -150, 0.85, 0)
+RaceFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+RaceFrame.BackgroundTransparency = 0.5
+RaceFrame.Visible = false
+RaceFrame.Active = true
+RaceFrame.Draggable = true 
+RaceFrame.Parent = ScreenGui
+
+local TimerLabel = Instance.new("TextLabel")
+TimerLabel.Size = UDim2.new(1, 0, 0.6, 0)
+TimerLabel.BackgroundTransparency = 1
+TimerLabel.TextColor3 = Color3.new(1,1,1)
+TimerLabel.TextSize = 36
+TimerLabel.Font = Enum.Font.GothamBold
+TimerLabel.Text = "00:00.00"
+TimerLabel.Parent = RaceFrame
+
+local BestLabel = Instance.new("TextLabel")
+BestLabel.Size = UDim2.new(1, 0, 0.3, 0)
+BestLabel.Position = UDim2.new(0, 0, 0.6, 0)
+BestLabel.BackgroundTransparency = 1
+BestLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+BestLabel.Text = "Best: --:--"
+BestLabel.Font = Enum.Font.Gotham
+BestLabel.TextSize = 18
+BestLabel.Parent = RaceFrame
+
+local Instructions = Instance.new("TextLabel")
+Instructions.Size = UDim2.new(1, 0, 0, 50)
+Instructions.Position = UDim2.new(0, 0, 0.1, 0)
+Instructions.BackgroundTransparency = 1
+Instructions.TextColor3 = Color3.new(1, 1, 0)
+Instructions.TextStrokeTransparency = 0
+Instructions.TextSize = 24
+Instructions.Font = Enum.Font.GothamBlack
+Instructions.Text = ""
+Instructions.Parent = ScreenGui
+
+-- // FILE SAVING FUNCTIONS //
+
+local function FormatTime(t)
+	local m = math.floor(t / 60)
+	local s = t % 60
+	return string.format("%02d:%05.2f", m, s)
+end
+
+-- Try to load existing best time from PC
+local function LoadBestTimeFromFile()
+	local success, result = pcall(function()
+		if isfile(SAVE_FILE_NAME) then
+			return readfile(SAVE_FILE_NAME)
+		end
+	end)
+	
+	if success and result and tonumber(result) then
+		BestTime = tonumber(result)
+		BestLabel.Text = "Best: " .. FormatTime(BestTime)
+		print("Loaded Best Time:", BestTime)
+	end
+end
+
+-- Try to save new best time to PC
+local function SaveBestTimeToFile()
+	pcall(function()
+		writefile(SAVE_FILE_NAME, tostring(BestTime))
+		print("Saved Best Time:", BestTime)
+	end)
+end
+
+-- // CORE FUNCTIONS //
+
+local function GetSnappedPosition(origin, currentPos)
+	local diffX = math.abs(origin.X - currentPos.X)
+	local diffZ = math.abs(origin.Z - currentPos.Z)
+	if diffX < SNAP_THRESHOLD then
+		return Vector3.new(origin.X, currentPos.Y, currentPos.Z), true
+	end
+	if diffZ < SNAP_THRESHOLD then
+		return Vector3.new(currentPos.X, currentPos.Y, origin.Z), true
+	end
+	return currentPos, false
+end
+
+local function UpdatePreviewLine(p1, p2, isSnapped)
+	if not PreviewPart then
+		PreviewPart = Instance.new("Part")
+		PreviewPart.Anchored = true; PreviewPart.CanCollide = false
+		PreviewPart.Material = Enum.Material.Neon; PreviewPart.Transparency = 0.3
+		PreviewPart.Parent = Workspace
+	end
+	local center = (p1 + p2) / 2
+	local length = (p1 - p2).Magnitude
+	PreviewPart.Size = Vector3.new(0.3, 0.3, length)
+	PreviewPart.CFrame = CFrame.lookAt(center, p2)
+	PreviewPart.Color = isSnapped and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(0, 150, 255)
+end
+
+local function DestroyPreview()
+	if PreviewPart then PreviewPart:Destroy(); PreviewPart = nil end
+end
+
+local function CreateGate(p1, p2, isStart)
+	local center = (p1 + p2) / 2
+	local width = (p1 - p2).Magnitude
+	local visual = Instance.new("Part")
+	visual.Anchored = true; visual.CanCollide = false
+	visual.Material = Enum.Material.Neon
+	visual.Size = Vector3.new(0.4, 0.2, width)
+	visual.CFrame = CFrame.new(center.X, math.min(p1.Y, p2.Y), center.Z) * CFrame.lookAt(p1, p2).Rotation
+	visual.Color = isStart and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+	visual.Parent = Workspace
+	
+	local hitbox = Instance.new("Part")
+	hitbox.Name = isStart and "StartHitbox" or "EndHitbox"
+	hitbox.Anchored = true; hitbox.CanCollide = false; hitbox.Transparency = 1
+	hitbox.Size = Vector3.new(1, 100000, width)
+	local flatLook = Vector3.new(p2.X, p1.Y, p2.Z)
+	hitbox.CFrame = CFrame.new(center.X, 0, center.Z) * CFrame.lookAt(p1, flatLook).Rotation
+	hitbox.Parent = Workspace
+	return hitbox
+end
+
+local function SaveCode(points)
+	local data = {}
+	for _, v in ipairs(points) do table.insert(data, string.format("%.2f,%.2f,%.2f", v.X, v.Y, v.Z)) end
+	pcall(function() setclipboard(table.concat(data, "|")) end)
+	Instructions.Text = "Code Saved to Clipboard!"; Instructions.TextColor3 = Color3.new(0,1,0)
+	task.wait(2)
+	SetupFrame.Visible = false; RaceFrame.Visible = true; Instructions.Text = ""
+	LoadBestTimeFromFile()
+end
+
+local function ParseAndLoad(code)
+	local points = {}
+	local split = string.split(code, "|")
+	if #split < 4 then InfoTxt.Text = "Invalid Code."; InfoTxt.TextColor3 = Color3.new(1,0,0); return end
+	for _, segment in ipairs(split) do
+		local c = string.split(segment, ",")
+		table.insert(points, Vector3.new(tonumber(c[1]), tonumber(c[2]), tonumber(c[3])))
+	end
+	StartHitbox = CreateGate(points[1], points[2], true)
+	EndHitbox = CreateGate(points[3], points[4], false)
+	SetupFrame.Visible = false; RaceFrame.Visible = true; Instructions.Text = ""
+	LoadBestTimeFromFile()
+end
+
+-- // INPUT EVENTS //
+
+NewBtn.MouseButton1Click:Connect(function()
+	SetupFrame.Visible = false; SetupStep = 1; SetupPoints = {}; Instructions.Text = "Click START Point 1"
+end)
+
+LoadBtn.MouseButton1Click:Connect(function()
+	if PasteBox.Text ~= "" then
+		ParseAndLoad(PasteBox.Text)
+	else
+		-- Hardcoded coordinates
+		local myCoords = "-74.67,2.27,-58.06|73.99,2.51,-58.06|-75.48,67.42,-3533.20|77.37,64.86,-3533.20"
+		PasteBox.Text = myCoords
+		ParseAndLoad(myCoords)
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if (SetupStep == 2 or SetupStep == 4) and Mouse.Hit then
+		local p1 = SetupPoints[#SetupPoints]
+		local snappedPos, isSnapped = GetSnappedPosition(p1, Mouse.Hit.Position)
+		CurrentSnappedPos = snappedPos
+		UpdatePreviewLine(p1, snappedPos, isSnapped)
+	else
+		DestroyPreview()
+	end
+end)
+
+Mouse.Button1Down:Connect(function()
+	if SetupStep == 0 or SetupStep > 4 then return end
+	local clickPos = ((SetupStep == 2 or SetupStep == 4) and CurrentSnappedPos) and CurrentSnappedPos or Mouse.Hit.Position
+	table.insert(SetupPoints, clickPos)
+	
+	local m = Instance.new("Part"); m.Anchored=true; m.CanCollide=false; m.Size=Vector3.new(1,100,1); m.Position=clickPos
+	m.Color=Color3.new(1,1,0); m.Transparency=0.5; m.Parent=Workspace; Debris:AddItem(m, 2)
+
+	if SetupStep == 1 then Instructions.Text = "Drag Line... (Green = Snapped)"; SetupStep = 2
+	elseif SetupStep == 2 then StartHitbox = CreateGate(SetupPoints[1], SetupPoints[2], true); Instructions.Text = "Click FINISH Point 1"; SetupStep = 3
+	elseif SetupStep == 3 then Instructions.Text = "Drag Line... (Green = Snapped)"; SetupStep = 4
+	elseif SetupStep == 4 then EndHitbox = CreateGate(SetupPoints[3], SetupPoints[4], false); SaveCode(SetupPoints); SetupStep = 5 end
+end)
+
+local function CheckZone(part)
+	if not part then return false end
+	local char = Player.Character
+	if not char then return false end
+	local params = OverlapParams.new(); params.FilterDescendantsInstances = {char}; params.FilterType = Enum.RaycastFilterType.Include
+	return #Workspace:GetPartsInPart(part, params) > 0
+end
+
+-- // MAIN LOGIC //
+
+RunService.RenderStepped:Connect(function()
+	if SetupStep <= 4 and SetupStep ~= 0 then return end
+	
+	-- CHECK DEATH
+	if IsRacing then
+		local char = Player.Character
+		local hum = char and char:FindFirstChild("Humanoid")
+		
+		if not char or not hum or hum.Health <= 0 then
+			-- PLAYER DIED
+			IsRacing = false
+			TimerLabel.TextColor3 = Color3.fromRGB(255, 0, 0) -- RED for Death
+			-- Stop timer exactly where it is, do not save best time
+			Debounce = true
+			task.wait(2)
+			Debounce = false
+			return
+		end
+	end
+	
+	-- START
+	if CheckZone(StartHitbox) then
+		if not Debounce then
+			Debounce = true
+			IsRacing = true
+			RaceStartTime = os.clock()
+			TimerLabel.TextColor3 = Color3.new(1,1,1) -- White
+			TimerLabel.Text = "00:00.00"
+			task.wait(1)
+			Debounce = false
+		end
+	end
+	
+	-- FINISH
+	if IsRacing and CheckZone(EndHitbox) then
+		if (os.clock() - RaceStartTime) > 0.5 then
+			IsRacing = false
+			local final = os.clock() - RaceStartTime
+			TimerLabel.Text = FormatTime(final)
+			
+			if final < BestTime then
+				-- NEW RECORD
+				BestTime = final
+				SaveBestTimeToFile() -- Save to txt
+				BestLabel.Text = "Best: " .. FormatTime(BestTime)
+				TimerLabel.TextColor3 = Color3.fromRGB(0, 255, 0) -- GREEN for Record
+			else
+				-- NORMAL FINISH
+				TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255) -- WHITE for Normal
+			end
+			
+			Debounce = true
+			task.wait(2)
+			Debounce = false
+		end
+	end
+	
+	-- UPDATE TIMER
+	if IsRacing then
+		TimerLabel.Text = FormatTime(os.clock() - RaceStartTime)
+	end
+end)
