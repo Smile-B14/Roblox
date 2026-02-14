@@ -1,4 +1,4 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/Racetimer"))()
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/Racetimer"))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
