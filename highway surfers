@@ -1,0 +1,106 @@
+--// Configuration
+local T_KEY = Enum.KeyCode.LeftShift
+local MAX = 40
+local RATE = 500
+
+--// Services
+local Plrs = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
+local LP = Plrs.LocalPlayer
+
+--// State
+getgenv()._s = false
+local _task = nil
+local _conn = nil
+
+--// UI Setup (Hidden)
+local G = Instance.new("ScreenGui")
+G.Name = game:GetService("HttpService"):GenerateGUID(false) -- Random Name
+G.ResetOnSpawn = false
+G.IgnoreGuiInset = true
+G.Parent = LP:WaitForChild("PlayerGui")
+
+local F = Instance.new("Frame")
+F.Name = "Pixel"
+F.Size = UDim2.fromOffset(1, 1) -- 1px Size
+F.Position = UDim2.new(1, -2, 1, -2)
+F.BorderSizePixel = 0
+F.BackgroundColor3 = Color3.fromRGB(0, 0, 0) -- Start Black (Hidden)
+F.Parent = G
+
+--// Logic
+local function getSeat()
+    local c = LP.Character
+    if c then
+        local h = c:FindFirstChild("Humanoid")
+        if h and h.SeatPart then
+            return h.SeatPart
+        end
+    end
+    return nil
+end
+
+local function check(p)
+    if not p:IsA("BasePart") then return false end
+    if p.Size.X > MAX or p.Size.Z > MAX then return false end
+    if p.Parent and p.Parent:FindFirstChild("Humanoid") then return false end
+    local s = getSeat()
+    if s and (p == s or p.Parent == s.Parent) then return false end
+    return true
+end
+
+local function apply(p, e)
+    if check(p) then
+        if e then
+            p.CanCollide = false
+            p.CanTouch = false
+            p.CanQuery = false
+            local t = p:FindFirstChildWhichIsA("TouchInterest")
+            if t then t:Destroy() end
+        else
+            p.CanCollide = true
+            p.CanTouch = true
+            p.CanQuery = true
+        end
+    end
+end
+
+local function proc(e)
+    if _task then task.cancel(_task) end
+    _task = task.spawn(function()
+        local c = 0
+        for _, p in ipairs(workspace:GetDescendants()) do
+            if getgenv()._s ~= e then break end
+            apply(p, e)
+            c = c + 1
+            if c % RATE == 0 then RS.Heartbeat:Wait() end
+        end
+        _task = nil
+    end)
+end
+
+local function t()
+    getgenv()._s = not getgenv()._s
+    if getgenv()._s then
+        F.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Green (On)
+        proc(true)
+        if _conn then _conn:Disconnect() end
+        _conn = workspace.DescendantAdded:Connect(function(p)
+            if getgenv()._s then
+                RS.Heartbeat:Wait()
+                apply(p, true)
+            end
+        end)
+    else
+        F.BackgroundColor3 = Color3.fromRGB(150, 0, 0) -- Dark Red (Off)
+        if _conn then _conn:Disconnect() _conn = nil end
+        proc(false)
+    end
+end
+
+UIS.InputBegan:Connect(function(i, p)
+    if not p and i.KeyCode == T_KEY then
+        t()
+    end
+end)
