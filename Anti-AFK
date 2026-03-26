@@ -30,7 +30,7 @@ mainFrame.Position = UDim2.new(0.5, -150, 0.5, -90) -- ეკრანის ც
 mainFrame.Size = UDim2.new(0, 350, 0, 180) -- ზომა: 350x180
 mainFrame.Active = true
 mainFrame.Draggable = true
-mainFrame.Visible = false -- (შეცვლილია) მთავარი ფანჯარა თავიდანვე დამალულია
+mainFrame.Visible = false -- <-- შეცვლილია: მთავარი ფანჯარა თავიდან დამალულია (Hidden by default)
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
@@ -129,7 +129,7 @@ openButton.Size = UDim2.new(0, 50, 0, 50)
 openButton.Text = "AFK"
 openButton.TextColor3 = Color3.new(1,1,1)
 openButton.Font = Enum.Font.GothamBold
-openButton.Visible = true -- (შეცვლილია) პატარა ღილაკი თავიდანვე ჩანს
+openButton.Visible = true -- <-- შეცვლილია: პატარა ღილაკი თავიდან ჩანს (Visible by default)
 openButton.Draggable = true
 local openCorner = Instance.new("UICorner")
 openCorner.CornerRadius = UDim.new(1, 0)
@@ -185,4 +185,4 @@ spawn(function()
     end
 end)
 
-print("Georgian Anti-AFK Loaded (Hidden by Default)")
+print("Georgian Anti-AFK Loaded (Started Minimized)")
