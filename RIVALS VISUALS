@@ -23,7 +23,7 @@ end
 if not isRivals then return end
 
 -- 3. PRE-SET DEFAULTS (Auto-Enabled)
-shared.Fullbright = true
+shared.Fullbright = false
 shared.ESPEnabled = true
 shared.ESPTeamCheck = false -- Set to true if you want to hide teammates by default
 
