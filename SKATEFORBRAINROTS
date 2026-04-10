@@ -18,7 +18,7 @@ end
 
 local Settings = {
     Divine = true,
-    Celestial = true,
+    Celestial = false,
     Secret = false, 
     AutoHop = true,
     HopThreshold = 250 -- Hopping threshold (4 minutes)
