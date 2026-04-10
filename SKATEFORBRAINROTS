@@ -1,0 +1,421 @@
+-- Wait for game to load (Crucial for Auto-Execute)
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-----------------------------------------
+-- 0. DUPLICATE EXECUTION GUARD
+-----------------------------------------
+local ScriptExecutionID = tick()
+if getgenv then 
+    getgenv().SmileB_ExecutionID = ScriptExecutionID
+end
+
+local Settings = {
+    Divine = true,
+    Celestial = true,
+    Secret = false, 
+    AutoHop = true,
+    HopThreshold = 250 -- Hopping threshold (4 minutes)
+}
+
+-- EXACT Return Base Coordinates
+local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
+
+-----------------------------------------
+-- 1. Sleek UI by Smile B
+-----------------------------------------
+if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Brainrot") then
+    LocalPlayer.PlayerGui.SmileB_Brainrot:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SmileB_Brainrot"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 240, 0, 270)
+MainFrame.Position = UDim2.new(1, -460, 0.5, -135)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(150, 0, 255)
+UIStroke.Thickness = 2
+UIStroke.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 16
+Title.Font = Enum.Font.GothamBold
+Title.Text = "🧠 Brainrot Smart Sniper"
+Title.Parent = MainFrame
+
+local Credit = Instance.new("TextLabel")
+Credit.Size = UDim2.new(1, 0, 0, 15)
+Credit.Position = UDim2.new(0, 0, 0, 25)
+Credit.BackgroundTransparency = 1
+Credit.TextColor3 = Color3.fromRGB(170, 170, 170)
+Credit.TextSize = 11
+Credit.Font = Enum.Font.Gotham
+Credit.Text = "Written by Smile B"
+Credit.Parent = MainFrame
+
+local InfoContainer = Instance.new("Frame")
+InfoContainer.Size = UDim2.new(1, -20, 0, 50)
+InfoContainer.Position = UDim2.new(0, 10, 0, 45)
+InfoContainer.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+InfoContainer.Parent = MainFrame
+Instance.new("UICorner", InfoContainer).CornerRadius = UDim.new(0, 6)
+
+local TimerText = Instance.new("TextLabel")
+TimerText.Size = UDim2.new(1, 0, 0.5, 0)
+TimerText.BackgroundTransparency = 1
+TimerText.TextColor3 = Color3.fromRGB(255, 255, 0)
+TimerText.TextScaled = true
+TimerText.Text = "Timer: Loading..."
+TimerText.Parent = InfoContainer
+
+local StatusText = Instance.new("TextLabel")
+StatusText.Size = UDim2.new(1, 0, 0.5, 0)
+StatusText.Position = UDim2.new(0, 0, 0.5, 0)
+StatusText.BackgroundTransparency = 1
+StatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
+StatusText.TextScaled = true
+StatusText.Text = "Status: Initializing..."
+StatusText.Parent = InfoContainer
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Parent = MainFrame
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Padding = UDim.new(0, 5)
+
+Title.LayoutOrder = 1
+Credit.LayoutOrder = 2
+local spacer1 = Instance.new("Frame", MainFrame); spacer1.BackgroundTransparency = 1; spacer1.Size = UDim2.new(1,0,0,5); spacer1.LayoutOrder = 3
+InfoContainer.LayoutOrder = 4
+local spacer2 = Instance.new("Frame", MainFrame); spacer2.BackgroundTransparency = 1; spacer2.Size = UDim2.new(1,0,0,5); spacer2.LayoutOrder = 5
+
+local ToggleOrder = 6
+local function CreateToggle(name, text)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -20, 0, 25)
+    btn.BackgroundColor3 = Settings[name] and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(150, 40, 40)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 13
+    btn.Text = text .. ": " .. (Settings[name] and "ON" or "OFF")
+    btn.LayoutOrder = ToggleOrder
+    ToggleOrder = ToggleOrder + 1
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    
+    local container = Instance.new("Frame")
+    container.BackgroundTransparency = 1; container.Size = UDim2.new(1, 0, 0, 25); container.LayoutOrder = btn.LayoutOrder
+    btn.Position = UDim2.new(0, 10, 0, 0); btn.Parent = container; container.Parent = MainFrame
+
+    btn.MouseButton1Click:Connect(function()
+        Settings[name] = not Settings[name]
+        btn.BackgroundColor3 = Settings[name] and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(150, 40, 40)
+        btn.Text = text .. ": " .. (Settings[name] and "ON" or "OFF")
+    end)
+end
+
+CreateToggle("Divine", "Divine Priority")
+CreateToggle("Celestial", "Celestial Priority")
+CreateToggle("Secret", "Secret Priority")
+CreateToggle("AutoHop", "Auto Server Hop")
+
+-----------------------------------------
+-- 2. SMART CROSS-SERVER MEMORY (File I/O)
+-----------------------------------------
+local FileName = "SmileB_ServerTimers.json"
+
+local function LoadServers()
+    if isfile and readfile and isfile(FileName) then
+        local success, data = pcall(function() return HttpService:JSONDecode(readfile(FileName)) end)
+        if success and type(data) == "table" then return data end
+    end
+    return {}
+end
+
+local function SaveServerData(remainingSeconds)
+    if not writefile then return end
+    local servers = LoadServers()
+    
+    if remainingSeconds then
+        servers[game.JobId] = os.time() + remainingSeconds
+    end
+    
+    local cleanedData = {}
+    for id, stamp in pairs(servers) do
+        if os.time() < stamp + 60 then
+            cleanedData[id] = stamp
+        end
+    end
+    
+    pcall(function() writefile(FileName, HttpService:JSONEncode(cleanedData)) end)
+end
+
+-----------------------------------------
+-- 3. CORE FUNCTIONS & CACHING
+-----------------------------------------
+local PadCache = {}
+task.spawn(function()
+    local pads = Workspace:WaitForChild("Pads", 10)
+    if pads then
+        for _, rarity in ipairs({"Divine", "Celestial", "Secret"}) do
+            local pad = pads:FindFirstChild(rarity)
+            if pad then
+                if pad:IsA("Model") then
+                    -- Get absolute mathematical center of the model
+                    local cframe, size = pad:GetBoundingBox()
+                    PadCache[rarity] = cframe.Position
+                elseif pad:IsA("BasePart") then
+                    PadCache[rarity] = pad.Position
+                end
+            end
+        end
+    end
+end)
+
+local CachedTimerUI = nil
+local function GetTimer()
+    if CachedTimerUI and CachedTimerUI.Parent then return CachedTimerUI.Text end
+    local mainGui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+    local frames = mainGui and mainGui:FindFirstChild("Frames")
+    if frames then
+        for _, v in pairs(frames:GetDescendants()) do
+            if v:IsA("TextLabel") and (v.Name == "Countdown" or v.Name == "CountDown") then
+                CachedTimerUI = v; return v.Text
+            end
+        end
+    end
+    return "Loading..."
+end
+
+local function ParseTime(timeStr)
+    if type(timeStr) ~= "string" then return 0 end
+    local min = timeStr:match("(%d+)m") or 0
+    local sec = timeStr:match("(%d+)s") or 0
+    if min == 0 and sec == 0 and not timeStr:match("%d") then return 0 end
+    return (tonumber(min) * 60) + tonumber(sec)
+end
+
+-----------------------------------------
+-- 4. THE SMART SNIPER HOPPER
+-----------------------------------------
+local function SmartServerHop()
+    if not Settings.AutoHop then return end
+    local PlaceID = game.PlaceId
+    local servers = LoadServers()
+    
+    local BestServer = nil
+    local SmallestWait = math.huge
+    
+    for id, stamp in pairs(servers) do
+        if id ~= game.JobId then
+            local waitTime = stamp - os.time()
+            if waitTime > 15 and waitTime <= Settings.HopThreshold then
+                if waitTime < SmallestWait then
+                    SmallestWait = waitTime
+                    BestServer = id
+                end
+            end
+        end
+    end
+    
+    if BestServer then
+        StatusText.Text = "Status: Sniping Known Server..."
+        task.wait(1)
+        TeleportService:TeleportToPlaceInstance(PlaceID, BestServer, LocalPlayer)
+        task.wait(10)
+    end
+    
+    StatusText.Text = "Status: Scouting New Servers..."
+    local success, response = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Desc&limit=100"))
+    end)
+    
+    if success and response and response.data then
+        local valid = {}
+        for _, srv in ipairs(response.data) do
+            if type(srv) == "table" and srv.playing and srv.maxPlayers then
+                if srv.playing < srv.maxPlayers and srv.playing > 0 and srv.id ~= game.JobId then
+                    if not servers[srv.id] then
+                        table.insert(valid, srv.id)
+                    end
+                end
+            end
+        end
+        if #valid > 0 then
+            TeleportService:TeleportToPlaceInstance(PlaceID, valid[math.random(1, #valid)], LocalPlayer)
+            task.wait(10)
+        end
+    end
+    
+    TeleportService:Teleport(PlaceID, LocalPlayer)
+end
+
+-----------------------------------------
+-- 5. The Wiggle & Grab Engine
+-----------------------------------------
+local function GrabItem(prompt, targetModel)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    local targetPos = targetModel:GetPivot()
+    if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
+
+    hrp.CFrame = targetPos
+    task.wait(0.3)
+    
+    hrp.CFrame = hrp.CFrame * CFrame.new(3, 0, 0)
+    task.wait(0.15)
+    hrp.CFrame = hrp.CFrame * CFrame.new(-6, 0, 0)
+    task.wait(0.15)
+    hrp.CFrame = targetPos 
+    task.wait(0.2)
+    
+    if fireproximityprompt then
+        fireproximityprompt(prompt)
+    else
+        prompt:InputHoldBegin()
+        task.wait(prompt.HoldDuration + 0.1)
+        prompt:InputHoldEnd()
+    end
+    
+    task.wait(1.5)
+    hrp.CFrame = TargetBaseCFrame
+end
+
+local PriorityList = {Divine = 3, Celestial = 2, Secret = 1}
+
+local function FindBestTarget()
+    local requiredFolder = Workspace:FindFirstChild("Required")
+    local brainrotsFolder = requiredFolder and requiredFolder:FindFirstChild("Brainrots")
+    if not brainrotsFolder then return false end
+
+    local BestTarget = nil
+    local HighestPriority = 0
+
+    for _, model in pairs(brainrotsFolder:GetChildren()) do
+        local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt then
+            local modelPos = model:GetPivot().Position
+            local identifiedRarity = nil
+            
+            -- Method 1: Math Check (Increased to 45 studs!)
+            for rarityName, padPos in pairs(PadCache) do
+                if (modelPos - padPos).Magnitude < 45 then
+                    identifiedRarity = rarityName; break
+                end
+            end
+            
+            -- Method 2: Fallback Text Check (Only scans the item itself = Zero Lag)
+            if not identifiedRarity then
+                local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
+                
+                -- Look for a nametag strictly inside this specific item
+                for _, desc in pairs(model:GetDescendants()) do
+                    if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+                        modelText = modelText .. " " .. string.lower(desc.Text)
+                    end
+                end
+                
+                if string.find(modelText, "divine") then identifiedRarity = "Divine"
+                elseif string.find(modelText, "celestial") then identifiedRarity = "Celestial"
+                elseif string.find(modelText, "secret") then identifiedRarity = "Secret"
+                end
+            end
+
+            if identifiedRarity and Settings[identifiedRarity] then
+                local prio = PriorityList[identifiedRarity]
+                if prio > HighestPriority then
+                    HighestPriority = prio
+                    BestTarget = {Prompt = prompt, Model = model, Rarity = identifiedRarity}
+                end
+            end
+        end
+    end
+
+    if BestTarget then
+        StatusText.Text = "Status: Grabbing " .. BestTarget.Rarity .. "!"
+        GrabItem(BestTarget.Prompt, BestTarget.Model)
+        return true
+    end
+    return false
+end
+
+-----------------------------------------
+-- 6. Main Loop (WITH SPAWN LOCK FIX)
+-----------------------------------------
+local PreviousSeconds = 9999
+local GracePeriodEnd = 0 
+
+task.spawn(function()
+    while task.wait(1) do
+        -- IF ANOTHER SCRIPT WAS EXECUTED AFTER THIS ONE, KILL THIS LOOP
+        if getgenv and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
+
+        -- 1. Read the Timer
+        local rawText = GetTimer()
+        TimerText.Text = "Timer: " .. rawText
+        local totalSeconds = ParseTime(rawText)
+
+        -- 2. "THE SPAWN LOCK"
+        if PreviousSeconds <= 20 and totalSeconds > 500 then
+            GracePeriodEnd = os.time() + 15
+        end
+
+        if rawText ~= "Loading..." then
+            PreviousSeconds = totalSeconds
+        end
+
+        -- 3. Try to Grab Items
+        if FindBestTarget() then
+            if Settings.AutoHop then
+                StatusText.Text = "Status: Grabbed! Hopping in 10s..."
+                task.wait(10)
+                SaveServerData(600)
+                SmartServerHop()
+                task.wait(10)
+            else
+                StatusText.Text = "Status: Grabbed! (AutoHop OFF)"
+                task.wait(5)
+            end
+            continue
+        end
+
+        -- 4. Hopping Logic
+        if rawText == "Loading..." then
+            StatusText.Text = "Status: Finding UI..."
+        elseif os.time() < GracePeriodEnd then
+            StatusText.Text = "Status: Game dropping item! Waiting..."
+        elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
+            StatusText.Text = "Status: Time > 240s, Scanning..."
+            task.wait(1)
+            if FindBestTarget() then continue end
+            
+            SaveServerData(totalSeconds)
+            SmartServerHop()
+            task.wait(10)
+        else
+            StatusText.Text = "Status: Waiting for spawn..."
+        end
+    end
+end)
