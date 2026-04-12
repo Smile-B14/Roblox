@@ -9,11 +9,41 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
--- 0. DUPLICATE EXECUTION GUARD
+-- 0. AUTO-RECONNECT (ANTI-KICK/DISCONNECT)
+-----------------------------------------
+pcall(function()
+    -- Method 1: Universal Error Catcher
+    game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+        task.wait(2)
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+    
+    -- Method 2: CoreGui UI Watcher (For Exploiters)
+    local CoreGui = game:GetService("CoreGui")
+    local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
+    if promptOverlay then
+        promptOverlay.ChildAdded:Connect(function(child)
+            if child.Name == "ErrorPrompt" then
+                task.wait(2)
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end
+        end)
+    end
+end)
+
+-----------------------------------------
+-- 1. DUPLICATE & VISITED SERVER GUARD
 -----------------------------------------
 local ScriptExecutionID = tick()
 if getgenv then 
     getgenv().SmileB_ExecutionID = ScriptExecutionID
+    
+    -- Creates a persistent blacklist of servers
+    if not getgenv().SmileB_VisitedServers then
+        getgenv().SmileB_VisitedServers = {}
+    end
+    -- Blacklist current server for exactly 60 SECONDS (Cooldown)
+    getgenv().SmileB_VisitedServers[game.JobId] = os.time() + 60
 end
 
 local Settings = {
@@ -28,7 +58,7 @@ local Settings = {
 local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
--- 1. Sleek UI by Smile B
+-- 2. Sleek UI by Smile B
 -----------------------------------------
 if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Brainrot") then
     LocalPlayer.PlayerGui.SmileB_Brainrot:Destroy()
@@ -140,7 +170,7 @@ CreateToggle("Secret", "Secret Priority")
 CreateToggle("AutoHop", "Auto Server Hop")
 
 -----------------------------------------
--- 2. SMART CROSS-SERVER MEMORY (File I/O)
+-- 3. SMART CROSS-SERVER MEMORY (File I/O)
 -----------------------------------------
 local FileName = "SmileB_ServerTimers.json"
 
@@ -171,7 +201,7 @@ local function SaveServerData(remainingSeconds)
 end
 
 -----------------------------------------
--- 3. CORE FUNCTIONS & CACHING
+-- 4. CORE FUNCTIONS & CACHING
 -----------------------------------------
 local PadCache = {}
 task.spawn(function()
@@ -181,7 +211,6 @@ task.spawn(function()
             local pad = pads:FindFirstChild(rarity)
             if pad then
                 if pad:IsA("Model") then
-                    -- Get absolute mathematical center of the model
                     local cframe, size = pad:GetBoundingBox()
                     PadCache[rarity] = cframe.Position
                 elseif pad:IsA("BasePart") then
@@ -216,8 +245,30 @@ local function ParseTime(timeStr)
 end
 
 -----------------------------------------
--- 4. THE SMART SNIPER HOPPER
+-- 5. DELTA-SAFE SERVER HOPPER (STRICT)
 -----------------------------------------
+local function FetchServersSafely(PlaceID)
+    local url = "https://games.roblox.com/v1/games/" .. tostring(PlaceID) .. "/servers/Public?sortOrder=Asc&limit=100"
+    local ReqFunc = request or http_request or (syn and syn.request)
+    
+    if ReqFunc then
+        local success, response = pcall(function()
+            return ReqFunc({Url = url, Method = "GET"})
+        end)
+        if success and response and response.StatusCode == 200 then
+            local decoded = HttpService:JSONDecode(response.Body)
+            if decoded then return decoded end
+        end
+    end
+    
+    local success, response = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if success and response then return response end
+    
+    return nil
+end
+
 local function SmartServerHop()
     if not Settings.AutoHop then return end
     local PlaceID = game.PlaceId
@@ -226,9 +277,16 @@ local function SmartServerHop()
     local BestServer = nil
     local SmallestWait = math.huge
     
+    -- Load visited servers. If cooldown expired, allow rejoining!
+    local visited = getgenv and getgenv().SmileB_VisitedServers or {}
+    local currentTime = os.time()
+    
     for id, stamp in pairs(servers) do
-        if id ~= game.JobId then
-            local waitTime = stamp - os.time()
+        local isOnCooldown = visited[id] and currentTime < visited[id]
+        
+        -- ONLY snippet known servers if we aren't currently on cooldown
+        if id ~= game.JobId and not isOnCooldown then
+            local waitTime = stamp - currentTime
             if waitTime > 15 and waitTime <= Settings.HopThreshold then
                 if waitTime < SmallestWait then
                     SmallestWait = waitTime
@@ -246,24 +304,29 @@ local function SmartServerHop()
     end
     
     StatusText.Text = "Status: Scouting New Servers..."
-    local success, response = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Desc&limit=100"))
-    end)
+    local response = FetchServersSafely(PlaceID)
     
-    if success and response and response.data then
+    if response and response.data then
         local valid = {}
         for _, srv in ipairs(response.data) do
             if type(srv) == "table" and srv.playing and srv.maxPlayers then
+                local isOnCooldown = visited[srv.id] and currentTime < visited[srv.id]
+                -- Only hop to servers NOT on cooldown
                 if srv.playing < srv.maxPlayers and srv.playing > 0 and srv.id ~= game.JobId then
-                    if not servers[srv.id] then
+                    if not isOnCooldown then
                         table.insert(valid, srv.id)
                     end
                 end
             end
         end
-        if #valid > 0 then
+        
+        -- If all fetched servers are on cooldown, clear memory to force a bypass
+        if #valid == 0 and getgenv then
+            getgenv().SmileB_VisitedServers = {[game.JobId] = os.time() + 60}
+        elseif #valid > 0 then
             TeleportService:TeleportToPlaceInstance(PlaceID, valid[math.random(1, #valid)], LocalPlayer)
             task.wait(10)
+            return
         end
     end
     
@@ -271,7 +334,7 @@ local function SmartServerHop()
 end
 
 -----------------------------------------
--- 5. The Wiggle & Grab Engine
+-- 6. THE ULTRA-FAST GRAB ENGINE
 -----------------------------------------
 local function GrabItem(prompt, targetModel)
     local char = LocalPlayer.Character
@@ -281,21 +344,20 @@ local function GrabItem(prompt, targetModel)
     local targetPos = targetModel:GetPivot()
     if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
 
+    -- LIGHTNING FAST WIGGLE (0.11 seconds total delay)
     hrp.CFrame = targetPos
-    task.wait(0.3)
+    task.wait(0.05) 
     
-    hrp.CFrame = hrp.CFrame * CFrame.new(3, 0, 0)
-    task.wait(0.15)
-    hrp.CFrame = hrp.CFrame * CFrame.new(-6, 0, 0)
-    task.wait(0.15)
+    hrp.CFrame = hrp.CFrame * CFrame.new(2, 0, 0)
+    task.wait(0.03)
     hrp.CFrame = targetPos 
-    task.wait(0.2)
+    task.wait(0.03)
     
     if fireproximityprompt then
         fireproximityprompt(prompt)
     else
         prompt:InputHoldBegin()
-        task.wait(prompt.HoldDuration + 0.1)
+        task.wait(prompt.HoldDuration + 0.05)
         prompt:InputHoldEnd()
     end
     
@@ -319,18 +381,14 @@ local function FindBestTarget()
             local modelPos = model:GetPivot().Position
             local identifiedRarity = nil
             
-            -- Method 1: Math Check (Increased to 45 studs!)
             for rarityName, padPos in pairs(PadCache) do
                 if (modelPos - padPos).Magnitude < 45 then
                     identifiedRarity = rarityName; break
                 end
             end
             
-            -- Method 2: Fallback Text Check (Only scans the item itself = Zero Lag)
             if not identifiedRarity then
                 local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
-                
-                -- Look for a nametag strictly inside this specific item
                 for _, desc in pairs(model:GetDescendants()) do
                     if desc:IsA("TextLabel") or desc:IsA("TextBox") then
                         modelText = modelText .. " " .. string.lower(desc.Text)
@@ -362,22 +420,22 @@ local function FindBestTarget()
 end
 
 -----------------------------------------
--- 6. Main Loop (WITH SPAWN LOCK FIX)
+-- 7. Main Loop
 -----------------------------------------
 local PreviousSeconds = 9999
 local GracePeriodEnd = 0 
 
 task.spawn(function()
-    while task.wait(1) do
+    -- FAST LOOP: 0.1 SECONDS INSTEAD OF 1.0 SECONDS
+    while task.wait(0.1) do
         -- IF ANOTHER SCRIPT WAS EXECUTED AFTER THIS ONE, KILL THIS LOOP
         if getgenv and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
-        -- 1. Read the Timer
         local rawText = GetTimer()
         TimerText.Text = "Timer: " .. rawText
         local totalSeconds = ParseTime(rawText)
 
-        -- 2. "THE SPAWN LOCK"
+        -- "THE SPAWN LOCK" -> Prevent hopping immediately when timer resets
         if PreviousSeconds <= 20 and totalSeconds > 500 then
             GracePeriodEnd = os.time() + 15
         end
@@ -386,7 +444,7 @@ task.spawn(function()
             PreviousSeconds = totalSeconds
         end
 
-        -- 3. Try to Grab Items
+        -- Try to Grab Items INSTANTLY
         if FindBestTarget() then
             if Settings.AutoHop then
                 StatusText.Text = "Status: Grabbed! Hopping in 10s..."
@@ -401,14 +459,14 @@ task.spawn(function()
             continue
         end
 
-        -- 4. Hopping Logic
+        -- Hopping Logic
         if rawText == "Loading..." then
             StatusText.Text = "Status: Finding UI..."
         elseif os.time() < GracePeriodEnd then
             StatusText.Text = "Status: Game dropping item! Waiting..."
         elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
-            StatusText.Text = "Status: Time > 150s, Scanning..."
-            task.wait(1)
+            StatusText.Text = "Status: Time > 130s, Scanning..."
+            -- Final instant check before leaving
             if FindBestTarget() then continue end
             
             SaveServerData(totalSeconds)
