@@ -21,7 +21,7 @@ local Settings = {
     Celestial = false,
     Secret = false, 
     AutoHop = true,
-    HopThreshold = 250 -- Hopping threshold (4 minutes)
+    HopThreshold = 130 -- Hopping threshold (4 minutes)
 }
 
 -- EXACT Return Base Coordinates
@@ -407,7 +407,7 @@ task.spawn(function()
         elseif os.time() < GracePeriodEnd then
             StatusText.Text = "Status: Game dropping item! Waiting..."
         elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
-            StatusText.Text = "Status: Time > 240s, Scanning..."
+            StatusText.Text = "Status: Time > 150s, Scanning..."
             task.wait(1)
             if FindBestTarget() then continue end
             
