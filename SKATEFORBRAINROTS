@@ -12,13 +12,11 @@ local LocalPlayer = Players.LocalPlayer
 -- 0. AUTO-RECONNECT (ANTI-KICK/DISCONNECT)
 -----------------------------------------
 pcall(function()
-    -- Method 1: Universal Error Catcher
     game:GetService("GuiService").ErrorMessageChanged:Connect(function()
         task.wait(2)
         TeleportService:Teleport(game.PlaceId, LocalPlayer)
     end)
     
-    -- Method 2: CoreGui UI Watcher (For Exploiters)
     local CoreGui = game:GetService("CoreGui")
     local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
     if promptOverlay then
@@ -38,7 +36,6 @@ local ScriptExecutionID = tick()
 if getgenv then 
     getgenv().SmileB_ExecutionID = ScriptExecutionID
     
-    -- Creates a persistent blacklist of servers
     if not getgenv().SmileB_VisitedServers then
         getgenv().SmileB_VisitedServers = {}
     end
@@ -51,7 +48,7 @@ local Settings = {
     Celestial = false,
     Secret = false, 
     AutoHop = true,
-    HopThreshold = 130 -- Hopping threshold (4 minutes)
+    HopThreshold = 130
 }
 
 -- EXACT Return Base Coordinates
@@ -134,8 +131,7 @@ ListLayout.Parent = MainFrame
 ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 ListLayout.Padding = UDim.new(0, 5)
 
-Title.LayoutOrder = 1
-Credit.LayoutOrder = 2
+Title.LayoutOrder = 1; Credit.LayoutOrder = 2
 local spacer1 = Instance.new("Frame", MainFrame); spacer1.BackgroundTransparency = 1; spacer1.Size = UDim2.new(1,0,0,5); spacer1.LayoutOrder = 3
 InfoContainer.LayoutOrder = 4
 local spacer2 = Instance.new("Frame", MainFrame); spacer2.BackgroundTransparency = 1; spacer2.Size = UDim2.new(1,0,0,5); spacer2.LayoutOrder = 5
@@ -170,7 +166,7 @@ CreateToggle("Secret", "Secret Priority")
 CreateToggle("AutoHop", "Auto Server Hop")
 
 -----------------------------------------
--- 3. SMART CROSS-SERVER MEMORY (File I/O)
+-- 3. SMART CROSS-SERVER MEMORY
 -----------------------------------------
 local FileName = "SmileB_ServerTimers.json"
 
@@ -185,18 +181,15 @@ end
 local function SaveServerData(remainingSeconds)
     if not writefile then return end
     local servers = LoadServers()
-    
     if remainingSeconds then
         servers[game.JobId] = os.time() + remainingSeconds
     end
-    
     local cleanedData = {}
     for id, stamp in pairs(servers) do
         if os.time() < stamp + 60 then
             cleanedData[id] = stamp
         end
     end
-    
     pcall(function() writefile(FileName, HttpService:JSONEncode(cleanedData)) end)
 end
 
@@ -245,25 +238,21 @@ local function ParseTime(timeStr)
 end
 
 -----------------------------------------
--- 5. DELTA-SAFE SERVER HOPPER (STRICT)
+-- 5. SERVER HOPPER (STRICT)
 -----------------------------------------
 local function FetchServersSafely(PlaceID)
     local url = "https://games.roblox.com/v1/games/" .. tostring(PlaceID) .. "/servers/Public?sortOrder=Asc&limit=100"
     local ReqFunc = request or http_request or (syn and syn.request)
     
     if ReqFunc then
-        local success, response = pcall(function()
-            return ReqFunc({Url = url, Method = "GET"})
-        end)
+        local success, response = pcall(function() return ReqFunc({Url = url, Method = "GET"}) end)
         if success and response and response.StatusCode == 200 then
             local decoded = HttpService:JSONDecode(response.Body)
             if decoded then return decoded end
         end
     end
     
-    local success, response = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(url))
-    end)
+    local success, response = pcall(function() return HttpService:JSONDecode(game:HttpGet(url)) end)
     if success and response then return response end
     
     return nil
@@ -277,17 +266,14 @@ local function SmartServerHop()
     local BestServer = nil
     local SmallestWait = math.huge
     
-    -- Load visited servers. If cooldown expired, allow rejoining!
     local visited = getgenv and getgenv().SmileB_VisitedServers or {}
     local currentTime = os.time()
     
     for id, stamp in pairs(servers) do
         local isOnCooldown = visited[id] and currentTime < visited[id]
-        
-        -- ONLY snippet known servers if we aren't currently on cooldown
         if id ~= game.JobId and not isOnCooldown then
             local waitTime = stamp - currentTime
-            if waitTime > 15 and waitTime <= Settings.HopThreshold then
+            if waitTime > 10 and waitTime <= Settings.HopThreshold then
                 if waitTime < SmallestWait then
                     SmallestWait = waitTime
                     BestServer = id
@@ -300,7 +286,7 @@ local function SmartServerHop()
         StatusText.Text = "Status: Sniping Known Server..."
         task.wait(1)
         TeleportService:TeleportToPlaceInstance(PlaceID, BestServer, LocalPlayer)
-        task.wait(10)
+        task.wait(5)
     end
     
     StatusText.Text = "Status: Scouting New Servers..."
@@ -311,7 +297,6 @@ local function SmartServerHop()
         for _, srv in ipairs(response.data) do
             if type(srv) == "table" and srv.playing and srv.maxPlayers then
                 local isOnCooldown = visited[srv.id] and currentTime < visited[srv.id]
-                -- Only hop to servers NOT on cooldown
                 if srv.playing < srv.maxPlayers and srv.playing > 0 and srv.id ~= game.JobId then
                     if not isOnCooldown then
                         table.insert(valid, srv.id)
@@ -320,12 +305,11 @@ local function SmartServerHop()
             end
         end
         
-        -- If all fetched servers are on cooldown, clear memory to force a bypass
         if #valid == 0 and getgenv then
             getgenv().SmileB_VisitedServers = {[game.JobId] = os.time() + 60}
         elseif #valid > 0 then
             TeleportService:TeleportToPlaceInstance(PlaceID, valid[math.random(1, #valid)], LocalPlayer)
-            task.wait(10)
+            task.wait(5)
             return
         end
     end
@@ -334,7 +318,7 @@ local function SmartServerHop()
 end
 
 -----------------------------------------
--- 6. THE ULTRA-FAST GRAB ENGINE
+-- 6. ULTRA-FAST GRAB ENGINE (SPAM E + TP)
 -----------------------------------------
 local function GrabItem(prompt, targetModel)
     local char = LocalPlayer.Character
@@ -344,28 +328,26 @@ local function GrabItem(prompt, targetModel)
     local targetPos = targetModel:GetPivot()
     if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
 
-    -- LIGHTNING FAST WIGGLE (0.11 seconds total delay)
-    hrp.CFrame = targetPos
-    task.wait(0.05) 
-    
-    hrp.CFrame = hrp.CFrame * CFrame.new(2, 0, 0)
-    task.wait(0.03)
-    hrp.CFrame = targetPos 
-    task.wait(0.03)
-    
-    if fireproximityprompt then
-        fireproximityprompt(prompt)
-    else
+    -- SPAM TELEPORT & PROMPT TO LOCK IT IN FASTER THAN ANY HUMAN/OTHER EXPLOIT
+    for i = 1, 15 do
+        hrp.CFrame = targetPos * CFrame.new(0, 0, 0) -- Lock onto exact position repeatedly
+        
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        end
         prompt:InputHoldBegin()
-        task.wait(prompt.HoldDuration + 0.05)
+        task.wait(0.05) -- Fire multiple times a second
         prompt:InputHoldEnd()
     end
     
-    task.wait(1.5)
     hrp.CFrame = TargetBaseCFrame
 end
 
+-----------------------------------------
+-- 7. ZERO-LAG ITEM SCANNER
+-----------------------------------------
 local PriorityList = {Divine = 3, Celestial = 2, Secret = 1}
+local RarityCache = {} -- Stores previously scanned models so we NEVER scan text twice
 
 local function FindBestTarget()
     local requiredFolder = Workspace:FindFirstChild("Required")
@@ -375,33 +357,42 @@ local function FindBestTarget()
     local BestTarget = nil
     local HighestPriority = 0
 
-    for _, model in pairs(brainrotsFolder:GetChildren()) do
+    for _, model in ipairs(brainrotsFolder:GetChildren()) do
         local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            local modelPos = model:GetPivot().Position
-            local identifiedRarity = nil
+            local identifiedRarity = RarityCache[model] -- Try loading from instant cache
             
-            for rarityName, padPos in pairs(PadCache) do
-                if (modelPos - padPos).Magnitude < 45 then
-                    identifiedRarity = rarityName; break
-                end
-            end
-            
+            -- If it's a new item we haven't seen yet, process it ONCE.
             if not identifiedRarity then
-                local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
-                for _, desc in pairs(model:GetDescendants()) do
-                    if desc:IsA("TextLabel") or desc:IsA("TextBox") then
-                        modelText = modelText .. " " .. string.lower(desc.Text)
+                local modelPos = model:GetPivot().Position
+                
+                -- Check Math First
+                for rarityName, padPos in pairs(PadCache) do
+                    if (modelPos - padPos).Magnitude < 45 then
+                        identifiedRarity = rarityName; break
                     end
                 end
                 
-                if string.find(modelText, "divine") then identifiedRarity = "Divine"
-                elseif string.find(modelText, "celestial") then identifiedRarity = "Celestial"
-                elseif string.find(modelText, "secret") then identifiedRarity = "Secret"
+                -- Check Text Fallback (Only happens ONCE per spawned item, no more lag!)
+                if not identifiedRarity then
+                    local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
+                    for _, desc in ipairs(model:GetDescendants()) do
+                        if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+                            modelText = modelText .. " " .. string.lower(desc.Text)
+                        end
+                    end
+                    
+                    if string.find(modelText, "divine") then identifiedRarity = "Divine"
+                    elseif string.find(modelText, "celestial") then identifiedRarity = "Celestial"
+                    elseif string.find(modelText, "secret") then identifiedRarity = "Secret"
+                    else identifiedRarity = "None" end
                 end
+                
+                RarityCache[model] = identifiedRarity -- Save to memory forever
             end
 
-            if identifiedRarity and Settings[identifiedRarity] then
+            -- Priority Check
+            if identifiedRarity and identifiedRarity ~= "None" and Settings[identifiedRarity] then
                 local prio = PriorityList[identifiedRarity]
                 if prio > HighestPriority then
                     HighestPriority = prio
@@ -409,6 +400,11 @@ local function FindBestTarget()
                 end
             end
         end
+    end
+    
+    -- Keep Cache Clean
+    for model, _ in pairs(RarityCache) do
+        if not model.Parent then RarityCache[model] = nil end
     end
 
     if BestTarget then
@@ -420,14 +416,14 @@ local function FindBestTarget()
 end
 
 -----------------------------------------
--- 7. Main Loop
+-- 8. Main Loop
 -----------------------------------------
 local PreviousSeconds = 9999
 local GracePeriodEnd = 0 
 
 task.spawn(function()
-    -- FAST LOOP: 0.1 SECONDS INSTEAD OF 1.0 SECONDS
-    while task.wait(0.1) do
+    -- HYPER LOOP: 0.03 Seconds (Ticks perfectly with Roblox engine)
+    while task.wait(0.03) do
         -- IF ANOTHER SCRIPT WAS EXECUTED AFTER THIS ONE, KILL THIS LOOP
         if getgenv and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
@@ -435,7 +431,7 @@ task.spawn(function()
         TimerText.Text = "Timer: " .. rawText
         local totalSeconds = ParseTime(rawText)
 
-        -- "THE SPAWN LOCK" -> Prevent hopping immediately when timer resets
+        -- "THE SPAWN LOCK" -> Gives game time to drop physical item before bouncing
         if PreviousSeconds <= 20 and totalSeconds > 500 then
             GracePeriodEnd = os.time() + 15
         end
@@ -447,11 +443,11 @@ task.spawn(function()
         -- Try to Grab Items INSTANTLY
         if FindBestTarget() then
             if Settings.AutoHop then
-                StatusText.Text = "Status: Grabbed! Hopping in 10s..."
-                task.wait(10)
+                StatusText.Text = "Status: Grabbed! Hopping in 5s..."
+                task.wait(5)
                 SaveServerData(600)
                 SmartServerHop()
-                task.wait(10)
+                task.wait(5)
             else
                 StatusText.Text = "Status: Grabbed! (AutoHop OFF)"
                 task.wait(5)
@@ -463,15 +459,15 @@ task.spawn(function()
         if rawText == "Loading..." then
             StatusText.Text = "Status: Finding UI..."
         elseif os.time() < GracePeriodEnd then
-            StatusText.Text = "Status: Game dropping item! Waiting..."
+            StatusText.Text = "Status: Spawning! Lock-In Active..."
         elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
-            StatusText.Text = "Status: Time > 130s, Scanning..."
-            -- Final instant check before leaving
+            StatusText.Text = "Status: Time > 130s, Hopping..."
+            -- Final check before leaving
             if FindBestTarget() then continue end
             
             SaveServerData(totalSeconds)
             SmartServerHop()
-            task.wait(10)
+            task.wait(5) -- Shortened to 5s
         else
             StatusText.Text = "Status: Waiting for spawn..."
         end
