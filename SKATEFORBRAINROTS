@@ -330,13 +330,13 @@ local function GrabItem(prompt, targetModel)
 
     -- SPAM TELEPORT & PROMPT TO LOCK IT IN FASTER THAN ANY HUMAN/OTHER EXPLOIT
     for i = 1, 15 do
-        hrp.CFrame = targetPos * CFrame.new(0, 0, 0) -- Lock onto exact position repeatedly
+        hrp.CFrame = targetPos * CFrame.new(0, 0, 0)
         
         if fireproximityprompt then
             fireproximityprompt(prompt)
         end
         prompt:InputHoldBegin()
-        task.wait(0.05) -- Fire multiple times a second
+        task.wait(0.05)
         prompt:InputHoldEnd()
     end
     
@@ -347,7 +347,7 @@ end
 -- 7. ZERO-LAG ITEM SCANNER
 -----------------------------------------
 local PriorityList = {Divine = 3, Celestial = 2, Secret = 1}
-local RarityCache = {} -- Stores previously scanned models so we NEVER scan text twice
+local RarityCache = {}
 
 local function FindBestTarget()
     local requiredFolder = Workspace:FindFirstChild("Required")
@@ -360,20 +360,16 @@ local function FindBestTarget()
     for _, model in ipairs(brainrotsFolder:GetChildren()) do
         local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            local identifiedRarity = RarityCache[model] -- Try loading from instant cache
+            local identifiedRarity = RarityCache[model] 
             
-            -- If it's a new item we haven't seen yet, process it ONCE.
             if not identifiedRarity then
                 local modelPos = model:GetPivot().Position
-                
-                -- Check Math First
                 for rarityName, padPos in pairs(PadCache) do
                     if (modelPos - padPos).Magnitude < 45 then
                         identifiedRarity = rarityName; break
                     end
                 end
                 
-                -- Check Text Fallback (Only happens ONCE per spawned item, no more lag!)
                 if not identifiedRarity then
                     local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
                     for _, desc in ipairs(model:GetDescendants()) do
@@ -388,10 +384,9 @@ local function FindBestTarget()
                     else identifiedRarity = "None" end
                 end
                 
-                RarityCache[model] = identifiedRarity -- Save to memory forever
+                RarityCache[model] = identifiedRarity
             end
 
-            -- Priority Check
             if identifiedRarity and identifiedRarity ~= "None" and Settings[identifiedRarity] then
                 local prio = PriorityList[identifiedRarity]
                 if prio > HighestPriority then
@@ -402,7 +397,6 @@ local function FindBestTarget()
         end
     end
     
-    -- Keep Cache Clean
     for model, _ in pairs(RarityCache) do
         if not model.Parent then RarityCache[model] = nil end
     end
@@ -420,18 +414,25 @@ end
 -----------------------------------------
 local PreviousSeconds = 9999
 local GracePeriodEnd = 0 
+local ServerStartTime = os.time() -- AFK Failsafe Tracker
 
 task.spawn(function()
-    -- HYPER LOOP: 0.03 Seconds (Ticks perfectly with Roblox engine)
+    -- HYPER LOOP: 0.03 Seconds
     while task.wait(0.03) do
-        -- IF ANOTHER SCRIPT WAS EXECUTED AFTER THIS ONE, KILL THIS LOOP
         if getgenv and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
+
+        -- AFK 4-MINUTE FAILSAFE
+        if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
+            StatusText.Text = "Status: UI/AFK Timeout! Hopping..."
+            SmartServerHop()
+            task.wait(5)
+            continue
+        end
 
         local rawText = GetTimer()
         TimerText.Text = "Timer: " .. rawText
         local totalSeconds = ParseTime(rawText)
 
-        -- "THE SPAWN LOCK" -> Gives game time to drop physical item before bouncing
         if PreviousSeconds <= 20 and totalSeconds > 500 then
             GracePeriodEnd = os.time() + 15
         end
@@ -440,7 +441,6 @@ task.spawn(function()
             PreviousSeconds = totalSeconds
         end
 
-        -- Try to Grab Items INSTANTLY
         if FindBestTarget() then
             if Settings.AutoHop then
                 StatusText.Text = "Status: Grabbed! Hopping in 5s..."
@@ -455,19 +455,17 @@ task.spawn(function()
             continue
         end
 
-        -- Hopping Logic
         if rawText == "Loading..." then
             StatusText.Text = "Status: Finding UI..."
         elseif os.time() < GracePeriodEnd then
             StatusText.Text = "Status: Spawning! Lock-In Active..."
         elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
             StatusText.Text = "Status: Time > 130s, Hopping..."
-            -- Final check before leaving
             if FindBestTarget() then continue end
             
             SaveServerData(totalSeconds)
             SmartServerHop()
-            task.wait(5) -- Shortened to 5s
+            task.wait(5) 
         else
             StatusText.Text = "Status: Waiting for spawn..."
         end
