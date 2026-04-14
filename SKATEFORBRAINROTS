@@ -45,7 +45,7 @@ end
 
 local Settings = {
     Divine = true,
-    Celestial = false,
+    Celestial = true,
     Secret = false, 
     AutoHop = true,
     HopThreshold = 130
