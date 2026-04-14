@@ -70,7 +70,7 @@ local Settings = {
     
     Divine = true,
     Celestial = true,
-    Secret = true,
+    Secret = false,
     AutoHop = true,
     HopThreshold = 130,
     SpecificNames = "Swag Soda, Rainbow 67",
