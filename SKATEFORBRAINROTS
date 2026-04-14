@@ -9,7 +9,33 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
--- 0. AUTO-RECONNECT (ANTI-KICK/DISCONNECT)
+-- 0.1 FAST GUARD DELETION (INSTANT)
+-----------------------------------------
+local function NukeGuards()
+    pcall(function()
+        local required = Workspace:FindFirstChild("Required")
+        if required then
+            local guards = required:FindFirstChild("Guards")
+            if guards then guards:Destroy() end
+        end
+    end)
+end
+
+NukeGuards() -- Fire immediately
+task.spawn(function()
+    local req = Workspace:WaitForChild("Required", 5)
+    if req then
+        req.ChildAdded:Connect(function(child)
+            if child.Name == "Guards" then
+                task.wait() -- Wait a tick to allow the object to register fully before obliteration
+                pcall(function() child:Destroy() end)
+            end
+        end)
+    end
+end)
+
+-----------------------------------------
+-- 0.2 AUTO-RECONNECT (ANTI-KICK & AFK SAFE)
 -----------------------------------------
 pcall(function()
     game:GetService("GuiService").ErrorMessageChanged:Connect(function()
@@ -30,204 +56,171 @@ pcall(function()
 end)
 
 -----------------------------------------
--- 1. DUPLICATE & VISITED SERVER GUARD
+-- 1. SETTINGS & DUPLICATE GUARD
 -----------------------------------------
 local ScriptExecutionID = tick()
 if getgenv then 
     getgenv().SmileB_ExecutionID = ScriptExecutionID
-    
-    if not getgenv().SmileB_VisitedServers then
-        getgenv().SmileB_VisitedServers = {}
-    end
-    -- Blacklist current server for exactly 60 SECONDS (Cooldown)
+    if not getgenv().SmileB_VisitedServers then getgenv().SmileB_VisitedServers = {} end
     getgenv().SmileB_VisitedServers[game.JobId] = os.time() + 60
 end
 
 local Settings = {
+    LoadstringURL = "loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/SKATEFORBRAINROTS"))()", -- !!! PLACE YOUR SCRIPT URL HERE FOR FLAWLESS AUTO-EXECUTE !!!
+    
     Divine = true,
     Celestial = true,
-    Secret = false, 
+    Secret = true,
     AutoHop = true,
-    HopThreshold = 130
+    HopThreshold = 130,
+    SpecificNames = "Swag Soda, Rainbow 67",
+    Mut_Radioactive = true,
+    Mut_Diamond = true,
+    Mut_Gold = true,
+    Mut_Normal = false
 }
 
 -- EXACT Return Base Coordinates
 local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
--- 2. Sleek UI by Smile B
+-- 2. CROSS-SERVER STATS MEMORY
 -----------------------------------------
-if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Brainrot") then
-    LocalPlayer.PlayerGui.SmileB_Brainrot:Destroy()
+local StatsFile = "SmileB_SessionStats.json"
+local SessionStats = { Hops = 0, Grabs = 0, Divine = 0, Celestial = 0, Secret = 0 }
+
+local function LoadStats()
+    if isfile and readfile and isfile(StatsFile) then
+        local success, data = pcall(function() return HttpService:JSONDecode(readfile(StatsFile)) end)
+        if success and type(data) == "table" then
+            SessionStats = data
+        end
+    end
+end
+
+local function SaveStats()
+    if writefile then
+        pcall(function() writefile(StatsFile, HttpService:JSONEncode(SessionStats)) end)
+    end
+end
+
+LoadStats()
+
+-----------------------------------------
+-- 3. AUTO-EXECUTE QUEUE SYSTEM
+-----------------------------------------
+task.spawn(function()
+    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
+    if qot then
+        if Settings.LoadstringURL ~= "" then
+            qot("loadstring(game:HttpGet('" .. Settings.LoadstringURL .. "'))()")
+        else
+            -- Backup File-based AutoExecute if no URL provided
+            qot([[
+                task.wait(2)
+                pcall(function()
+                    if isfile and readfile and isfile("SmileB_MainScript.lua") then
+                        loadstring(readfile("SmileB_MainScript.lua"))()
+                    end
+                end)
+            ]])
+        end
+    end
+end)
+
+-----------------------------------------
+-- 4. TORA UI LIBRARY
+-----------------------------------------
+pcall(function()
+    for _, v in pairs(game:GetService("CoreGui"):GetChildren()) do
+        if v:IsA("ScreenGui") and v:FindFirstChild("Main") and v.Main:FindFirstChild("DropShadow") then
+            v:Destroy()
+        end
+    end
+end)
+
+local success, library = pcall(function()
+    return loadstring(game:HttpGet("https://raw.githubusercontent.com/liebertsx/Tora-Library/main/src/librarynew", true))()
+end)
+
+if success and library then
+    local Window = library:CreateWindow("Smile B | Auto Farm")
+    
+    local FarmFolder = Window:AddFolder("Farm Settings")
+    FarmFolder:AddToggle({ text = "Auto Hop", flag = "autohop", state = true, value = true, callback = function(v) Settings.AutoHop = (v == true) end })
+    FarmFolder:AddToggle({ text = "Divine", flag = "divine", state = true, value = true, callback = function(v) Settings.Divine = (v == true) end })
+    FarmFolder:AddToggle({ text = "Celestial", flag = "celestial", state = true, value = true, callback = function(v) Settings.Celestial = (v == true) end })
+    FarmFolder:AddToggle({ text = "Secret", flag = "secret", state = true, value = true, callback = function(v) Settings.Secret = (v == true) end })
+
+    local MutFolder = Window:AddFolder("Divine Mutations")
+    MutFolder:AddToggle({ text = "Radioactive", flag = "rad", state = true, value = true, callback = function(v) Settings.Mut_Radioactive = (v == true) end })
+    MutFolder:AddToggle({ text = "Diamond", flag = "dia", state = true, value = true, callback = function(v) Settings.Mut_Diamond = (v == true) end })
+    MutFolder:AddToggle({ text = "Gold", flag = "gold", state = true, value = true, callback = function(v) Settings.Mut_Gold = (v == true) end })
+    MutFolder:AddToggle({ text = "Normal", flag = "norm", state = false, value = false, callback = function(v) Settings.Mut_Normal = (v == true) end })
+
+    local SpecFolder = Window:AddFolder("Targets (Secrets/Celes)")
+    SpecFolder:AddBox({ text = "Names (Comma Split)", flag = "names", value = "Swag Soda, Rainbow 67", callback = function(v) Settings.SpecificNames = tostring(v) end })
+    
+    -- LIVE STATS DROPDOWN
+    local StatsFolder = Window:AddFolder("Session Stats")
+    StatsFolder:AddToggle({ text = "Server Hops: " .. SessionStats.Hops, flag = "s_hops", state = true })
+    StatsFolder:AddToggle({ text = "Total Grabs: " .. SessionStats.Grabs, flag = "s_grabs", state = true })
+    StatsFolder:AddToggle({ text = "Secrets: " .. SessionStats.Secret, flag = "s_sec", state = true })
+    StatsFolder:AddToggle({ text = "Celestials: " .. SessionStats.Celestial, flag = "s_cel", state = true })
+    StatsFolder:AddToggle({ text = "Divines: " .. SessionStats.Divine, flag = "s_div", state = true })
+
+    library:Init()
+end
+
+-----------------------------------------
+-- 5. BIGGER TIMER OVERLAY 
+-----------------------------------------
+if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Overlay") then
+    LocalPlayer.PlayerGui.SmileB_Overlay:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "SmileB_Brainrot"
-ScreenGui.ResetOnSpawn = false
+ScreenGui.Name = "SmileB_Overlay"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 270)
-MainFrame.Position = UDim2.new(1, -460, 0.5, -135)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = MainFrame
-
-local UIStroke = Instance.new("UIStroke")
-UIStroke.Color = Color3.fromRGB(150, 0, 255)
-UIStroke.Thickness = 2
-UIStroke.Parent = MainFrame
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 30)
-Title.BackgroundTransparency = 1
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 16
-Title.Font = Enum.Font.GothamBold
-Title.Text = "🧠 Brainrot Smart Sniper"
-Title.Parent = MainFrame
-
-local Credit = Instance.new("TextLabel")
-Credit.Size = UDim2.new(1, 0, 0, 15)
-Credit.Position = UDim2.new(0, 0, 0, 25)
-Credit.BackgroundTransparency = 1
-Credit.TextColor3 = Color3.fromRGB(170, 170, 170)
-Credit.TextSize = 11
-Credit.Font = Enum.Font.Gotham
-Credit.Text = "Written by Smile B"
-Credit.Parent = MainFrame
-
-local InfoContainer = Instance.new("Frame")
-InfoContainer.Size = UDim2.new(1, -20, 0, 50)
-InfoContainer.Position = UDim2.new(0, 10, 0, 45)
-InfoContainer.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-InfoContainer.Parent = MainFrame
-Instance.new("UICorner", InfoContainer).CornerRadius = UDim.new(0, 6)
-
-local TimerText = Instance.new("TextLabel")
-TimerText.Size = UDim2.new(1, 0, 0.5, 0)
-TimerText.BackgroundTransparency = 1
-TimerText.TextColor3 = Color3.fromRGB(255, 255, 0)
-TimerText.TextScaled = true
-TimerText.Text = "Timer: Loading..."
-TimerText.Parent = InfoContainer
-
-local StatusText = Instance.new("TextLabel")
-StatusText.Size = UDim2.new(1, 0, 0.5, 0)
-StatusText.Position = UDim2.new(0, 0, 0.5, 0)
-StatusText.BackgroundTransparency = 1
-StatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
-StatusText.TextScaled = true
-StatusText.Text = "Status: Initializing..."
-StatusText.Parent = InfoContainer
-
-local ListLayout = Instance.new("UIListLayout")
-ListLayout.Parent = MainFrame
-ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-ListLayout.Padding = UDim.new(0, 5)
-
-Title.LayoutOrder = 1; Credit.LayoutOrder = 2
-local spacer1 = Instance.new("Frame", MainFrame); spacer1.BackgroundTransparency = 1; spacer1.Size = UDim2.new(1,0,0,5); spacer1.LayoutOrder = 3
-InfoContainer.LayoutOrder = 4
-local spacer2 = Instance.new("Frame", MainFrame); spacer2.BackgroundTransparency = 1; spacer2.Size = UDim2.new(1,0,0,5); spacer2.LayoutOrder = 5
-
-local ToggleOrder = 6
-local function CreateToggle(name, text)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 25)
-    btn.BackgroundColor3 = Settings[name] and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(150, 40, 40)
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Font = Enum.Font.GothamSemibold
-    btn.TextSize = 13
-    btn.Text = text .. ": " .. (Settings[name] and "ON" or "OFF")
-    btn.LayoutOrder = ToggleOrder
-    ToggleOrder = ToggleOrder + 1
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-    
-    local container = Instance.new("Frame")
-    container.BackgroundTransparency = 1; container.Size = UDim2.new(1, 0, 0, 25); container.LayoutOrder = btn.LayoutOrder
-    btn.Position = UDim2.new(0, 10, 0, 0); btn.Parent = container; container.Parent = MainFrame
-
-    btn.MouseButton1Click:Connect(function()
-        Settings[name] = not Settings[name]
-        btn.BackgroundColor3 = Settings[name] and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(150, 40, 40)
-        btn.Text = text .. ": " .. (Settings[name] and "ON" or "OFF")
-    end)
-end
-
-CreateToggle("Divine", "Divine Priority")
-CreateToggle("Celestial", "Celestial Priority")
-CreateToggle("Secret", "Secret Priority")
-CreateToggle("AutoHop", "Auto Server Hop")
+local TimerOverlay = Instance.new("TextLabel")
+TimerOverlay.Size = UDim2.new(0, 350, 0, 70)
+TimerOverlay.Position = UDim2.new(1, -500, 1, -60)
+TimerOverlay.BackgroundTransparency = 1
+TimerOverlay.TextColor3 = Color3.fromRGB(255, 255, 0)
+TimerOverlay.TextStrokeTransparency = 0
+TimerOverlay.TextSize = 56 
+TimerOverlay.Font = Enum.Font.FredokaOne
+TimerOverlay.TextXAlignment = Enum.TextXAlignment.Right
+TimerOverlay.Text = "Syncing..."
+TimerOverlay.Parent = ScreenGui
 
 -----------------------------------------
--- 3. SMART CROSS-SERVER MEMORY
+-- 6. SMART CROSS-SERVER TIMERS & CACHE
 -----------------------------------------
-local FileName = "SmileB_ServerTimers.json"
+local TimerFileName = "SmileB_ServerTimers.json"
 
-local function LoadServers()
-    if isfile and readfile and isfile(FileName) then
-        local success, data = pcall(function() return HttpService:JSONDecode(readfile(FileName)) end)
+local function LoadTimers()
+    if isfile and readfile and isfile(TimerFileName) then
+        local success, data = pcall(function() return HttpService:JSONDecode(readfile(TimerFileName)) end)
         if success and type(data) == "table" then return data end
     end
     return {}
 end
 
-local function SaveServerData(remainingSeconds)
+local function SaveTimerData(remainingSeconds)
     if not writefile then return end
-    local servers = LoadServers()
-    if remainingSeconds then
-        servers[game.JobId] = os.time() + remainingSeconds
-    end
+    local servers = LoadTimers()
+    if remainingSeconds then servers[game.JobId] = os.time() + remainingSeconds end
     local cleanedData = {}
     for id, stamp in pairs(servers) do
-        if os.time() < stamp + 60 then
-            cleanedData[id] = stamp
-        end
+        if os.time() < stamp + 60 then cleanedData[id] = stamp end
     end
-    pcall(function() writefile(FileName, HttpService:JSONEncode(cleanedData)) end)
+    pcall(function() writefile(TimerFileName, HttpService:JSONEncode(cleanedData)) end)
 end
 
------------------------------------------
--- 4. CORE FUNCTIONS & CACHING
------------------------------------------
-local PadCache = {}
-task.spawn(function()
-    local pads = Workspace:WaitForChild("Pads", 10)
-    if pads then
-        for _, rarity in ipairs({"Divine", "Celestial", "Secret"}) do
-            local pad = pads:FindFirstChild(rarity)
-            if pad then
-                if pad:IsA("Model") then
-                    local cframe, size = pad:GetBoundingBox()
-                    PadCache[rarity] = cframe.Position
-                elseif pad:IsA("BasePart") then
-                    PadCache[rarity] = pad.Position
-                end
-            end
-        end
-    end
-end)
-
+local ExpectedEndTime = 0
 local CachedTimerUI = nil
-local function GetTimer()
-    if CachedTimerUI and CachedTimerUI.Parent then return CachedTimerUI.Text end
-    local mainGui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
-    local frames = mainGui and mainGui:FindFirstChild("Frames")
-    if frames then
-        for _, v in pairs(frames:GetDescendants()) do
-            if v:IsA("TextLabel") and (v.Name == "Countdown" or v.Name == "CountDown") then
-                CachedTimerUI = v; return v.Text
-            end
-        end
-    end
-    return "Loading..."
-end
 
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return 0 end
@@ -237,8 +230,51 @@ local function ParseTime(timeStr)
     return (tonumber(min) * 60) + tonumber(sec)
 end
 
+task.spawn(function()
+    while task.wait(5) do
+        if not CachedTimerUI or not CachedTimerUI.Parent then
+            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+            local frames = mainGui and mainGui:FindFirstChild("Frames")
+            if frames then
+                for _, v in ipairs(frames:GetDescendants()) do
+                    if v:IsA("TextLabel") and (v.Name == "Countdown" or v.Name == "CountDown") then
+                        CachedTimerUI = v
+                        TimerOverlay.Font = v.Font
+                        TimerOverlay.TextColor3 = v.TextColor3
+                        if v.TextStrokeTransparency < 1 then
+                            TimerOverlay.TextStrokeColor3 = v.TextStrokeColor3
+                            TimerOverlay.TextStrokeTransparency = v.TextStrokeTransparency
+                        end
+                        break
+                    end
+                end
+            end
+        end
+
+        if CachedTimerUI and CachedTimerUI.Parent then
+            local sec = ParseTime(CachedTimerUI.Text)
+            if sec > 0 or CachedTimerUI.Text:find("0s") then ExpectedEndTime = os.time() + sec end
+        end
+    end
+end)
+
+local PadCache = {}
+task.spawn(function()
+    local pads = Workspace:WaitForChild("Pads", 10)
+    if pads then
+        for _, pad in ipairs(pads:GetChildren()) do
+            if pad:IsA("Model") then
+                local cframe = pad:GetBoundingBox()
+                PadCache[pad.Name] = cframe.Position
+            elseif pad:IsA("BasePart") then
+                PadCache[pad.Name] = pad.Position
+            end
+        end
+    end
+end)
+
 -----------------------------------------
--- 5. SERVER HOPPER (STRICT)
+-- 7. STRICT SERVER HOPPER
 -----------------------------------------
 local function FetchServersSafely(PlaceID)
     local url = "https://games.roblox.com/v1/games/" .. tostring(PlaceID) .. "/servers/Public?sortOrder=Asc&limit=100"
@@ -254,18 +290,20 @@ local function FetchServersSafely(PlaceID)
     
     local success, response = pcall(function() return HttpService:JSONDecode(game:HttpGet(url)) end)
     if success and response then return response end
-    
     return nil
 end
 
 local function SmartServerHop()
     if not Settings.AutoHop then return end
-    local PlaceID = game.PlaceId
-    local servers = LoadServers()
     
+    -- SAVE STAT HOP
+    SessionStats.Hops = SessionStats.Hops + 1
+    SaveStats()
+
+    local PlaceID = game.PlaceId
+    local servers = LoadTimers()
     local BestServer = nil
     local SmallestWait = math.huge
-    
     local visited = getgenv and getgenv().SmileB_VisitedServers or {}
     local currentTime = os.time()
     
@@ -283,24 +321,19 @@ local function SmartServerHop()
     end
     
     if BestServer then
-        StatusText.Text = "Status: Sniping Known Server..."
         task.wait(1)
         TeleportService:TeleportToPlaceInstance(PlaceID, BestServer, LocalPlayer)
         task.wait(5)
     end
     
-    StatusText.Text = "Status: Scouting New Servers..."
     local response = FetchServersSafely(PlaceID)
-    
     if response and response.data then
         local valid = {}
         for _, srv in ipairs(response.data) do
             if type(srv) == "table" and srv.playing and srv.maxPlayers then
                 local isOnCooldown = visited[srv.id] and currentTime < visited[srv.id]
                 if srv.playing < srv.maxPlayers and srv.playing > 0 and srv.id ~= game.JobId then
-                    if not isOnCooldown then
-                        table.insert(valid, srv.id)
-                    end
+                    if not isOnCooldown then table.insert(valid, srv.id) end
                 end
             end
         end
@@ -313,14 +346,89 @@ local function SmartServerHop()
             return
         end
     end
-    
     TeleportService:Teleport(PlaceID, LocalPlayer)
 end
 
 -----------------------------------------
--- 6. ULTRA-FAST GRAB ENGINE (SPAM E + TP)
+-- 8. THE LOGIC ENGINE (PRE-CALCULATE)
 -----------------------------------------
-local function GrabItem(prompt, targetModel)
+local IgnoredModels = {} 
+
+local function CalculateScore(text, padRarity)
+    local isRad = string.find(text, "radioactive")
+    local isDia = string.find(text, "diamond")
+    local isGold = string.find(text, "gold")
+    local isNormal = not (isRad or isDia or isGold)
+    
+    local hasSpecificName = false
+    if Settings.SpecificNames ~= "" then
+        local names = string.split(Settings.SpecificNames, ",")
+        for _, n in ipairs(names) do
+            local cleanName = string.lower(string.match(n, "^%s*(.-)%s*$") or n)
+            if cleanName ~= "" and string.find(text, cleanName) then
+                hasSpecificName = true; break
+            end
+        end
+    end
+    
+    local isValid = false
+    
+    if padRarity == "Celestial" and Settings.Celestial then
+        if hasSpecificName then isValid = true end
+    elseif padRarity == "Secret" and Settings.Secret then
+        if hasSpecificName then isValid = true end
+    elseif padRarity == "Divine" and Settings.Divine then
+        if isRad and Settings.Mut_Radioactive then isValid = true end
+        if isDia and Settings.Mut_Diamond then isValid = true end
+        if isGold and Settings.Mut_Gold then isValid = true end
+        if isNormal and Settings.Mut_Normal then isValid = true end
+    end
+    
+    if not isValid then return 0 end
+    
+    local mutScore = 0
+    if isRad then mutScore = 40
+    elseif isDia then mutScore = 30
+    elseif isGold then mutScore = 20
+    end
+    
+    local rarityScore = 0
+    if padRarity == "Divine" then rarityScore = 300
+    elseif padRarity == "Celestial" then rarityScore = 200
+    elseif padRarity == "Secret" then rarityScore = 100
+    end
+    
+    return rarityScore + mutScore
+end
+
+local function ClickDropButton()
+    local dropFound = false
+    for _, obj in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
+            local text = obj:IsA("TextLabel") and obj.Text or (obj:IsA("TextButton") and obj.Text or "")
+            if string.find(string.lower(text), "drop") or string.find(string.lower(obj.Name), "drop") then
+                dropFound = true
+                pcall(function()
+                    if getconnections then
+                        for _, conn in pairs(getconnections(obj.MouseButton1Click)) do conn:Fire() end
+                        for _, conn in pairs(getconnections(obj.Activated)) do conn:Fire() end
+                    end
+                end)
+            end
+        end
+    end
+    if not dropFound then
+        pcall(function()
+            local tool = LocalPlayer.Character:FindFirstChildWhichIsA("Tool")
+            if tool then tool.Parent = Workspace end
+        end)
+    end
+end
+
+-----------------------------------------
+-- 9. LIGHTNING FAST GRAB & VERIFY
+-----------------------------------------
+local function GrabAndVerify(prompt, targetModel)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
@@ -328,146 +436,193 @@ local function GrabItem(prompt, targetModel)
     local targetPos = targetModel:GetPivot()
     if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
 
-    -- SPAM TELEPORT & PROMPT TO LOCK IT IN FASTER THAN ANY HUMAN/OTHER EXPLOIT
-    for i = 1, 15 do
-        hrp.CFrame = targetPos * CFrame.new(0, 0, 0)
-        
-        if fireproximityprompt then
-            fireproximityprompt(prompt)
+    -- Remove ProximityPrompt wait completely
+    if prompt then pcall(function() prompt.HoldDuration = 0 end) end
+    
+    -- Halt Character to prevent over-flinging past object
+    hrp.AssemblyLinearVelocity = Vector3.zero 
+
+    -- Rapid Instant Grab 
+    for i = 1, 4 do
+        hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
+        if fireproximityprompt then 
+            fireproximityprompt(prompt, 1)
+            fireproximityprompt(prompt, 0)
         end
         prompt:InputHoldBegin()
-        task.wait(0.05)
+        task.wait(0.02)
         prompt:InputHoldEnd()
+    end
+    
+    task.wait(0.3) -- Verification Speed Improved
+
+    local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
+    if not tool then
+        hrp.CFrame = TargetBaseCFrame
+        return
+    end
+
+    local toolName = string.lower(tool.Name)
+    for _, desc in ipairs(tool:GetDescendants()) do
+        if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+            toolName = toolName .. " " .. string.lower(desc.Text)
+        end
+    end
+    
+    if string.find(toolName, "lucky block") then
+        hrp.CFrame = TargetBaseCFrame
+        task.wait(0.2)
+        ClickDropButton()
+        return
     end
     
     hrp.CFrame = TargetBaseCFrame
 end
 
------------------------------------------
--- 7. ZERO-LAG ITEM SCANNER
------------------------------------------
-local PriorityList = {Divine = 3, Celestial = 2, Secret = 1}
-local RarityCache = {}
-
-local function FindBestTarget()
+local function FindBestTarget(isMainDropImminent)
     local requiredFolder = Workspace:FindFirstChild("Required")
     local brainrotsFolder = requiredFolder and requiredFolder:FindFirstChild("Brainrots")
-    if not brainrotsFolder then return false end
+    if not brainrotsFolder then return false, nil end
 
     local BestTarget = nil
     local HighestPriority = 0
 
     for _, model in ipairs(brainrotsFolder:GetChildren()) do
+        if IgnoredModels[model] then continue end
+
         local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            local identifiedRarity = RarityCache[model] 
-            
-            if not identifiedRarity then
-                local modelPos = model:GetPivot().Position
-                for rarityName, padPos in pairs(PadCache) do
-                    if (modelPos - padPos).Magnitude < 45 then
-                        identifiedRarity = rarityName; break
-                    end
+            local rawText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
+            for _, desc in ipairs(model:GetDescendants()) do
+                if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+                    rawText = rawText .. " " .. string.lower(desc.Text)
                 end
-                
-                if not identifiedRarity then
-                    local modelText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
-                    for _, desc in ipairs(model:GetDescendants()) do
-                        if desc:IsA("TextLabel") or desc:IsA("TextBox") then
-                            modelText = modelText .. " " .. string.lower(desc.Text)
-                        end
-                    end
-                    
-                    if string.find(modelText, "divine") then identifiedRarity = "Divine"
-                    elseif string.find(modelText, "celestial") then identifiedRarity = "Celestial"
-                    elseif string.find(modelText, "secret") then identifiedRarity = "Secret"
-                    else identifiedRarity = "None" end
-                end
-                
-                RarityCache[model] = identifiedRarity
             end
 
-            if identifiedRarity and identifiedRarity ~= "None" and Settings[identifiedRarity] then
-                local prio = PriorityList[identifiedRarity]
-                if prio > HighestPriority then
-                    HighestPriority = prio
-                    BestTarget = {Prompt = prompt, Model = model, Rarity = identifiedRarity}
+            if string.find(rawText, "lucky block") then
+                IgnoredModels[model] = true
+                continue
+            end
+
+            local modelPos = model:GetPivot().Position
+            local padRarity = "None"
+            
+            for rarityName, padPos in pairs(PadCache) do
+                if (modelPos - padPos).Magnitude < 100 then
+                    padRarity = rarityName; break
                 end
+            end
+            
+            if padRarity == "None" then
+                if string.find(rawText, "divine") then padRarity = "Divine"
+                elseif string.find(rawText, "celestial") then padRarity = "Celestial"
+                elseif string.find(rawText, "secret") then padRarity = "Secret"
+                end
+            end
+
+            if padRarity == "Secret" and isMainDropImminent then continue end
+            
+            local score = CalculateScore(rawText, padRarity)
+            
+            if score == 0 then
+                IgnoredModels[model] = true
+            elseif score > HighestPriority then
+                HighestPriority = score
+                BestTarget = {Prompt = prompt, Model = model, Rarity = padRarity}
             end
         end
     end
-    
-    for model, _ in pairs(RarityCache) do
-        if not model.Parent then RarityCache[model] = nil end
-    end
 
     if BestTarget then
-        StatusText.Text = "Status: Grabbing " .. BestTarget.Rarity .. "!"
-        GrabItem(BestTarget.Prompt, BestTarget.Model)
-        return true
+        GrabAndVerify(BestTarget.Prompt, BestTarget.Model)
+        
+        -- INCREMENT AND SAVE CROSS-SERVER STATS
+        SessionStats.Grabs = SessionStats.Grabs + 1
+        if BestTarget.Rarity == "Divine" then SessionStats.Divine = SessionStats.Divine + 1
+        elseif BestTarget.Rarity == "Celestial" then SessionStats.Celestial = SessionStats.Celestial + 1
+        elseif BestTarget.Rarity == "Secret" then SessionStats.Secret = SessionStats.Secret + 1
+        end
+        SaveStats()
+        
+        return true, BestTarget.Rarity
     end
-    return false
+    
+    for model, _ in pairs(IgnoredModels) do
+        if not model.Parent then IgnoredModels[model] = nil end
+    end
+    
+    return false, nil
 end
 
 -----------------------------------------
--- 8. Main Loop
+-- 10. MAIN LOOP
 -----------------------------------------
 local PreviousSeconds = 9999
 local GracePeriodEnd = 0 
-local ServerStartTime = os.time() -- AFK Failsafe Tracker
+local ServerStartTime = os.time() 
+local LastDrawnSecond = -1
 
 task.spawn(function()
-    -- HYPER LOOP: 0.03 Seconds
-    while task.wait(0.03) do
+    while task.wait(0.05) do
         if getgenv and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
-        -- AFK 4-MINUTE FAILSAFE
         if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
-            StatusText.Text = "Status: UI/AFK Timeout! Hopping..."
             SmartServerHop()
             task.wait(5)
             continue
         end
 
-        local rawText = GetTimer()
-        TimerText.Text = "Timer: " .. rawText
-        local totalSeconds = ParseTime(rawText)
+        local totalSeconds = 0
+        if ExpectedEndTime > 0 then
+            totalSeconds = math.max(0, ExpectedEndTime - os.time())
+            
+            if totalSeconds ~= LastDrawnSecond then
+                if totalSeconds > 0 then
+                    TimerOverlay.Text = string.format("%dm %ds", math.floor(totalSeconds / 60), totalSeconds % 60)
+                else
+                    TimerOverlay.Text = "0m 0s"
+                end
+                LastDrawnSecond = totalSeconds
+            end
+        else
+            if LastDrawnSecond ~= -2 then
+                TimerOverlay.Text = "Syncing Time..."
+                LastDrawnSecond = -2
+            end
+        end
 
         if PreviousSeconds <= 20 and totalSeconds > 500 then
             GracePeriodEnd = os.time() + 15
         end
+        PreviousSeconds = totalSeconds
 
-        if rawText ~= "Loading..." then
-            PreviousSeconds = totalSeconds
-        end
-
-        if FindBestTarget() then
-            if Settings.AutoHop then
-                StatusText.Text = "Status: Grabbed! Hopping in 5s..."
-                task.wait(5)
-                SaveServerData(600)
-                SmartServerHop()
-                task.wait(5)
+        local isMainDropImminent = (ExpectedEndTime > 0 and totalSeconds <= 30)
+        local targetGrabbed, rarityGrabbed = FindBestTarget(isMainDropImminent)
+        
+        if targetGrabbed then
+            if rarityGrabbed == "Divine" or rarityGrabbed == "Celestial" then
+                if Settings.AutoHop then
+                    task.wait(1.5)
+                    SaveTimerData(600)
+                    SmartServerHop()
+                else
+                    task.wait(2)
+                end
             else
-                StatusText.Text = "Status: Grabbed! (AutoHop OFF)"
-                task.wait(5)
+                task.wait(2)
             end
             continue
         end
 
-        if rawText == "Loading..." then
-            StatusText.Text = "Status: Finding UI..."
+        if ExpectedEndTime == 0 then
+            -- Init
         elseif os.time() < GracePeriodEnd then
-            StatusText.Text = "Status: Spawning! Lock-In Active..."
+            -- Wait for Physical Drop
         elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
-            StatusText.Text = "Status: Time > 130s, Hopping..."
-            if FindBestTarget() then continue end
-            
-            SaveServerData(totalSeconds)
+            if FindBestTarget(isMainDropImminent) then continue end
+            SaveTimerData(totalSeconds)
             SmartServerHop()
             task.wait(5) 
-        else
-            StatusText.Text = "Status: Waiting for spawn..."
         end
     end
 end)
