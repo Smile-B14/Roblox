@@ -77,7 +77,7 @@ local Settings = {
     Mut_Radioactive = true,
     Mut_Diamond = true,
     Mut_Gold = true,
-    Mut_Normal = false
+    Mut_Normal = true
 }
 
 -- EXACT Return Base Coordinates
