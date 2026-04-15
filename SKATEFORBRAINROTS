@@ -1,6 +1,6 @@
 -- Wait for game to load (Crucial for Auto-Execute)
 if not game:IsLoaded() then game.Loaded:Wait() end
-
+Wait(4)
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
@@ -426,7 +426,7 @@ local function ClickDropButton()
 end
 
 -----------------------------------------
--- 9. SAFE & STEADY GRAB (2 SECONDS)
+-- 9. LIGHTNING FAST GRAB & VERIFY
 -----------------------------------------
 local function GrabAndVerify(prompt, targetModel)
     local char = LocalPlayer.Character
@@ -436,44 +436,25 @@ local function GrabAndVerify(prompt, targetModel)
     local targetPos = targetModel:GetPivot()
     if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
 
-    -- Safely remove prompt duration
+    -- Remove ProximityPrompt wait completely
     if prompt then pcall(function() prompt.HoldDuration = 0 end) end
     
     -- Halt Character to prevent over-flinging past object
     hrp.AssemblyLinearVelocity = Vector3.zero 
 
-    -- Spams prompt interaction for up to 2 seconds
-    for i = 1, 20 do
-        -- Stop spamming immediately if the item is successfully picked up/despawns
-        if not targetModel or not targetModel.Parent then break end
-        if not hrp or not hrp.Parent then break end
-
-        -- Force position so we don't slip away
+    -- Rapid Instant Grab 
+    for i = 1, 4 do
         hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
-        hrp.AssemblyLinearVelocity = Vector3.zero 
-        
-        pcall(function()
-            if fireproximityprompt and prompt and prompt.Parent then 
-                fireproximityprompt(prompt, 1)
-                fireproximityprompt(prompt, 0)
-            end
-            if prompt and prompt.Parent then
-                prompt:InputHoldBegin()
-            end
-        end)
-        
-        task.wait(0.05)
-        
-        pcall(function()
-            if prompt and prompt.Parent then
-                prompt:InputHoldEnd()
-            end
-        end)
-        
-        task.wait(0.05)
+        if fireproximityprompt then 
+            fireproximityprompt(prompt, 1)
+            fireproximityprompt(prompt, 0)
+        end
+        prompt:InputHoldBegin()
+        task.wait(0.02)
+        prompt:InputHoldEnd()
     end
     
-    task.wait(0.5) -- Wait briefly for the server to put the item in our backpack
+    task.wait(0.3) -- Verification Speed Improved
 
     local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
     if not tool then
