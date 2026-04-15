@@ -156,7 +156,7 @@ if success and library then
     MutFolder:AddToggle({ text = "Radioactive", flag = "rad", state = true, value = true, callback = function(v) Settings.Mut_Radioactive = (v == true) end })
     MutFolder:AddToggle({ text = "Diamond", flag = "dia", state = true, value = true, callback = function(v) Settings.Mut_Diamond = (v == true) end })
     MutFolder:AddToggle({ text = "Gold", flag = "gold", state = true, value = true, callback = function(v) Settings.Mut_Gold = (v == true) end })
-    MutFolder:AddToggle({ text = "Normal", flag = "norm", state = false, value = false, callback = function(v) Settings.Mut_Normal = (v == true) end })
+    MutFolder:AddToggle({ text = "Normal", flag = "norm", state = false, value = true, callback = function(v) Settings.Mut_Normal = (v == true) end })
 
     local SpecFolder = Window:AddFolder("Targets (Secrets/Celes)")
     SpecFolder:AddBox({ text = "Names (Comma Split)", flag = "names", value = "Swag Soda, Rainbow 67", callback = function(v) Settings.SpecificNames = tostring(v) end })
