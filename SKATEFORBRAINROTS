@@ -78,10 +78,18 @@ local Settings = {
     AutoHop = true,
     HopThreshold = 130,
     SpecificNames = "Rainbow 67",
-    Mut_Radioactive = true,
-    Mut_Diamond = true,
-    Mut_Gold = true,
-    Mut_Normal = true
+    
+    -- Divine Logic
+    Divine_Rad = true,
+    Divine_Dia = true,
+    Divine_Gold = true,
+    Divine_Norm = false, -- Divines ONLY mutations by default
+    
+    -- OG Logic
+    OG_Rad = true,
+    OG_Dia = true,
+    OG_Gold = true,
+    OG_Norm = true, -- OGs allow normal and mutations by default
 }
 
 -- EXACT Return Base Coordinates
@@ -119,7 +127,6 @@ task.spawn(function()
     
     if type(qot) == "function" then
         if Settings.LoadstringURL ~= "" then
-            -- Safe execution block to prevent "attempt to call a nil value" in QOT
             local safePayload = [[
                 task.wait(3)
                 pcall(function()
@@ -176,11 +183,19 @@ if success and type(library) == "table" and library.CreateWindow then
     FarmFolder:AddToggle({ text = "Celestial", flag = "celestial", state = true, value = true, callback = function(v) Settings.Celestial = (v == true) end })
     FarmFolder:AddToggle({ text = "Secret", flag = "secret", state = false, value = true, callback = function(v) Settings.Secret = (v == true) end })
 
-    local MutFolder = Window:AddFolder("Divine Mutations")
-    MutFolder:AddToggle({ text = "Radioactive", flag = "rad", state = true, value = true, callback = function(v) Settings.Mut_Radioactive = (v == true) end })
-    MutFolder:AddToggle({ text = "Diamond", flag = "dia", state = true, value = true, callback = function(v) Settings.Mut_Diamond = (v == true) end })
-    MutFolder:AddToggle({ text = "Gold", flag = "gold", state = true, value = true, callback = function(v) Settings.Mut_Gold = (v == true) end })
-    MutFolder:AddToggle({ text = "Normal", flag = "norm", state = false, value = true, callback = function(v) Settings.Mut_Normal = (v == true) end })
+    -- Separated Divine Folder
+    local DivMutFolder = Window:AddFolder("Divine Targets")
+    DivMutFolder:AddToggle({ text = "Radioactive", flag = "d_rad", state = true, value = true, callback = function(v) Settings.Divine_Rad = (v == true) end })
+    DivMutFolder:AddToggle({ text = "Diamond", flag = "d_dia", state = true, value = true, callback = function(v) Settings.Divine_Dia = (v == true) end })
+    DivMutFolder:AddToggle({ text = "Gold", flag = "d_gold", state = true, value = true, callback = function(v) Settings.Divine_Gold = (v == true) end })
+    DivMutFolder:AddToggle({ text = "Normal", flag = "d_norm", state = false, value = true, callback = function(v) Settings.Divine_Norm = (v == true) end })
+
+    -- Separated OG Folder
+    local OGMutFolder = Window:AddFolder("OG Targets")
+    OGMutFolder:AddToggle({ text = "Radioactive", flag = "o_rad", state = true, value = true, callback = function(v) Settings.OG_Rad = (v == true) end })
+    OGMutFolder:AddToggle({ text = "Diamond", flag = "o_dia", state = true, value = true, callback = function(v) Settings.OG_Dia = (v == true) end })
+    OGMutFolder:AddToggle({ text = "Gold", flag = "o_gold", state = true, value = true, callback = function(v) Settings.OG_Gold = (v == true) end })
+    OGMutFolder:AddToggle({ text = "Normal", flag = "o_norm", state = true, value = true, callback = function(v) Settings.OG_Norm = (v == true) end })
 
     local SpecFolder = Window:AddFolder("Targets (Secrets/Celes)")
     SpecFolder:AddBox({ text = "Names (Comma Split)", flag = "names", value = "Swag Soda, Rainbow 67", callback = function(v) Settings.SpecificNames = tostring(v) end })
@@ -323,7 +338,6 @@ end
 local function SmartServerHop()
     if not Settings.AutoHop then return end
     
-    -- SAVE STAT HOP
     SessionStats.Hops = SessionStats.Hops + 1
     SaveStats()
 
@@ -377,7 +391,7 @@ local function SmartServerHop()
 end
 
 -----------------------------------------
--- 8. THE LOGIC ENGINE (PRE-CALCULATE)
+-- 8. THE LOGIC ENGINE (SEPARATED MUTATIONS)
 -----------------------------------------
 local IgnoredModels = {} 
 
@@ -401,16 +415,19 @@ local function CalculateScore(text, padRarity)
     local isValid = false
     
     if padRarity == "OG" and Settings.OG then
-        isValid = true
+        if isRad and Settings.OG_Rad then isValid = true end
+        if isDia and Settings.OG_Dia then isValid = true end
+        if isGold and Settings.OG_Gold then isValid = true end
+        if isNormal and Settings.OG_Norm then isValid = true end
     elseif padRarity == "Celestial" and Settings.Celestial then
         if hasSpecificName then isValid = true end
     elseif padRarity == "Secret" and Settings.Secret then
         if hasSpecificName then isValid = true end
     elseif padRarity == "Divine" and Settings.Divine then
-        if isRad and Settings.Mut_Radioactive then isValid = true end
-        if isDia and Settings.Mut_Diamond then isValid = true end
-        if isGold and Settings.Mut_Gold then isValid = true end
-        if isNormal and Settings.Mut_Normal then isValid = true end
+        if isRad and Settings.Divine_Rad then isValid = true end
+        if isDia and Settings.Divine_Dia then isValid = true end
+        if isGold and Settings.Divine_Gold then isValid = true end
+        if isNormal and Settings.Divine_Norm then isValid = true end
     end
     
     if not isValid then return 0 end
