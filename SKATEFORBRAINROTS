@@ -83,16 +83,15 @@ local Settings = {
     Divine_Rad = true,
     Divine_Dia = true,
     Divine_Gold = true,
-    Divine_Norm = false, -- Divines ONLY mutations by default
+    Divine_Norm = false, 
     
     -- OG Logic
     OG_Rad = true,
     OG_Dia = true,
     OG_Gold = true,
-    OG_Norm = true, -- OGs allow normal and mutations by default
+    OG_Norm = true, 
 }
 
--- EXACT Return Base Coordinates
 local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
@@ -105,7 +104,11 @@ local function LoadStats()
     if type(isfile) == "function" and type(readfile) == "function" and isfile(StatsFile) then
         local success, data = pcall(function() return HttpService:JSONDecode(readfile(StatsFile)) end)
         if success and type(data) == "table" then
-            SessionStats = data
+            for key, value in pairs(data) do
+                if type(value) == "number" then
+                    SessionStats[key] = value
+                end
+            end
         end
     end
 end
@@ -132,9 +135,7 @@ task.spawn(function()
                 pcall(function()
                     local req = game:HttpGet("]] .. Settings.LoadstringURL .. [[")
                     local func = loadstring(req)
-                    if type(func) == "function" then
-                        func()
-                    end
+                    if type(func) == "function" then func() end
                 end)
             ]]
             pcall(function() qot(safePayload) end)
@@ -167,9 +168,7 @@ end)
 local success, library = pcall(function()
     local req = game:HttpGet("https://raw.githubusercontent.com/liebertsx/Tora-Library/main/src/librarynew", true)
     local ls = loadstring(req)
-    if type(ls) == "function" then 
-        return ls() 
-    end
+    if type(ls) == "function" then return ls() end
     return nil
 end)
 
@@ -183,14 +182,12 @@ if success and type(library) == "table" and library.CreateWindow then
     FarmFolder:AddToggle({ text = "Celestial", flag = "celestial", state = true, value = true, callback = function(v) Settings.Celestial = (v == true) end })
     FarmFolder:AddToggle({ text = "Secret", flag = "secret", state = false, value = true, callback = function(v) Settings.Secret = (v == true) end })
 
-    -- Separated Divine Folder
     local DivMutFolder = Window:AddFolder("Divine Targets")
     DivMutFolder:AddToggle({ text = "Radioactive", flag = "d_rad", state = true, value = true, callback = function(v) Settings.Divine_Rad = (v == true) end })
     DivMutFolder:AddToggle({ text = "Diamond", flag = "d_dia", state = true, value = true, callback = function(v) Settings.Divine_Dia = (v == true) end })
     DivMutFolder:AddToggle({ text = "Gold", flag = "d_gold", state = true, value = true, callback = function(v) Settings.Divine_Gold = (v == true) end })
     DivMutFolder:AddToggle({ text = "Normal", flag = "d_norm", state = false, value = true, callback = function(v) Settings.Divine_Norm = (v == true) end })
 
-    -- Separated OG Folder
     local OGMutFolder = Window:AddFolder("OG Targets")
     OGMutFolder:AddToggle({ text = "Radioactive", flag = "o_rad", state = true, value = true, callback = function(v) Settings.OG_Rad = (v == true) end })
     OGMutFolder:AddToggle({ text = "Diamond", flag = "o_dia", state = true, value = true, callback = function(v) Settings.OG_Dia = (v == true) end })
@@ -201,18 +198,18 @@ if success and type(library) == "table" and library.CreateWindow then
     SpecFolder:AddBox({ text = "Names (Comma Split)", flag = "names", value = "Swag Soda, Rainbow 67", callback = function(v) Settings.SpecificNames = tostring(v) end })
     
     local StatsFolder = Window:AddFolder("Session Stats")
-    StatsFolder:AddToggle({ text = "Server Hops: " .. SessionStats.Hops, flag = "s_hops", state = true })
-    StatsFolder:AddToggle({ text = "Total Grabs: " .. SessionStats.Grabs, flag = "s_grabs", state = true })
-    StatsFolder:AddToggle({ text = "OGs: " .. SessionStats.OG, flag = "s_og", state = true })
-    StatsFolder:AddToggle({ text = "Divines: " .. SessionStats.Divine, flag = "s_div", state = true })
-    StatsFolder:AddToggle({ text = "Celestials: " .. SessionStats.Celestial, flag = "s_cel", state = true })
-    StatsFolder:AddToggle({ text = "Secrets: " .. SessionStats.Secret, flag = "s_sec", state = true })
+    StatsFolder:AddToggle({ text = "Server Hops: " .. tostring(SessionStats.Hops or 0), flag = "s_hops", state = true })
+    StatsFolder:AddToggle({ text = "Total Grabs: " .. tostring(SessionStats.Grabs or 0), flag = "s_grabs", state = true })
+    StatsFolder:AddToggle({ text = "OGs: " .. tostring(SessionStats.OG or 0), flag = "s_og", state = true })
+    StatsFolder:AddToggle({ text = "Divines: " .. tostring(SessionStats.Divine or 0), flag = "s_div", state = true })
+    StatsFolder:AddToggle({ text = "Celestials: " .. tostring(SessionStats.Celestial or 0), flag = "s_cel", state = true })
+    StatsFolder:AddToggle({ text = "Secrets: " .. tostring(SessionStats.Secret or 0), flag = "s_sec", state = true })
 
     pcall(function() library:Init() end)
 end
 
 -----------------------------------------
--- 5. BIGGER TIMER OVERLAY 
+-- 5. UPGRADED & CLEAN DUAL TIMER UI (BOTTOM LEFT)
 -----------------------------------------
 pcall(function()
     if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Overlay") then
@@ -224,20 +221,40 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SmileB_Overlay"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local TimerOverlay = Instance.new("TextLabel")
-TimerOverlay.Size = UDim2.new(0, 350, 0, 70)
-TimerOverlay.Position = UDim2.new(1, -500, 1, -60)
-TimerOverlay.BackgroundTransparency = 1
-TimerOverlay.TextColor3 = Color3.fromRGB(255, 255, 0)
-TimerOverlay.TextStrokeTransparency = 0
-TimerOverlay.TextSize = 56 
-TimerOverlay.Font = Enum.Font.FredokaOne
-TimerOverlay.TextXAlignment = Enum.TextXAlignment.Right
-TimerOverlay.Text = "Syncing..."
-TimerOverlay.Parent = ScreenGui
+local function createPolishedTimer(name, yPos, color)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 320, 0, 46)
+    frame.Position = UDim2.new(0, 20, 1, yPos) -- BOTTOM LEFT ALIGNMENT
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    frame.BackgroundTransparency = 0.4
+    frame.BorderSizePixel = 0
+    frame.Parent = ScreenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -20, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = color -- FIXED STATIC COLOR (No more flashing white)
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) 
+    label.TextSize = 34
+    label.Font = Enum.Font.FredokaOne
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Text = name .. ": Syncing..."
+    label.Parent = frame
+
+    return label
+end
+
+local OGTimerOverlay = createPolishedTimer("OG", -120, Color3.fromRGB(255, 215, 0)) -- Always Gold
+local SecretTimerOverlay = createPolishedTimer("Secret", -65, Color3.fromRGB(180, 50, 255)) -- Always Purple
 
 -----------------------------------------
--- 6. SMART CROSS-SERVER TIMERS & CACHE
+-- 6. DYNAMIC & SAFE TIMER PARSING
 -----------------------------------------
 local TimerFileName = "SmileB_ServerTimers.json"
 
@@ -260,41 +277,60 @@ local function SaveTimerData(remainingSeconds)
     pcall(function() writefile(TimerFileName, HttpService:JSONEncode(cleanedData)) end)
 end
 
-local ExpectedEndTime = 0
-local CachedTimerUI = nil
+local ExpectedEndTime_OG = 0
+local ExpectedEndTime_Secret = 0
+
+-- Global Trackers to see if the game has frozen/broken the timers
+local LastValidSync_OG = os.time()
+local LastValidSync_Sec = os.time()
 
 local function ParseTime(timeStr)
-    if type(timeStr) ~= "string" then return 0 end
-    local min = timeStr:match("(%d+)m") or 0
-    local sec = timeStr:match("(%d+)s") or 0
-    if min == 0 and sec == 0 and not timeStr:match("%d") then return 0 end
-    return (tonumber(min) * 60) + tonumber(sec)
+    if type(timeStr) ~= "string" then return -1 end
+    
+    local h, m, s = timeStr:match("(%d+):(%d+):(%d+)")
+    if h and m and s then return (tonumber(h) * 3600) + (tonumber(m) * 60) + tonumber(s) end
+    
+    local min, sec = timeStr:match("(%d+):(%d+)")
+    if min and sec then return (tonumber(min) * 60) + tonumber(sec) end
+    
+    local min2 = timeStr:match("(%d+)m") or 0
+    local sec2 = timeStr:match("(%d+)s") or 0
+    if min2 == 0 and sec2 == 0 and not timeStr:match("%d") then return -1 end
+    return (tonumber(min2) * 60) + tonumber(sec2)
 end
 
 task.spawn(function()
-    while task.wait(5) do
-        if not CachedTimerUI or not CachedTimerUI.Parent then
-            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
-            local frames = mainGui and mainGui:FindFirstChild("Frames")
-            if frames then
-                for _, v in ipairs(frames:GetDescendants()) do
-                    if v:IsA("TextLabel") and (v.Name == "Countdown" or v.Name == "CountDown") then
-                        CachedTimerUI = v
-                        TimerOverlay.Font = v.Font
-                        TimerOverlay.TextColor3 = v.TextColor3
-                        if v.TextStrokeTransparency < 1 then
-                            TimerOverlay.TextStrokeColor3 = v.TextStrokeColor3
-                            TimerOverlay.TextStrokeTransparency = v.TextStrokeTransparency
-                        end
+    while task.wait(1.5) do
+        local required = Workspace:FindFirstChild("Required")
+        if not required then continue end
+        
+        -- Scanning continuously prevents the "Frozen" issue
+        local ogCountdown = required:FindFirstChild("OGCountdown")
+        if ogCountdown then
+            for _, v in ipairs(ogCountdown:GetDescendants()) do
+                if v:IsA("TextLabel") and (string.find(v.Text, ":") or string.find(v.Text, "m")) then
+                    local sec = ParseTime(v.Text)
+                    if sec >= 0 then 
+                        ExpectedEndTime_OG = os.time() + sec 
+                        LastValidSync_OG = os.time()
                         break
                     end
                 end
             end
         end
-
-        if CachedTimerUI and CachedTimerUI.Parent then
-            local sec = ParseTime(CachedTimerUI.Text)
-            if sec > 0 or CachedTimerUI.Text:find("0s") then ExpectedEndTime = os.time() + sec end
+        
+        local secCountdown = required:FindFirstChild("SecretCountdown")
+        if secCountdown then
+            for _, v in ipairs(secCountdown:GetDescendants()) do
+                if v:IsA("TextLabel") and (string.find(v.Text, ":") or string.find(v.Text, "m")) then
+                    local sec = ParseTime(v.Text)
+                    if sec >= 0 then 
+                        ExpectedEndTime_Secret = os.time() + sec 
+                        LastValidSync_Sec = os.time()
+                        break
+                    end
+                end
+            end
         end
     end
 end)
@@ -391,7 +427,7 @@ local function SmartServerHop()
 end
 
 -----------------------------------------
--- 8. THE LOGIC ENGINE (SEPARATED MUTATIONS)
+-- 8. THE LOGIC ENGINE (STRICT PRIORITY)
 -----------------------------------------
 local IgnoredModels = {} 
 
@@ -438,10 +474,11 @@ local function CalculateScore(text, padRarity)
     elseif isGold then mutScore = 20
     end
     
+    -- PRIORITY ENFORCED: OG (1000) > Divine (500) > Celestial (300) > Secret (100)
     local rarityScore = 0
-    if padRarity == "OG" then rarityScore = 400
-    elseif padRarity == "Divine" then rarityScore = 300
-    elseif padRarity == "Celestial" then rarityScore = 200
+    if padRarity == "OG" then rarityScore = 1000
+    elseif padRarity == "Divine" then rarityScore = 500
+    elseif padRarity == "Celestial" then rarityScore = 300
     elseif padRarity == "Secret" then rarityScore = 100
     end
     
@@ -517,7 +554,7 @@ local function GrabAndVerify(prompt, targetModel)
     local toolName = string.lower(tool.Name)
     for _, desc in ipairs(tool:GetDescendants()) do
         if desc:IsA("TextLabel") or desc:IsA("TextBox") then
-            toolName = toolName .. " " .. string.lower(desc.Text)
+            toolName = toolName .. " " .. string.lower(tostring(desc.Text or ""))
         end
     end
     
@@ -531,7 +568,7 @@ local function GrabAndVerify(prompt, targetModel)
     hrp.CFrame = TargetBaseCFrame
 end
 
-local function FindBestTarget(isMainDropImminent)
+local function FindBestTarget(isOGDropImminent, isSecretDropImminent)
     local requiredFolder = Workspace:FindFirstChild("Required")
     local brainrotsFolder = requiredFolder and requiredFolder:FindFirstChild("Brainrots")
     if not brainrotsFolder then return false, nil end
@@ -547,7 +584,7 @@ local function FindBestTarget(isMainDropImminent)
             local rawText = string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
             for _, desc in ipairs(model:GetDescendants()) do
                 if desc:IsA("TextLabel") or desc:IsA("TextBox") then
-                    rawText = rawText .. " " .. string.lower(desc.Text)
+                    rawText = rawText .. " " .. string.lower(tostring(desc.Text or ""))
                 end
             end
 
@@ -573,7 +610,7 @@ local function FindBestTarget(isMainDropImminent)
                 end
             end
 
-            if padRarity == "Secret" and isMainDropImminent then continue end
+            if padRarity == "Secret" and isOGDropImminent then continue end
             
             local score = CalculateScore(rawText, padRarity)
             
@@ -608,55 +645,67 @@ local function FindBestTarget(isMainDropImminent)
 end
 
 -----------------------------------------
--- 10. MAIN LOOP
+-- 10. DUAL TIMER MAIN LOOP
 -----------------------------------------
-local PreviousSeconds = 9999
+local PrevOG = 9999
+local PrevSec = 9999
 local GracePeriodEnd = 0 
 local ServerStartTime = os.time() 
-local LastDrawnSecond = -1
+
+local LastDrawnOG = -1
+local LastDrawnSec = -1
 
 task.spawn(function()
     while task.wait(0.05) do
         if type(getgenv) == "function" and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
-        if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
-            SmartServerHop()
-            task.wait(5)
-            continue
-        end
+        local ogSecs = ExpectedEndTime_OG > 0 and math.max(0, ExpectedEndTime_OG - os.time()) or -1
+        local secSecs = ExpectedEndTime_Secret > 0 and math.max(0, ExpectedEndTime_Secret - os.time()) or -1
 
-        local totalSeconds = 0
-        if ExpectedEndTime > 0 then
-            totalSeconds = math.max(0, ExpectedEndTime - os.time())
-            
-            if totalSeconds ~= LastDrawnSecond then
-                if totalSeconds > 0 then
-                    TimerOverlay.Text = string.format("%dm %ds", math.floor(totalSeconds / 60), totalSeconds % 60)
-                else
-                    TimerOverlay.Text = "0m 0s"
-                end
-                LastDrawnSecond = totalSeconds
+        -- Update UI Text For OG
+        if ogSecs >= 0 then
+            if ogSecs ~= LastDrawnOG then
+                OGTimerOverlay.Text = string.format("OG: %dm %ds", math.floor(ogSecs / 60), ogSecs % 60)
+                LastDrawnOG = ogSecs
             end
         else
-            if LastDrawnSecond ~= -2 then
-                TimerOverlay.Text = "Syncing Time..."
-                LastDrawnSecond = -2
+            if LastDrawnOG ~= -2 then
+                OGTimerOverlay.Text = "OG: Syncing..."
+                LastDrawnOG = -2
             end
         end
 
-        if PreviousSeconds <= 20 and totalSeconds > 500 then
+        -- Update UI Text For Secret
+        if secSecs >= 0 then
+            if secSecs ~= LastDrawnSec then
+                SecretTimerOverlay.Text = string.format("Secret: %dm %ds", math.floor(secSecs / 60), secSecs % 60)
+                LastDrawnSec = secSecs
+            end
+        else
+            if LastDrawnSec ~= -2 then
+                SecretTimerOverlay.Text = "Secret: Syncing..."
+                LastDrawnSec = -2
+            end
+        end
+
+        if (PrevOG <= 20 and ogSecs > 500) or (PrevSec <= 20 and secSecs > 500) then
             GracePeriodEnd = os.time() + 15
         end
-        PreviousSeconds = totalSeconds
+        PrevOG = ogSecs
+        PrevSec = secSecs
 
-        local isMainDropImminent = (ExpectedEndTime > 0 and totalSeconds <= 30)
-        local targetGrabbed, rarityGrabbed = FindBestTarget(isMainDropImminent)
+        local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
+        local isSecretDropImminent = (secSecs >= 0 and secSecs <= 30)
+        
+        local targetGrabbed, rarityGrabbed = FindBestTarget(isOGDropImminent, isSecretDropImminent)
         
         if targetGrabbed then
             if rarityGrabbed == "OG" or rarityGrabbed == "Divine" or rarityGrabbed == "Celestial" then
                 if Settings.AutoHop then
                     task.wait(1.5)
-                    SaveTimerData(600)
+                    local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
+                    if saveTime == 9999 then saveTime = 600 end
+                    SaveTimerData(saveTime)
                     SmartServerHop()
                 else
                     task.wait(2)
@@ -667,13 +716,30 @@ task.spawn(function()
             continue
         end
 
-        if ExpectedEndTime == 0 then
-            -- Init
-        elseif os.time() < GracePeriodEnd then
-            -- Wait for Physical Drop
-        elseif totalSeconds > Settings.HopThreshold and Settings.AutoHop then
-            if FindBestTarget(isMainDropImminent) then continue end
-            SaveTimerData(totalSeconds)
+        -- NEW BROKEN SERVER / SYNCING FAILSAFE
+        local isStale_OG = (os.time() - LastValidSync_OG > 25)
+        local isStale_Sec = (os.time() - LastValidSync_Sec > 25)
+
+        if (isStale_OG or isStale_Sec) and Settings.AutoHop then
+            -- Only force hop if neither drop is actively happening right now
+            if not isOGDropImminent and not isSecretDropImminent then
+                SmartServerHop()
+                task.wait(5)
+                continue
+            end
+        end
+        
+        if os.time() < GracePeriodEnd then continue end
+        
+        -- Smart Hop Logic: If BOTH timers are far away (or missing), HOP!
+        local waitOG = (ogSecs > Settings.HopThreshold or ogSecs == -1)
+        local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
+        
+        if waitOG and waitSec and Settings.AutoHop then
+            if FindBestTarget(isOGDropImminent, isSecretDropImminent) then continue end
+            local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
+            if saveTime == 9999 then saveTime = 600 end
+            SaveTimerData(saveTime)
             SmartServerHop()
             task.wait(5) 
         end
