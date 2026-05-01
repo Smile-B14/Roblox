@@ -10,10 +10,17 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
--- 0. HARDCODED BASE COORDINATES
+-- 0. DYNAMIC PLOT GENERATION
 -----------------------------------------
--- Reverted to your trusted exact coordinates
-local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
+local SavedBaseCFrame = nil
+pcall(function()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if hrp then SavedBaseCFrame = hrp.CFrame end
+end)
+if not SavedBaseCFrame then 
+    SavedBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
+end
 
 -----------------------------------------
 -- 0.1 FAST GUARD DELETION (INSTANT)
@@ -180,12 +187,12 @@ if success and type(library) == "table" and library.CreateWindow then
     local FarmFolder = Window:AddFolder("Farm Settings")
     FarmFolder:AddToggle({ text = "Auto Hop", flag = "autohop", state = true, value = true, callback = function(v) Settings.AutoHop = (v == true) end })
     
-    -- Custom TP to Plot Button (Uses Hardcoded CFrame)
     FarmFolder:AddButton({ text = "TP to Plot", callback = function()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp then
-            hrp.CFrame = TargetBaseCFrame
+            hrp.CFrame = SavedBaseCFrame
+            hrp.AssemblyLinearVelocity = Vector3.zero
         end
     end})
     
@@ -482,7 +489,6 @@ local function CalculateScore(text, padRarity)
     elseif isGold then mutScore = 20
     end
     
-    -- PRIORITY ENFORCED: OG (1000) > Divine (500) > Celestial (300) > Secret (100)
     local rarityScore = 0
     if padRarity == "OG" then rarityScore = 1000
     elseif padRarity == "Divine" then rarityScore = 500
@@ -515,18 +521,24 @@ local function ClickDropButton()
             end
         end
     end
-    if not dropFound then
-        pcall(function()
-            local tool = LocalPlayer.Character:FindFirstChildWhichIsA("Tool")
-            if tool then tool.Parent = Workspace end
-        end)
+end
+
+local function ForceDropTool()
+    ClickDropButton()
+    task.wait(0.3)
+    local char = LocalPlayer.Character
+    if char then
+        local tool = char:FindFirstChildWhichIsA("Tool")
+        if tool then
+            pcall(function() tool.Parent = Workspace end)
+        end
     end
 end
 
 -----------------------------------------
 -- 9. AGGRESSIVE GRAB & CHAINING SYSTEM
 -----------------------------------------
-local function GrabTarget(prompt, targetModel)
+local function GrabTarget(prompt, targetModel, returnCFrame)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
@@ -538,7 +550,7 @@ local function GrabTarget(prompt, targetModel)
     
     hrp.AssemblyLinearVelocity = Vector3.zero 
 
-    -- MORE AGGRESSIVE SPAM
+    -- 1. TELEPORT TO ITEM & AGGRESSIVE SPAM
     for i = 1, 15 do
         hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
         if type(fireproximityprompt) == "function" then 
@@ -552,9 +564,14 @@ local function GrabTarget(prompt, targetModel)
         pcall(function() prompt:InputHoldEnd() end)
     end
     
-    -- POLLING FIX: Wait up to 2 seconds for the tool to actually appear in inventory
+    -- 2. FORCE TELEPORT BACK TO BASE IMMEDIATELY
+    hrp.CFrame = returnCFrame
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    task.wait(0.2) 
+    
+    -- 3. POLL FOR INVENTORY ITEM AT BASE (Fixes network delay)
     local tool = nil
-    for w = 1, 20 do
+    for w = 1, 30 do -- Wait up to 3 seconds for server to give item
         tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
         if tool then break end
         task.wait(0.1)
@@ -562,6 +579,7 @@ local function GrabTarget(prompt, targetModel)
 
     if not tool then return false end
 
+    -- 4. VERIFY NOT LUCKY BLOCK
     local toolName = string.lower(tool.Name)
     for _, desc in ipairs(tool:GetDescendants()) do
         if desc:IsA("TextLabel") or desc:IsA("TextBox") then
@@ -571,9 +589,14 @@ local function GrabTarget(prompt, targetModel)
     
     if string.find(toolName, "lucky block") then
         task.wait(0.2)
-        ClickDropButton()
+        ForceDropTool()
         return false 
     end
+    
+    -- 5. SECURELY DROP ITEM ON THE PLOT
+    task.wait(0.3)
+    ForceDropTool()
+    task.wait(0.5) -- Give the plot time to absorb the item
     
     return true
 end
@@ -643,9 +666,15 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     local grabbedRarities = {}
     local successfullyGrabbedAnything = false
 
+    -- Capture exactly where we are standing before starting the sequence
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local PreSequenceCFrame = hrp and hrp.CFrame or SavedBaseCFrame
+
     for _, target in ipairs(ValidTargets) do
         if target.Model and target.Model.Parent then
-            local grabbed = GrabTarget(target.Prompt, target.Model)
+            -- Pass the Return CFrame so the script immediately TPs back after grab attempts
+            local grabbed = GrabTarget(target.Prompt, target.Model, PreSequenceCFrame)
             if grabbed then
                 successfullyGrabbedAnything = true
                 table.insert(grabbedRarities, target.Rarity)
@@ -662,15 +691,11 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     
     if successfullyGrabbedAnything then
         SaveStats()
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        -- Final safety check, make sure we are 100% standing on our plot at the end
         if hrp then
-            -- Safely TP back to the hardcoded coordinates to claim the item
-            hrp.CFrame = TargetBaseCFrame
-            task.wait(0.5)
-            ClickDropButton() -- Ensure it drops/claims
+            hrp.CFrame = PreSequenceCFrame
+            hrp.AssemblyLinearVelocity = Vector3.zero
         end
-        
         return true, grabbedRarities
     end
     
@@ -748,8 +773,8 @@ task.spawn(function()
             end
 
             if shouldHop and Settings.AutoHop then
-                -- CRITICAL DATASTORE DELAY: Wait 4 seconds for the game to actually save the item before leaving
-                task.wait(4)
+                -- CRITICAL DELAY: Give the server 5 FULL SECONDS to save the item to your plot before hopping
+                task.wait(5)
                 
                 local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
                 if saveTime == 9999 then saveTime = 600 end
@@ -773,7 +798,6 @@ task.spawn(function()
         local ogWantsHop = (not validOG) or (ogSecs > Settings.HopThreshold)
         local secWantsHop = (not validSec) or (secSecs > Settings.HopThreshold)
         
-        -- Make sure we wait at least 8 seconds for the timers to properly render before doing logic
         if timeInServer > 8 then
             if validOG or validSec then
                 if ogWantsHop and secWantsHop and Settings.AutoHop then
