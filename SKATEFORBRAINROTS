@@ -784,7 +784,7 @@ task.spawn(function()
         if os.time() < GracePeriodEnd then continue end
         
         -- PREVENT INSTA-HOP ON JOIN (Wait 6s for timers to show up)
-        if os.time() - ServerStartTime > 6 then
+        if os.time() - ServerStartTime > 10 then
             -- Smart Hop Logic: If BOTH timers are far away (or missing), HOP!
             local waitOG = (ogSecs > Settings.HopThreshold or ogSecs == -1)
             local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
