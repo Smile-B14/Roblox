@@ -10,6 +10,22 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
+-- 0. DYNAMIC PLOT GENERATION
+-----------------------------------------
+-- Instead of hardcoded coordinates, the script dynamically records where you spawned
+-- This guarantees you return to YOUR assigned plot safely.
+local OriginalSpawnCFrame = nil
+pcall(function()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if hrp then OriginalSpawnCFrame = hrp.CFrame end
+end)
+-- Fallback in case character was dead during execution
+if not OriginalSpawnCFrame then 
+    OriginalSpawnCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
+end
+
+-----------------------------------------
 -- 0.1 FAST GUARD DELETION (INSTANT)
 -----------------------------------------
 local function NukeGuards()
@@ -79,20 +95,16 @@ local Settings = {
     HopThreshold = 130,
     SpecificNames = "Rainbow 67",
     
-    -- Divine Logic
     Divine_Rad = true,
     Divine_Dia = true,
     Divine_Gold = true,
     Divine_Norm = false, 
     
-    -- OG Logic
     OG_Rad = true,
     OG_Dia = true,
     OG_Gold = true,
     OG_Norm = true, 
 }
-
-local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
 -- 2. CROSS-SERVER STATS MEMORY
@@ -224,7 +236,7 @@ ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 local function createPolishedTimer(name, yPos, color)
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 320, 0, 46)
-    frame.Position = UDim2.new(0, 20, 1, yPos) -- BOTTOM LEFT ALIGNMENT
+    frame.Position = UDim2.new(0, 20, 1, yPos)
     frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
     frame.BackgroundTransparency = 0.4
     frame.BorderSizePixel = 0
@@ -238,7 +250,7 @@ local function createPolishedTimer(name, yPos, color)
     label.Size = UDim2.new(1, -20, 1, 0)
     label.Position = UDim2.new(0, 10, 0, 0)
     label.BackgroundTransparency = 1
-    label.TextColor3 = color -- FIXED STATIC COLOR (No more flashing white)
+    label.TextColor3 = color 
     label.TextStrokeTransparency = 0
     label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) 
     label.TextSize = 34
@@ -250,11 +262,11 @@ local function createPolishedTimer(name, yPos, color)
     return label
 end
 
-local OGTimerOverlay = createPolishedTimer("OG", -120, Color3.fromRGB(255, 215, 0)) -- Always Gold
-local SecretTimerOverlay = createPolishedTimer("Secret", -65, Color3.fromRGB(180, 50, 255)) -- Always Purple
+local OGTimerOverlay = createPolishedTimer("OG", -120, Color3.fromRGB(255, 215, 0)) 
+local SecretTimerOverlay = createPolishedTimer("Secret", -65, Color3.fromRGB(180, 50, 255)) 
 
 -----------------------------------------
--- 6. DYNAMIC & SAFE TIMER PARSING
+-- 6. PERFECT TIMER PARSING
 -----------------------------------------
 local TimerFileName = "SmileB_ServerTimers.json"
 
@@ -280,12 +292,14 @@ end
 local ExpectedEndTime_OG = 0
 local ExpectedEndTime_Secret = 0
 
--- Global Trackers to see if the game has frozen/broken the timers
 local LastValidSync_OG = os.time()
 local LastValidSync_Sec = os.time()
 
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return -1 end
+    
+    -- "N/A" check directly from the dump
+    if string.find(string.upper(timeStr), "N/A") then return -1 end
     
     local h, m, s = timeStr:match("(%d+):(%d+):(%d+)")
     if h and m and s then return (tonumber(h) * 3600) + (tonumber(m) * 60) + tonumber(s) end
@@ -295,40 +309,37 @@ local function ParseTime(timeStr)
     
     local min2 = timeStr:match("(%d+)m") or 0
     local sec2 = timeStr:match("(%d+)s") or 0
-    if min2 == 0 and sec2 == 0 and not timeStr:match("%d") then return -1 end
+    if tonumber(min2) == 0 and tonumber(sec2) == 0 and not timeStr:match("%d") then return -1 end
     return (tonumber(min2) * 60) + tonumber(sec2)
 end
 
 task.spawn(function()
-    while task.wait(1.5) do
+    while task.wait(1) do
         local required = Workspace:FindFirstChild("Required")
         if not required then continue end
         
-        -- Scanning continuously prevents the "Frozen" issue
-        local ogCountdown = required:FindFirstChild("OGCountdown")
-        if ogCountdown then
-            for _, v in ipairs(ogCountdown:GetDescendants()) do
-                if v:IsA("TextLabel") and (string.find(v.Text, ":") or string.find(v.Text, "m")) then
-                    local sec = ParseTime(v.Text)
-                    if sec >= 0 then 
-                        ExpectedEndTime_OG = os.time() + sec 
-                        LastValidSync_OG = os.time()
-                        break
-                    end
+        -- Exact Path Targeting for OG
+        local ogPart = required:FindFirstChild("OGCountdown")
+        if ogPart then
+            local lbl = ogPart:FindFirstChild("CountDown", true)
+            if lbl and lbl:IsA("TextLabel") then
+                local sec = ParseTime(lbl.Text)
+                if sec >= 0 then 
+                    ExpectedEndTime_OG = os.time() + sec 
+                    LastValidSync_OG = os.time()
                 end
             end
         end
         
-        local secCountdown = required:FindFirstChild("SecretCountdown")
-        if secCountdown then
-            for _, v in ipairs(secCountdown:GetDescendants()) do
-                if v:IsA("TextLabel") and (string.find(v.Text, ":") or string.find(v.Text, "m")) then
-                    local sec = ParseTime(v.Text)
-                    if sec >= 0 then 
-                        ExpectedEndTime_Secret = os.time() + sec 
-                        LastValidSync_Sec = os.time()
-                        break
-                    end
+        -- Exact Path Targeting for Secret
+        local secPart = required:FindFirstChild("SecretCountdown")
+        if secPart then
+            local lbl = secPart:FindFirstChild("CountDown", true)
+            if lbl and lbl:IsA("TextLabel") then
+                local sec = ParseTime(lbl.Text)
+                if sec >= 0 then 
+                    ExpectedEndTime_Secret = os.time() + sec 
+                    LastValidSync_Sec = os.time()
                 end
             end
         end
@@ -547,7 +558,7 @@ local function GrabAndVerify(prompt, targetModel)
 
     local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
     if not tool then
-        hrp.CFrame = TargetBaseCFrame
+        hrp.CFrame = OriginalSpawnCFrame
         return
     end
 
@@ -559,13 +570,13 @@ local function GrabAndVerify(prompt, targetModel)
     end
     
     if string.find(toolName, "lucky block") then
-        hrp.CFrame = TargetBaseCFrame
+        hrp.CFrame = OriginalSpawnCFrame
         task.wait(0.2)
         ClickDropButton()
         return
     end
     
-    hrp.CFrame = TargetBaseCFrame
+    hrp.CFrame = OriginalSpawnCFrame
 end
 
 local function FindBestTarget(isOGDropImminent, isSecretDropImminent)
@@ -659,6 +670,13 @@ task.spawn(function()
     while task.wait(0.05) do
         if type(getgenv) == "function" and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
+        -- Force hop if execution time exceeds 240 seconds
+        if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
+            SmartServerHop()
+            task.wait(5)
+            continue
+        end
+
         local ogSecs = ExpectedEndTime_OG > 0 and math.max(0, ExpectedEndTime_OG - os.time()) or -1
         local secSecs = ExpectedEndTime_Secret > 0 and math.max(0, ExpectedEndTime_Secret - os.time()) or -1
 
@@ -716,12 +734,11 @@ task.spawn(function()
             continue
         end
 
-        -- NEW BROKEN SERVER / SYNCING FAILSAFE
-        local isStale_OG = (os.time() - LastValidSync_OG > 25)
-        local isStale_Sec = (os.time() - LastValidSync_Sec > 25)
+        -- SYNCING FAILSAFE: Hops if BOTH timers fail to load for 20 seconds.
+        local isStale_OG = (os.time() - LastValidSync_OG > 20)
+        local isStale_Sec = (os.time() - LastValidSync_Sec > 20)
 
-        if (isStale_OG or isStale_Sec) and Settings.AutoHop then
-            -- Only force hop if neither drop is actively happening right now
+        if (isStale_OG and isStale_Sec) and Settings.AutoHop then
             if not isOGDropImminent and not isSecretDropImminent then
                 SmartServerHop()
                 task.wait(5)
