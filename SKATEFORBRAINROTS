@@ -90,7 +90,7 @@ local Settings = {
     Celestial = true,
     Secret = false,
     AutoHop = true,
-    HopThreshold = 130, -- STAYS IN SERVER IF ANY TIMER IS UNDER THIS NUMBER OF SECONDS (130s = 2m10s)
+    HopThreshold = 130,
     SpecificNames = "Rainbow 67",
     
     Divine_Rad = true,
@@ -298,9 +298,6 @@ end
 local ExpectedEndTime_OG = 0
 local ExpectedEndTime_Secret = 0
 
-local LastValidSync_OG = os.time()
-local LastValidSync_Sec = os.time()
-
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return -1 end
     
@@ -330,7 +327,6 @@ task.spawn(function()
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
                     ExpectedEndTime_OG = os.time() + sec 
-                    LastValidSync_OG = os.time()
                 end
             end
         end
@@ -342,7 +338,6 @@ task.spawn(function()
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
                     ExpectedEndTime_Secret = os.time() + sec 
-                    LastValidSync_Sec = os.time()
                 end
             end
         end
@@ -488,7 +483,6 @@ local function CalculateScore(text, padRarity)
     elseif isGold then mutScore = 20
     end
     
-    -- PRIORITY ENFORCED: OG (1000) > Divine (500) > Celestial (300) > Secret (100)
     local rarityScore = 0
     if padRarity == "OG" then rarityScore = 1000
     elseif padRarity == "Divine" then rarityScore = 500
@@ -544,7 +538,7 @@ local function GrabTarget(prompt, targetModel)
     
     hrp.AssemblyLinearVelocity = Vector3.zero 
 
-    -- MORE AGGRESSIVE SPAM: Longer iteration, slightly longer delay to guarantee registration
+    -- AGGRESSIVE SPAM
     for i = 1, 10 do
         hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
         if type(fireproximityprompt) == "function" then 
@@ -558,12 +552,10 @@ local function GrabTarget(prompt, targetModel)
         pcall(function() prompt:InputHoldEnd() end)
     end
     
-    task.wait(0.4) -- Longer wait to let inventory process the item
+    task.wait(0.4) 
 
     local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
-    if not tool then
-        return false
-    end
+    if not tool then return false end
 
     local toolName = string.lower(tool.Name)
     for _, desc in ipairs(tool:GetDescendants()) do
@@ -575,7 +567,7 @@ local function GrabTarget(prompt, targetModel)
     if string.find(toolName, "lucky block") then
         task.wait(0.2)
         ClickDropButton()
-        return false -- We dropped a lucky block, so we didn't get our actual target yet
+        return false 
     end
     
     return true
@@ -588,7 +580,6 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
 
     local ValidTargets = {}
 
-    -- Scan Workspace for ALL valid drops right now
     for _, model in ipairs(brainrotsFolder:GetChildren()) do
         if IgnoredModels[model] then continue end
 
@@ -623,7 +614,6 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
                 end
             end
 
-            -- Ensure OG gets priority over Secrets dropping at same time
             if padRarity == "Secret" and isOGDropImminent then continue end
             
             local score = CalculateScore(rawText, padRarity)
@@ -637,14 +627,12 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     end
 
     if #ValidTargets == 0 then 
-        -- Clean up cache 
         for model, _ in pairs(IgnoredModels) do
             if not model.Parent then IgnoredModels[model] = nil end
         end
         return false, {} 
     end
 
-    -- SORT BY HIGHEST PRIORITY: Grabs OG FIRST, then immediately moves to Celestial/Divine
     table.sort(ValidTargets, function(a, b) return a.Score > b.Score end)
 
     local grabbedRarities = {}
@@ -669,8 +657,6 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     
     if successfullyGrabbedAnything then
         SaveStats()
-        
-        -- Safely bring it back to plot ONLY after all chained grabs are completely done
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp and OriginalSpawnCFrame then
@@ -708,7 +694,6 @@ task.spawn(function()
         local ogSecs = ExpectedEndTime_OG > 0 and math.max(0, ExpectedEndTime_OG - os.time()) or -1
         local secSecs = ExpectedEndTime_Secret > 0 and math.max(0, ExpectedEndTime_Secret - os.time()) or -1
 
-        -- Update UI Text For OG
         if ogSecs >= 0 then
             if ogSecs ~= LastDrawnOG then
                 OGTimerOverlay.Text = string.format("OG: %dm %ds", math.floor(ogSecs / 60), ogSecs % 60)
@@ -721,7 +706,6 @@ task.spawn(function()
             end
         end
 
-        -- Update UI Text For Secret
         if secSecs >= 0 then
             if secSecs ~= LastDrawnSec then
                 SecretTimerOverlay.Text = string.format("Secret: %dm %ds", math.floor(secSecs / 60), secSecs % 60)
@@ -743,6 +727,7 @@ task.spawn(function()
         local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
         local isSecretDropImminent = (secSecs >= 0 and secSecs <= 30)
         
+        -- Always check and grab targets first regardless of timers
         local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
         
         if grabbedAnything then
@@ -765,38 +750,37 @@ task.spawn(function()
             end
             continue
         end
-
-        -- SYNCING FAILSAFE: Hops if BOTH timers fail to load for 20 seconds.
-        local isStale_OG = (os.time() - LastValidSync_OG > 20)
-        local isStale_Sec = (os.time() - LastValidSync_Sec > 20)
-
-        if (isStale_OG and isStale_Sec) and Settings.AutoHop then
-            if not isOGDropImminent and not isSecretDropImminent then
-                -- Give 6 seconds to let UI load initially before failing and hopping
-                if os.time() - ServerStartTime > 6 then
-                    SmartServerHop()
-                    task.wait(5)
-                    continue
-                end
-            end
-        end
         
         if os.time() < GracePeriodEnd then continue end
         
-        -- PREVENT INSTA-HOP ON JOIN (Wait 6s for timers to show up)
-        if os.time() - ServerStartTime > 10 then
-            -- Smart Hop Logic: If BOTH timers are far away (or missing), HOP!
-            local waitOG = (ogSecs > Settings.HopThreshold or ogSecs == -1)
-            local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
-            
-            if waitOG and waitSec and Settings.AutoHop then
-                -- Double check nothing is on the floor before hopping
-                if FindAndGrabTargets(isOGDropImminent, isSecretDropImminent) then continue end
+        -----------------------------------------
+        -- STRICT WAIT-THEN-HOP LOGIC
+        -----------------------------------------
+        local timeInServer = os.time() - ServerStartTime
+        local validOG = (ogSecs >= 0)
+        local validSec = (secSecs >= 0)
+        
+        -- A timer "wants" a hop if it is successfully read and OVER the threshold, 
+        -- OR if it hasn't loaded at all.
+        local ogWantsHop = (not validOG) or (ogSecs > Settings.HopThreshold)
+        local secWantsHop = (not validSec) or (secSecs > Settings.HopThreshold)
+        
+        if validOG or validSec then
+            -- We have successfully read AT LEAST ONE timer.
+            -- Now we can safely make a hop decision.
+            if ogWantsHop and secWantsHop and Settings.AutoHop then
                 local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
                 if saveTime == 9999 then saveTime = 600 end
                 SaveTimerData(saveTime)
                 SmartServerHop()
-                task.wait(5) 
+                task.wait(5)
+            end
+        else
+            -- We have NOT read any timers yet (Both are N/A or haven't loaded).
+            -- We wait exactly 25 seconds for the server to load them before failing out.
+            if timeInServer > 20 and Settings.AutoHop then
+                SmartServerHop()
+                task.wait(5)
             end
         end
     end
