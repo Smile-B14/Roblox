@@ -10,18 +10,10 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
--- 0. DYNAMIC PLOT GENERATION
+-- 0. HARDCODED BASE COORDINATES
 -----------------------------------------
--- Dynamically records where you spawned to safely return you to YOUR plot.
-local OriginalSpawnCFrame = nil
-pcall(function()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart", 5)
-    if hrp then OriginalSpawnCFrame = hrp.CFrame end
-end)
-if not OriginalSpawnCFrame then 
-    OriginalSpawnCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
-end
+-- Reverted to your trusted exact coordinates
+local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
 -- 0.1 FAST GUARD DELETION (INSTANT)
@@ -187,14 +179,16 @@ if success and type(library) == "table" and library.CreateWindow then
     
     local FarmFolder = Window:AddFolder("Farm Settings")
     FarmFolder:AddToggle({ text = "Auto Hop", flag = "autohop", state = true, value = true, callback = function(v) Settings.AutoHop = (v == true) end })
-    -- Custom TP to Plot Button
+    
+    -- Custom TP to Plot Button (Uses Hardcoded CFrame)
     FarmFolder:AddButton({ text = "TP to Plot", callback = function()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp and OriginalSpawnCFrame then
-            hrp.CFrame = OriginalSpawnCFrame
+        if hrp then
+            hrp.CFrame = TargetBaseCFrame
         end
     end})
+    
     FarmFolder:AddToggle({ text = "OG", flag = "og", state = true, value = true, callback = function(v) Settings.OG = (v == true) end })
     FarmFolder:AddToggle({ text = "Divine", flag = "divine", state = true, value = true, callback = function(v) Settings.Divine = (v == true) end })
     FarmFolder:AddToggle({ text = "Celestial", flag = "celestial", state = true, value = true, callback = function(v) Settings.Celestial = (v == true) end })
@@ -298,6 +292,9 @@ end
 local ExpectedEndTime_OG = 0
 local ExpectedEndTime_Secret = 0
 
+local LastValidSync_OG = os.time()
+local LastValidSync_Sec = os.time()
+
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return -1 end
     
@@ -327,6 +324,7 @@ task.spawn(function()
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
                     ExpectedEndTime_OG = os.time() + sec 
+                    LastValidSync_OG = os.time()
                 end
             end
         end
@@ -338,6 +336,7 @@ task.spawn(function()
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
                     ExpectedEndTime_Secret = os.time() + sec 
+                    LastValidSync_Sec = os.time()
                 end
             end
         end
@@ -483,6 +482,7 @@ local function CalculateScore(text, padRarity)
     elseif isGold then mutScore = 20
     end
     
+    -- PRIORITY ENFORCED: OG (1000) > Divine (500) > Celestial (300) > Secret (100)
     local rarityScore = 0
     if padRarity == "OG" then rarityScore = 1000
     elseif padRarity == "Divine" then rarityScore = 500
@@ -538,8 +538,8 @@ local function GrabTarget(prompt, targetModel)
     
     hrp.AssemblyLinearVelocity = Vector3.zero 
 
-    -- AGGRESSIVE SPAM
-    for i = 1, 10 do
+    -- MORE AGGRESSIVE SPAM
+    for i = 1, 15 do
         hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
         if type(fireproximityprompt) == "function" then 
             pcall(function()
@@ -552,9 +552,14 @@ local function GrabTarget(prompt, targetModel)
         pcall(function() prompt:InputHoldEnd() end)
     end
     
-    task.wait(0.4) 
+    -- POLLING FIX: Wait up to 2 seconds for the tool to actually appear in inventory
+    local tool = nil
+    for w = 1, 20 do
+        tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
+        if tool then break end
+        task.wait(0.1)
+    end
 
-    local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
     if not tool then return false end
 
     local toolName = string.lower(tool.Name)
@@ -659,8 +664,11 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
         SaveStats()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp and OriginalSpawnCFrame then
-            hrp.CFrame = OriginalSpawnCFrame
+        if hrp then
+            -- Safely TP back to the hardcoded coordinates to claim the item
+            hrp.CFrame = TargetBaseCFrame
+            task.wait(0.5)
+            ClickDropButton() -- Ensure it drops/claims
         end
         
         return true, grabbedRarities
@@ -740,7 +748,9 @@ task.spawn(function()
             end
 
             if shouldHop and Settings.AutoHop then
-                task.wait(1.5)
+                -- CRITICAL DATASTORE DELAY: Wait 4 seconds for the game to actually save the item before leaving
+                task.wait(4)
+                
                 local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
                 if saveTime == 9999 then saveTime = 600 end
                 SaveTimerData(saveTime)
@@ -760,27 +770,24 @@ task.spawn(function()
         local validOG = (ogSecs >= 0)
         local validSec = (secSecs >= 0)
         
-        -- A timer "wants" a hop if it is successfully read and OVER the threshold, 
-        -- OR if it hasn't loaded at all.
         local ogWantsHop = (not validOG) or (ogSecs > Settings.HopThreshold)
         local secWantsHop = (not validSec) or (secSecs > Settings.HopThreshold)
         
-        if validOG or validSec then
-            -- We have successfully read AT LEAST ONE timer.
-            -- Now we can safely make a hop decision.
-            if ogWantsHop and secWantsHop and Settings.AutoHop then
-                local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
-                if saveTime == 9999 then saveTime = 600 end
-                SaveTimerData(saveTime)
-                SmartServerHop()
-                task.wait(5)
-            end
-        else
-            -- We have NOT read any timers yet (Both are N/A or haven't loaded).
-            -- We wait exactly 25 seconds for the server to load them before failing out.
-            if timeInServer > 20 and Settings.AutoHop then
-                SmartServerHop()
-                task.wait(5)
+        -- Make sure we wait at least 8 seconds for the timers to properly render before doing logic
+        if timeInServer > 8 then
+            if validOG or validSec then
+                if ogWantsHop and secWantsHop and Settings.AutoHop then
+                    local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
+                    if saveTime == 9999 then saveTime = 600 end
+                    SaveTimerData(saveTime)
+                    SmartServerHop()
+                    task.wait(5)
+                end
+            else
+                if timeInServer > 25 and Settings.AutoHop then
+                    SmartServerHop()
+                    task.wait(5)
+                end
             end
         end
     end
