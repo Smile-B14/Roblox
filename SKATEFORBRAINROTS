@@ -90,7 +90,7 @@ local Settings = {
     Celestial = true,
     Secret = false,
     AutoHop = true,
-    HopThreshold = 130,
+    HopThreshold = 130, -- STAYS IN SERVER IF ANY TIMER IS UNDER THIS NUMBER OF SECONDS (130s = 2m10s)
     SpecificNames = "Rainbow 67",
     
     Divine_Rad = true,
@@ -772,26 +772,32 @@ task.spawn(function()
 
         if (isStale_OG and isStale_Sec) and Settings.AutoHop then
             if not isOGDropImminent and not isSecretDropImminent then
-                SmartServerHop()
-                task.wait(5)
-                continue
+                -- Give 6 seconds to let UI load initially before failing and hopping
+                if os.time() - ServerStartTime > 6 then
+                    SmartServerHop()
+                    task.wait(5)
+                    continue
+                end
             end
         end
         
         if os.time() < GracePeriodEnd then continue end
         
-        -- Smart Hop Logic: If BOTH timers are far away (or missing), HOP!
-        local waitOG = (ogSecs > Settings.HopThreshold or ogSecs == -1)
-        local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
-        
-        if waitOG and waitSec and Settings.AutoHop then
-            -- Double check nothing is on the floor before hopping
-            if FindAndGrabTargets(isOGDropImminent, isSecretDropImminent) then continue end
-            local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
-            if saveTime == 9999 then saveTime = 600 end
-            SaveTimerData(saveTime)
-            SmartServerHop()
-            task.wait(5) 
+        -- PREVENT INSTA-HOP ON JOIN (Wait 6s for timers to show up)
+        if os.time() - ServerStartTime > 6 then
+            -- Smart Hop Logic: If BOTH timers are far away (or missing), HOP!
+            local waitOG = (ogSecs > Settings.HopThreshold or ogSecs == -1)
+            local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
+            
+            if waitOG and waitSec and Settings.AutoHop then
+                -- Double check nothing is on the floor before hopping
+                if FindAndGrabTargets(isOGDropImminent, isSecretDropImminent) then continue end
+                local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
+                if saveTime == 9999 then saveTime = 600 end
+                SaveTimerData(saveTime)
+                SmartServerHop()
+                task.wait(5) 
+            end
         end
     end
 end)
