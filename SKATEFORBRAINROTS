@@ -10,17 +10,10 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -----------------------------------------
--- 0. DYNAMIC PLOT GENERATION
+-- 0. HARDCODED CLAIM COORDINATES
 -----------------------------------------
-local SavedBaseCFrame = nil
-pcall(function()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart", 5)
-    if hrp then SavedBaseCFrame = hrp.CFrame end
-end)
-if not SavedBaseCFrame then 
-    SavedBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
-end
+-- The exact coordinates to teleport back to for claiming brainrots
+local TargetBaseCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 
 -----------------------------------------
 -- 0.1 FAST GUARD DELETION (INSTANT)
@@ -187,11 +180,12 @@ if success and type(library) == "table" and library.CreateWindow then
     local FarmFolder = Window:AddFolder("Farm Settings")
     FarmFolder:AddToggle({ text = "Auto Hop", flag = "autohop", state = true, value = true, callback = function(v) Settings.AutoHop = (v == true) end })
     
+    -- Custom TP to Plot Button (Uses Hardcoded CFrame)
     FarmFolder:AddButton({ text = "TP to Plot", callback = function()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp then
-            hrp.CFrame = SavedBaseCFrame
+            hrp.CFrame = TargetBaseCFrame
             hrp.AssemblyLinearVelocity = Vector3.zero
         end
     end})
@@ -270,7 +264,7 @@ local function createPolishedTimer(name, yPos, color)
 end
 
 local OGTimerOverlay = createPolishedTimer("OG", -120, Color3.fromRGB(255, 215, 0)) 
-local SecretTimerOverlay = createPolishedTimer("Secret", -65, Color3.fromRGB(180, 50, 255)) 
+local CelestialTimerOverlay = createPolishedTimer("Celestial", -65, Color3.fromRGB(0, 200, 255)) 
 
 -----------------------------------------
 -- 6. PERFECT TIMER PARSING
@@ -297,8 +291,7 @@ local function SaveTimerData(remainingSeconds)
 end
 
 local ExpectedEndTime_OG = 0
-local ExpectedEndTime_Secret = 0
-
+local ExpectedEndTime_Celestial = 0
 local LastValidSync_OG = os.time()
 
 local function ParseTime(timeStr)
@@ -335,13 +328,14 @@ task.spawn(function()
             end
         end
         
-        local secPart = required:FindFirstChild("SecretCountdown")
-        if secPart then
-            local lbl = secPart:FindFirstChild("CountDown", true)
+        -- Safe check for Celestial Timer (checks for both names just in case)
+        local celPart = required:FindFirstChild("CelestialCountdown") or required:FindFirstChild("SecretCountdown")
+        if celPart then
+            local lbl = celPart:FindFirstChild("CountDown", true)
             if lbl and lbl:IsA("TextLabel") then
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
-                    ExpectedEndTime_Secret = os.time() + sec 
+                    ExpectedEndTime_Celestial = os.time() + sec 
                 end
             end
         end
@@ -537,7 +531,7 @@ end
 -----------------------------------------
 -- 9. AGGRESSIVE GRAB & CHAINING SYSTEM
 -----------------------------------------
-local function GrabTarget(prompt, targetModel, returnCFrame)
+local function GrabTarget(prompt, targetModel)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
@@ -563,8 +557,8 @@ local function GrabTarget(prompt, targetModel, returnCFrame)
         pcall(function() prompt:InputHoldEnd() end)
     end
     
-    -- 2. FORCE TELEPORT BACK TO BASE IMMEDIATELY
-    hrp.CFrame = returnCFrame
+    -- 2. FORCE TELEPORT BACK TO CLAIM BASE IMMEDIATELY
+    hrp.CFrame = TargetBaseCFrame
     hrp.AssemblyLinearVelocity = Vector3.zero
     task.wait(0.2) 
     
@@ -592,7 +586,7 @@ local function GrabTarget(prompt, targetModel, returnCFrame)
         return false 
     end
     
-    -- 5. SECURELY DROP ITEM ON THE PLOT
+    -- 5. SECURELY DROP ITEM ON THE CLAIM COORDS
     task.wait(0.3)
     ForceDropTool()
     task.wait(0.5) 
@@ -667,11 +661,10 @@ local function FindAndGrabTargets(isOGDropImminent)
 
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local PreSequenceCFrame = hrp and hrp.CFrame or SavedBaseCFrame
 
     for _, target in ipairs(ValidTargets) do
         if target.Model and target.Model.Parent then
-            local grabbed = GrabTarget(target.Prompt, target.Model, PreSequenceCFrame)
+            local grabbed = GrabTarget(target.Prompt, target.Model)
             if grabbed then
                 successfullyGrabbedAnything = true
                 table.insert(grabbedRarities, target.Rarity)
@@ -689,7 +682,7 @@ local function FindAndGrabTargets(isOGDropImminent)
     if successfullyGrabbedAnything then
         SaveStats()
         if hrp then
-            hrp.CFrame = PreSequenceCFrame
+            hrp.CFrame = TargetBaseCFrame
             hrp.AssemblyLinearVelocity = Vector3.zero
         end
         return true, grabbedRarities
@@ -706,7 +699,7 @@ local GracePeriodEnd = 0
 local ServerStartTime = os.time() 
 
 local LastDrawnOG = -1
-local LastDrawnSec = -1
+local LastDrawnCel = -1
 
 task.spawn(function()
     while task.wait(0.05) do
@@ -719,7 +712,7 @@ task.spawn(function()
         end
 
         local ogSecs = ExpectedEndTime_OG > 0 and math.max(0, ExpectedEndTime_OG - os.time()) or -1
-        local secSecs = ExpectedEndTime_Secret > 0 and math.max(0, ExpectedEndTime_Secret - os.time()) or -1
+        local celSecs = ExpectedEndTime_Celestial > 0 and math.max(0, ExpectedEndTime_Celestial - os.time()) or -1
 
         if ogSecs >= 0 then
             if ogSecs ~= LastDrawnOG then
@@ -733,15 +726,15 @@ task.spawn(function()
             end
         end
 
-        if secSecs >= 0 then
-            if secSecs ~= LastDrawnSec then
-                SecretTimerOverlay.Text = string.format("Secret: %dm %ds", math.floor(secSecs / 60), secSecs % 60)
-                LastDrawnSec = secSecs
+        if celSecs >= 0 then
+            if celSecs ~= LastDrawnCel then
+                CelestialTimerOverlay.Text = string.format("Celestial: %dm %ds", math.floor(celSecs / 60), celSecs % 60)
+                LastDrawnCel = celSecs
             end
         else
-            if LastDrawnSec ~= -2 then
-                SecretTimerOverlay.Text = "Secret: Syncing..."
-                LastDrawnSec = -2
+            if LastDrawnCel ~= -2 then
+                CelestialTimerOverlay.Text = "Celestial: Syncing..."
+                LastDrawnCel = -2
             end
         end
 
@@ -752,7 +745,7 @@ task.spawn(function()
 
         local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
         
-        -- Always check and grab targets first regardless of timers
+        -- Check and grab targets
         local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent)
         
         if grabbedAnything then
