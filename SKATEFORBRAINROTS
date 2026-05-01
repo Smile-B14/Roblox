@@ -300,7 +300,6 @@ local ExpectedEndTime_OG = 0
 local ExpectedEndTime_Secret = 0
 
 local LastValidSync_OG = os.time()
-local LastValidSync_Sec = os.time()
 
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return -1 end
@@ -343,7 +342,6 @@ task.spawn(function()
                 local sec = ParseTime(lbl.Text)
                 if sec >= 0 then 
                     ExpectedEndTime_Secret = os.time() + sec 
-                    LastValidSync_Sec = os.time()
                 end
             end
         end
@@ -489,6 +487,7 @@ local function CalculateScore(text, padRarity)
     elseif isGold then mutScore = 20
     end
     
+    -- PRIORITY ENFORCED: OG (1000) > Divine (500) > Celestial (300) > Secret (100)
     local rarityScore = 0
     if padRarity == "OG" then rarityScore = 1000
     elseif padRarity == "Divine" then rarityScore = 500
@@ -596,12 +595,12 @@ local function GrabTarget(prompt, targetModel, returnCFrame)
     -- 5. SECURELY DROP ITEM ON THE PLOT
     task.wait(0.3)
     ForceDropTool()
-    task.wait(0.5) -- Give the plot time to absorb the item
+    task.wait(0.5) 
     
     return true
 end
 
-local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
+local function FindAndGrabTargets(isOGDropImminent)
     local requiredFolder = Workspace:FindFirstChild("Required")
     local brainrotsFolder = requiredFolder and requiredFolder:FindFirstChild("Brainrots")
     if not brainrotsFolder then return false, {} end
@@ -666,14 +665,12 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     local grabbedRarities = {}
     local successfullyGrabbedAnything = false
 
-    -- Capture exactly where we are standing before starting the sequence
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local PreSequenceCFrame = hrp and hrp.CFrame or SavedBaseCFrame
 
     for _, target in ipairs(ValidTargets) do
         if target.Model and target.Model.Parent then
-            -- Pass the Return CFrame so the script immediately TPs back after grab attempts
             local grabbed = GrabTarget(target.Prompt, target.Model, PreSequenceCFrame)
             if grabbed then
                 successfullyGrabbedAnything = true
@@ -691,7 +688,6 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     
     if successfullyGrabbedAnything then
         SaveStats()
-        -- Final safety check, make sure we are 100% standing on our plot at the end
         if hrp then
             hrp.CFrame = PreSequenceCFrame
             hrp.AssemblyLinearVelocity = Vector3.zero
@@ -703,10 +699,9 @@ local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
 end
 
 -----------------------------------------
--- 10. DUAL TIMER MAIN LOOP
+-- 10. TIMER MAIN LOOP (OG ONLY)
 -----------------------------------------
 local PrevOG = 9999
-local PrevSec = 9999
 local GracePeriodEnd = 0 
 local ServerStartTime = os.time() 
 
@@ -717,7 +712,6 @@ task.spawn(function()
     while task.wait(0.05) do
         if type(getgenv) == "function" and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
-        -- Force hop if execution time exceeds 240 seconds
         if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
             SmartServerHop()
             task.wait(5)
@@ -751,17 +745,15 @@ task.spawn(function()
             end
         end
 
-        if (PrevOG <= 20 and ogSecs > 500) or (PrevSec <= 20 and secSecs > 500) then
+        if (PrevOG <= 20 and ogSecs > 500) then
             GracePeriodEnd = os.time() + 15
         end
         PrevOG = ogSecs
-        PrevSec = secSecs
 
         local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
-        local isSecretDropImminent = (secSecs >= 0 and secSecs <= 30)
         
         -- Always check and grab targets first regardless of timers
-        local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
+        local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent)
         
         if grabbedAnything then
             local shouldHop = false
@@ -773,11 +765,8 @@ task.spawn(function()
             end
 
             if shouldHop and Settings.AutoHop then
-                -- CRITICAL DELAY: Give the server 5 FULL SECONDS to save the item to your plot before hopping
                 task.wait(5)
-                
-                local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
-                if saveTime == 9999 then saveTime = 600 end
+                local saveTime = ogSecs > 0 and ogSecs or 600
                 SaveTimerData(saveTime)
                 SmartServerHop()
             else
@@ -785,24 +774,33 @@ task.spawn(function()
             end
             continue
         end
+
+        -- SYNCING FAILSAFE: ONLY care about OG timer. If OG fails to load for 20 seconds, hop.
+        local isStale_OG = (os.time() - LastValidSync_OG > 20)
+
+        if isStale_OG and Settings.AutoHop then
+            if not isOGDropImminent then
+                if os.time() - ServerStartTime > 6 then
+                    SmartServerHop()
+                    task.wait(5)
+                    continue
+                end
+            end
+        end
         
         if os.time() < GracePeriodEnd then continue end
         
         -----------------------------------------
-        -- STRICT WAIT-THEN-HOP LOGIC
+        -- STRICT WAIT-THEN-HOP LOGIC (OG ONLY)
         -----------------------------------------
         local timeInServer = os.time() - ServerStartTime
         local validOG = (ogSecs >= 0)
-        local validSec = (secSecs >= 0)
-        
         local ogWantsHop = (not validOG) or (ogSecs > Settings.HopThreshold)
-        local secWantsHop = (not validSec) or (secSecs > Settings.HopThreshold)
         
         if timeInServer > 8 then
-            if validOG or validSec then
-                if ogWantsHop and secWantsHop and Settings.AutoHop then
-                    local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
-                    if saveTime == 9999 then saveTime = 600 end
+            if validOG then
+                if ogWantsHop and Settings.AutoHop then
+                    local saveTime = ogSecs > 0 and ogSecs or 600
                     SaveTimerData(saveTime)
                     SmartServerHop()
                     task.wait(5)
