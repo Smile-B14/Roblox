@@ -12,15 +12,13 @@ local LocalPlayer = Players.LocalPlayer
 -----------------------------------------
 -- 0. DYNAMIC PLOT GENERATION
 -----------------------------------------
--- Instead of hardcoded coordinates, the script dynamically records where you spawned
--- This guarantees you return to YOUR assigned plot safely.
+-- Dynamically records where you spawned to safely return you to YOUR plot.
 local OriginalSpawnCFrame = nil
 pcall(function()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
     if hrp then OriginalSpawnCFrame = hrp.CFrame end
 end)
--- Fallback in case character was dead during execution
 if not OriginalSpawnCFrame then 
     OriginalSpawnCFrame = CFrame.new(-857.248657, 6.999630, -358.529083)
 end
@@ -189,6 +187,14 @@ if success and type(library) == "table" and library.CreateWindow then
     
     local FarmFolder = Window:AddFolder("Farm Settings")
     FarmFolder:AddToggle({ text = "Auto Hop", flag = "autohop", state = true, value = true, callback = function(v) Settings.AutoHop = (v == true) end })
+    -- Custom TP to Plot Button
+    FarmFolder:AddButton({ text = "TP to Plot", callback = function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and OriginalSpawnCFrame then
+            hrp.CFrame = OriginalSpawnCFrame
+        end
+    end})
     FarmFolder:AddToggle({ text = "OG", flag = "og", state = true, value = true, callback = function(v) Settings.OG = (v == true) end })
     FarmFolder:AddToggle({ text = "Divine", flag = "divine", state = true, value = true, callback = function(v) Settings.Divine = (v == true) end })
     FarmFolder:AddToggle({ text = "Celestial", flag = "celestial", state = true, value = true, callback = function(v) Settings.Celestial = (v == true) end })
@@ -221,7 +227,7 @@ if success and type(library) == "table" and library.CreateWindow then
 end
 
 -----------------------------------------
--- 5. UPGRADED & CLEAN DUAL TIMER UI (BOTTOM LEFT)
+-- 5. DUAL TIMER UI (BOTTOM LEFT)
 -----------------------------------------
 pcall(function()
     if LocalPlayer.PlayerGui:FindFirstChild("SmileB_Overlay") then
@@ -298,7 +304,6 @@ local LastValidSync_Sec = os.time()
 local function ParseTime(timeStr)
     if type(timeStr) ~= "string" then return -1 end
     
-    -- "N/A" check directly from the dump
     if string.find(string.upper(timeStr), "N/A") then return -1 end
     
     local h, m, s = timeStr:match("(%d+):(%d+):(%d+)")
@@ -318,7 +323,6 @@ task.spawn(function()
         local required = Workspace:FindFirstChild("Required")
         if not required then continue end
         
-        -- Exact Path Targeting for OG
         local ogPart = required:FindFirstChild("OGCountdown")
         if ogPart then
             local lbl = ogPart:FindFirstChild("CountDown", true)
@@ -331,7 +335,6 @@ task.spawn(function()
             end
         end
         
-        -- Exact Path Targeting for Secret
         local secPart = required:FindFirstChild("SecretCountdown")
         if secPart then
             local lbl = secPart:FindFirstChild("CountDown", true)
@@ -527,12 +530,12 @@ local function ClickDropButton()
 end
 
 -----------------------------------------
--- 9. LIGHTNING FAST GRAB & VERIFY
+-- 9. AGGRESSIVE GRAB & CHAINING SYSTEM
 -----------------------------------------
-local function GrabAndVerify(prompt, targetModel)
+local function GrabTarget(prompt, targetModel)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    if not hrp then return false end
     
     local targetPos = targetModel:GetPivot()
     if targetModel:IsA("BasePart") then targetPos = targetModel.CFrame end
@@ -541,7 +544,8 @@ local function GrabAndVerify(prompt, targetModel)
     
     hrp.AssemblyLinearVelocity = Vector3.zero 
 
-    for i = 1, 4 do
+    -- MORE AGGRESSIVE SPAM: Longer iteration, slightly longer delay to guarantee registration
+    for i = 1, 10 do
         hrp.CFrame = targetPos * CFrame.new(0, 0.5, 0) 
         if type(fireproximityprompt) == "function" then 
             pcall(function()
@@ -550,16 +554,15 @@ local function GrabAndVerify(prompt, targetModel)
             end)
         end
         pcall(function() prompt:InputHoldBegin() end)
-        task.wait(0.02)
+        task.wait(0.04) 
         pcall(function() prompt:InputHoldEnd() end)
     end
     
-    task.wait(0.3) 
+    task.wait(0.4) -- Longer wait to let inventory process the item
 
     local tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
     if not tool then
-        hrp.CFrame = OriginalSpawnCFrame
-        return
+        return false
     end
 
     local toolName = string.lower(tool.Name)
@@ -570,23 +573,22 @@ local function GrabAndVerify(prompt, targetModel)
     end
     
     if string.find(toolName, "lucky block") then
-        hrp.CFrame = OriginalSpawnCFrame
         task.wait(0.2)
         ClickDropButton()
-        return
+        return false -- We dropped a lucky block, so we didn't get our actual target yet
     end
     
-    hrp.CFrame = OriginalSpawnCFrame
+    return true
 end
 
-local function FindBestTarget(isOGDropImminent, isSecretDropImminent)
+local function FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
     local requiredFolder = Workspace:FindFirstChild("Required")
     local brainrotsFolder = requiredFolder and requiredFolder:FindFirstChild("Brainrots")
-    if not brainrotsFolder then return false, nil end
+    if not brainrotsFolder then return false, {} end
 
-    local BestTarget = nil
-    local HighestPriority = 0
+    local ValidTargets = {}
 
+    -- Scan Workspace for ALL valid drops right now
     for _, model in ipairs(brainrotsFolder:GetChildren()) do
         if IgnoredModels[model] then continue end
 
@@ -621,38 +623,64 @@ local function FindBestTarget(isOGDropImminent, isSecretDropImminent)
                 end
             end
 
+            -- Ensure OG gets priority over Secrets dropping at same time
             if padRarity == "Secret" and isOGDropImminent then continue end
             
             local score = CalculateScore(rawText, padRarity)
             
             if score == 0 then
                 IgnoredModels[model] = true
-            elseif score > HighestPriority then
-                HighestPriority = score
-                BestTarget = {Prompt = prompt, Model = model, Rarity = padRarity}
+            else
+                table.insert(ValidTargets, {Prompt = prompt, Model = model, Rarity = padRarity, Score = score})
             end
         end
     end
 
-    if BestTarget then
-        GrabAndVerify(BestTarget.Prompt, BestTarget.Model)
-        
-        SessionStats.Grabs = SessionStats.Grabs + 1
-        if BestTarget.Rarity == "OG" then SessionStats.OG = SessionStats.OG + 1
-        elseif BestTarget.Rarity == "Divine" then SessionStats.Divine = SessionStats.Divine + 1
-        elseif BestTarget.Rarity == "Celestial" then SessionStats.Celestial = SessionStats.Celestial + 1
-        elseif BestTarget.Rarity == "Secret" then SessionStats.Secret = SessionStats.Secret + 1
+    if #ValidTargets == 0 then 
+        -- Clean up cache 
+        for model, _ in pairs(IgnoredModels) do
+            if not model.Parent then IgnoredModels[model] = nil end
         end
+        return false, {} 
+    end
+
+    -- SORT BY HIGHEST PRIORITY: Grabs OG FIRST, then immediately moves to Celestial/Divine
+    table.sort(ValidTargets, function(a, b) return a.Score > b.Score end)
+
+    local grabbedRarities = {}
+    local successfullyGrabbedAnything = false
+
+    for _, target in ipairs(ValidTargets) do
+        if target.Model and target.Model.Parent then
+            local grabbed = GrabTarget(target.Prompt, target.Model)
+            if grabbed then
+                successfullyGrabbedAnything = true
+                table.insert(grabbedRarities, target.Rarity)
+                
+                SessionStats.Grabs = SessionStats.Grabs + 1
+                if target.Rarity == "OG" then SessionStats.OG = SessionStats.OG + 1
+                elseif target.Rarity == "Divine" then SessionStats.Divine = SessionStats.Divine + 1
+                elseif target.Rarity == "Celestial" then SessionStats.Celestial = SessionStats.Celestial + 1
+                elseif target.Rarity == "Secret" then SessionStats.Secret = SessionStats.Secret + 1
+                end
+            end
+        end
+    end
+    
+    if successfullyGrabbedAnything then
         SaveStats()
         
-        return true, BestTarget.Rarity
+        -- Safely bring it back to plot ONLY after all chained grabs are completely done
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and OriginalSpawnCFrame then
+            hrp.CFrame = OriginalSpawnCFrame
+        end
+        
+        return true, grabbedRarities
     end
     
-    for model, _ in pairs(IgnoredModels) do
-        if not model.Parent then IgnoredModels[model] = nil end
-    end
-    
-    return false, nil
+    return false, {}
 end
 
 -----------------------------------------
@@ -715,19 +743,23 @@ task.spawn(function()
         local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
         local isSecretDropImminent = (secSecs >= 0 and secSecs <= 30)
         
-        local targetGrabbed, rarityGrabbed = FindBestTarget(isOGDropImminent, isSecretDropImminent)
+        local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent, isSecretDropImminent)
         
-        if targetGrabbed then
-            if rarityGrabbed == "OG" or rarityGrabbed == "Divine" or rarityGrabbed == "Celestial" then
-                if Settings.AutoHop then
-                    task.wait(1.5)
-                    local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
-                    if saveTime == 9999 then saveTime = 600 end
-                    SaveTimerData(saveTime)
-                    SmartServerHop()
-                else
-                    task.wait(2)
+        if grabbedAnything then
+            local shouldHop = false
+            for _, rarity in ipairs(grabbedRarities) do
+                if rarity == "OG" or rarity == "Divine" or rarity == "Celestial" then
+                    shouldHop = true
+                    break
                 end
+            end
+
+            if shouldHop and Settings.AutoHop then
+                task.wait(1.5)
+                local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
+                if saveTime == 9999 then saveTime = 600 end
+                SaveTimerData(saveTime)
+                SmartServerHop()
             else
                 task.wait(2)
             end
@@ -753,7 +785,8 @@ task.spawn(function()
         local waitSec = (secSecs > Settings.HopThreshold or secSecs == -1)
         
         if waitOG and waitSec and Settings.AutoHop then
-            if FindBestTarget(isOGDropImminent, isSecretDropImminent) then continue end
+            -- Double check nothing is on the floor before hopping
+            if FindAndGrabTargets(isOGDropImminent, isSecretDropImminent) then continue end
             local saveTime = math.min(ogSecs > 0 and ogSecs or 9999, secSecs > 0 and secSecs or 9999)
             if saveTime == 9999 then saveTime = 600 end
             SaveTimerData(saveTime)
