@@ -42,23 +42,32 @@ task.spawn(function()
 end)
 
 -----------------------------------------
--- 0.2 AUTO-RECONNECT (ANTI-KICK & AFK SAFE)
+-- 0.2 ADVANCED AUTO-RECONNECT (AFK 24/7 SAFE)
 -----------------------------------------
 pcall(function()
-    game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+    local function HandleDisconnect()
+        task.wait(1)
+        -- 1st Attempt: Try to rejoin the exact same server
+        pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end)
         task.wait(2)
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-    end)
+        -- 2nd Attempt: Fallback to any available server
+        pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+    end
+
+    game:GetService("GuiService").ErrorMessageChanged:Connect(HandleDisconnect)
     
     local CoreGui = game:GetService("CoreGui")
     local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
     if promptOverlay then
         promptOverlay.ChildAdded:Connect(function(child)
             if child.Name == "ErrorPrompt" then
-                task.wait(2)
-                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                HandleDisconnect()
             end
         end)
+        -- Catch if error prompt loaded before our script
+        if promptOverlay:FindFirstChild("ErrorPrompt") then
+            HandleDisconnect()
+        end
     end
 end)
 
@@ -312,7 +321,7 @@ local function ParseTime(timeStr)
 end
 
 task.spawn(function()
-    while task.wait(1) do
+    while task.wait(0.5) do
         local required = Workspace:FindFirstChild("Required")
         if not required then continue end
         
@@ -328,7 +337,6 @@ task.spawn(function()
             end
         end
         
-        -- Safe check for Celestial Timer (checks for both names just in case)
         local celPart = required:FindFirstChild("CelestialCountdown") or required:FindFirstChild("SecretCountdown")
         if celPart then
             local lbl = celPart:FindFirstChild("CountDown", true)
@@ -562,9 +570,9 @@ local function GrabTarget(prompt, targetModel)
     hrp.AssemblyLinearVelocity = Vector3.zero
     task.wait(0.2) 
     
-    -- 3. POLL FOR INVENTORY ITEM AT BASE (Fixes network delay)
+    -- 3. POLL FOR INVENTORY ITEM AT BASE
     local tool = nil
-    for w = 1, 30 do -- Wait up to 3 seconds for server to give item
+    for w = 1, 30 do
         tool = char:FindFirstChildWhichIsA("Tool") or LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
         if tool then break end
         task.wait(0.1)
@@ -705,6 +713,7 @@ task.spawn(function()
     while task.wait(0.05) do
         if type(getgenv) == "function" and getgenv().SmileB_ExecutionID ~= ScriptExecutionID then break end
 
+        -- Hard reset hop if stuck for 4 minutes
         if os.time() - ServerStartTime >= 240 and Settings.AutoHop then
             SmartServerHop()
             task.wait(5)
@@ -745,7 +754,7 @@ task.spawn(function()
 
         local isOGDropImminent = (ogSecs >= 0 and ogSecs <= 30)
         
-        -- Check and grab targets
+        -- Always check and grab targets first
         local grabbedAnything, grabbedRarities = FindAndGrabTargets(isOGDropImminent)
         
         if grabbedAnything then
@@ -768,12 +777,13 @@ task.spawn(function()
             continue
         end
 
-        -- SYNCING FAILSAFE: ONLY care about OG timer. If OG fails to load for 20 seconds, hop.
-        local isStale_OG = (os.time() - LastValidSync_OG > 20)
+        -- SYNCING FAILSAFE: Hops if OG fails to load for 10 seconds.
+        local isStale_OG = (os.time() - LastValidSync_OG > 10)
 
         if isStale_OG and Settings.AutoHop then
             if not isOGDropImminent then
-                if os.time() - ServerStartTime > 6 then
+                -- 3 seconds grace period to wait for game UI to spawn initially
+                if os.time() - ServerStartTime > 3 then
                     SmartServerHop()
                     task.wait(5)
                     continue
@@ -784,13 +794,14 @@ task.spawn(function()
         if os.time() < GracePeriodEnd then continue end
         
         -----------------------------------------
-        -- STRICT WAIT-THEN-HOP LOGIC (OG ONLY)
+        -- FAST WAIT-THEN-HOP LOGIC (OG ONLY)
         -----------------------------------------
         local timeInServer = os.time() - ServerStartTime
         local validOG = (ogSecs >= 0)
         local ogWantsHop = (not validOG) or (ogSecs > Settings.HopThreshold)
         
-        if timeInServer > 8 then
+        -- Decide extremely fast (3 seconds) if we should stay or leave
+        if timeInServer > 3 then
             if validOG then
                 if ogWantsHop and Settings.AutoHop then
                     local saveTime = ogSecs > 0 and ogSecs or 600
@@ -799,6 +810,7 @@ task.spawn(function()
                     task.wait(5)
                 end
             else
+                -- If we still haven't found a valid OG timer after 10s, bail.
                 if timeInServer > 10 and Settings.AutoHop then
                     SmartServerHop()
                     task.wait(5)
