@@ -1,64 +1,189 @@
 -- loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/Kick%20a%20lucky%20block"))()
 
+getgenv().PerfectDelay = 0.45 
+
+
+
 local Players = game:GetService("Players")
+
+local VIM = game:GetService("VirtualInputManager")
+
 local VirtualUser = game:GetService("VirtualUser")
+
 local TeleportService = game:GetService("TeleportService")
+
 local GuiService = game:GetService("GuiService")
+
+
+
 local player = Players.LocalPlayer
 
--- 1. Invisible X2 Clicker
+local camera = workspace.CurrentCamera
+
+local lastVisibility = {}
+
+
+
+-- 1. UI მონიტორინგი და დაწკაპუნება
+
 task.spawn(function()
-    while task.wait(0.1) do
+
+    while task.wait(0.05) do
+
         pcall(function()
-            local upg = player.PlayerGui:FindFirstChild("KickUpgrades")
-            if not upg then return end
-            
-            for _, v in ipairs(upg:GetChildren()) do
-                if v.Name == "Bonus" and v:IsA("ImageButton") and v.Visible and v.AbsolutePosition.X > 0 then
-                    if getconnections then
-                        for _, conn in ipairs(getconnections(v.MouseButton1Click)) do
-                            pcall(function() conn:Fire() end)
-                            pcall(function() conn.Function() end)
+
+            for _, gui in pairs(player.PlayerGui:GetChildren()) do
+
+                if gui:IsA("ScreenGui") then
+
+                    for _, btn in pairs(gui:GetDescendants()) do
+
+                        if btn:IsA("GuiButton") then
+
+                            local currentVis = btn.Visible
+
+                            if lastVisibility[btn] == true and currentVis == false then
+
+                                task.wait(getgenv().PerfectDelay)
+
+                                local cx = camera.ViewportSize.X / 2
+
+                                local cy = camera.ViewportSize.Y / 2
+
+                                VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+
+                                task.wait(0.03)
+
+                                VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+
+                            end
+
+                            lastVisibility[btn] = currentVis
+
                         end
-                        for _, conn in ipairs(getconnections(v.Activated)) do
-                            pcall(function() conn:Fire() end)
-                            pcall(function() conn.Function() end)
-                        end
+
                     end
-                    v.Visible = false 
-                    task.wait(1.5)
-                    break
+
                 end
+
             end
+
         end)
+
     end
+
 end)
 
--- 2. Active Anti-AFK (Clicks every 5 seconds)
+
+
+-- 2. X2 ბონუსების ავტომატური დაწკაპუნება
+
 task.spawn(function()
-    while task.wait(5) do
+
+    while task.wait(0.1) do
+
         pcall(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
+
+            local upg = player.PlayerGui:FindFirstChild("KickUpgrades")
+
+            if not upg then return end
+
+            
+
+            for _, v in ipairs(upg:GetChildren()) do
+
+                if v.Name == "Bonus" and v:IsA("ImageButton") and v.Visible and v.AbsolutePosition.X > 0 then
+
+                    if getconnections then
+
+                        for _, conn in ipairs(getconnections(v.MouseButton1Click)) do
+
+                            pcall(function() conn:Fire() end)
+
+                            pcall(function() conn.Function() end)
+
+                        end
+
+                        for _, conn in ipairs(getconnections(v.Activated)) do
+
+                            pcall(function() conn:Fire() end)
+
+                            pcall(function() conn.Function() end)
+
+                        end
+
+                    end
+
+                    v.Visible = false 
+
+                    task.wait(1.5)
+
+                    break
+
+                end
+
+            end
+
         end)
+
     end
+
 end)
+
+
+
+-- 3. Anti-AFK სისტემა
+
+task.spawn(function()
+
+    while task.wait(5) do
+
+        pcall(function()
+
+            VirtualUser:CaptureController()
+
+            VirtualUser:ClickButton2(Vector2.new())
+
+        end)
+
+    end
+
+end)
+
+
 
 player.Idled:Connect(function()
+
     pcall(function()
+
         VirtualUser:CaptureController()
+
         VirtualUser:ClickButton2(Vector2.new())
+
     end)
+
 end)
 
--- 3. Auto-Rejoin
+
+
+-- 4. ავტომატური რეჯოინი
+
 GuiService.ErrorMessageChanged:Connect(function()
+
     task.wait(3)
+
     pcall(function()
+
         TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+
     end)
+
     task.wait(2)
+
     pcall(function()
+
         TeleportService:Teleport(game.PlaceId, player)
+
     end)
+
 end)
