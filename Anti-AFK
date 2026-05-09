@@ -4,55 +4,49 @@ local Players = game:GetService("Players")
 local VirtualUser = game:GetService("VirtualUser")
 local CoreGui = game:GetService("CoreGui")
 
--- ცვლადები
-local startTime = os.time() -- ვიწყებთ დროის ათვლას
-local afkCount = 0 -- რამდენჯერ აგარიდათ AFK-ს
+local startTime = os.time()
+local afkCount = 0
 
--- 1. ძველი UI-ის გასუფთავება
 for _, ui in pairs(CoreGui:GetChildren()) do
 	if ui.Name == "GenesisAntiAFK_Fixed" then
 		ui:Destroy()
 	end
 end
 
--- 2. ახალი GUI-ის შექმნა
 local gui = Instance.new("ScreenGui")
 gui.Name = "GenesisAntiAFK_Fixed"
 gui.Parent = CoreGui
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Global -- მნიშვნელოვანია რომ წინ გამოჩნდეს
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
--- მთავარი ჩარჩო
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Parent = gui
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-mainFrame.Position = UDim2.new(0.5, -150, 0.5, -90) -- ეკრანის ცენტრი
-mainFrame.Size = UDim2.new(0, 350, 0, 180) -- ზომა: 350x180
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -90)
+mainFrame.Size = UDim2.new(0, 350, 0, 180)
 mainFrame.Active = true
 mainFrame.Draggable = true
-mainFrame.Visible = false -- <-- შეცვლილია: მთავარი ფანჯარა თავიდან დამალულია (Hidden by default)
+mainFrame.Visible = false 
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
 corner.Parent = mainFrame
 
--- სათაური (Header)
 local header = Instance.new("TextLabel")
 header.Parent = mainFrame
 header.BackgroundColor3 = Color3.fromRGB(50, 50, 120)
-header.Size = UDim2.new(1, 0, 0, 40) -- სიმაღლე 40px
+header.Size = UDim2.new(1, 0, 0, 40)
 header.Font = Enum.Font.GothamBold
 header.Text = "  Anti-AFK (ქართული)"
 header.TextColor3 = Color3.new(1, 1, 1)
 header.TextSize = 18
 header.TextXAlignment = Enum.TextXAlignment.Left
-header.ZIndex = 2 -- ფონზე წინ
+header.ZIndex = 2 
 
 local headerCorner = Instance.new("UICorner")
 headerCorner.CornerRadius = UDim.new(0, 10)
 headerCorner.Parent = header
 
--- ჩაკეცვის ღილაკი (-)
 local minButton = Instance.new("TextButton")
 minButton.Parent = header
 minButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
@@ -66,52 +60,46 @@ local minCorner = Instance.new("UICorner")
 minCorner.CornerRadius = UDim.new(0, 5)
 minCorner.Parent = minButton
 
--- === ინფორმაციის ტექსტები (ფიქსირებული პოზიციები) ===
-
--- სტატუსი
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Parent = mainFrame
 statusLabel.BackgroundTransparency = 1
-statusLabel.Position = UDim2.new(0, 15, 0, 50) -- ჰედერიდან 10px ქვემოთ
+statusLabel.Position = UDim2.new(0, 15, 0, 50)
 statusLabel.Size = UDim2.new(1, -30, 0, 25)
 statusLabel.Font = Enum.Font.GothamSemibold
 statusLabel.Text = "სტატუსი: მომლოდინე..."
-statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) -- მწვანე
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) 
 statusLabel.TextSize = 16
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.ZIndex = 2
 
--- მთვლელი (Counter)
 local countLabel = Instance.new("TextLabel")
 countLabel.Parent = mainFrame
 countLabel.BackgroundTransparency = 1
-countLabel.Position = UDim2.new(0, 15, 0, 80) -- წინა ტექსტიდან 30px ქვემოთ
+countLabel.Position = UDim2.new(0, 15, 0, 80)
 countLabel.Size = UDim2.new(1, -30, 0, 25)
 countLabel.Font = Enum.Font.Gotham
 countLabel.Text = "AFK დაცვა: 0-ჯერ"
-countLabel.TextColor3 = Color3.fromRGB(255, 220, 100) -- ყვითელი
+countLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
 countLabel.TextSize = 16
 countLabel.TextXAlignment = Enum.TextXAlignment.Left
 countLabel.ZIndex = 2
 
--- დრო (Timer)
 local timeLabel = Instance.new("TextLabel")
 timeLabel.Parent = mainFrame
 timeLabel.BackgroundTransparency = 1
-timeLabel.Position = UDim2.new(0, 15, 0, 110) -- კიდევ ქვემოთ
+timeLabel.Position = UDim2.new(0, 15, 0, 110) 
 timeLabel.Size = UDim2.new(1, -30, 0, 25)
 timeLabel.Font = Enum.Font.Gotham
 timeLabel.Text = "დრო: 00:00:00"
-timeLabel.TextColor3 = Color3.fromRGB(150, 200, 255) -- ღია ლურჯი
+timeLabel.TextColor3 = Color3.fromRGB(150, 200, 255) 
 timeLabel.TextSize = 16
 timeLabel.TextXAlignment = Enum.TextXAlignment.Left
 timeLabel.ZIndex = 2
 
--- ავტორი
 local footer = Instance.new("TextLabel")
 footer.Parent = mainFrame
 footer.BackgroundTransparency = 1
-footer.Position = UDim2.new(0, 0, 1, -25) -- სულ ქვემოთ
+footer.Position = UDim2.new(0, 0, 1, -25)
 footer.Size = UDim2.new(1, 0, 0, 20)
 footer.Font = Enum.Font.Gotham
 footer.Text = "By Smile B"
@@ -119,7 +107,6 @@ footer.TextColor3 = Color3.fromRGB(100, 100, 100)
 footer.TextSize = 12
 footer.ZIndex = 2
 
--- პატარა გახსნის ღილაკი
 local openButton = Instance.new("TextButton")
 openButton.Name = "OpenButton"
 openButton.Parent = gui
@@ -129,15 +116,12 @@ openButton.Size = UDim2.new(0, 50, 0, 50)
 openButton.Text = "AFK"
 openButton.TextColor3 = Color3.new(1,1,1)
 openButton.Font = Enum.Font.GothamBold
-openButton.Visible = true -- <-- შეცვლილია: პატარა ღილაკი თავიდან ჩანს (Visible by default)
+openButton.Visible = true 
 openButton.Draggable = true
 local openCorner = Instance.new("UICorner")
 openCorner.CornerRadius = UDim.new(1, 0)
 openCorner.Parent = openButton
 
--- === ლოგიკა ===
-
--- ღილაკების მუშაობა
 minButton.MouseButton1Click:Connect(function()
     mainFrame.Visible = false
     openButton.Visible = true
@@ -148,7 +132,6 @@ openButton.MouseButton1Click:Connect(function()
     openButton.Visible = false
 end)
 
--- დროის ფორმატირება
 local function formatTime(seconds)
     local h = math.floor(seconds / 3600)
     local m = math.floor((seconds % 3600) / 60)
@@ -156,33 +139,39 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- AFK ფუნქცია
 local function onAfk()
     afkCount = afkCount + 1
     countLabel.Text = "AFK დაცვა: " .. afkCount .. "-ჯერ"
     
     statusLabel.Text = "სტატუსი: მოქმედება!"
-    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80) -- წითელი
+    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
     
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
     
-    wait(2)
+    task.wait(2)
     statusLabel.Text = "სტატუსი: აქტიურია (მომლოდინე)"
     statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
 end
 
 Players.LocalPlayer.Idled:Connect(onAfk)
 
--- ტაიმერის ციკლი
-spawn(function()
-    while wait(1) do
-        if mainFrame.Visible then -- განახლდეს მხოლოდ თუ ფანჯარა გახსნილია (ოპტიმიზაცია)
+-- Active Anti-AFK: Simulates right-click every 5 seconds to guarantee zero risk
+task.spawn(function()
+    while task.wait(5) do
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        if mainFrame.Visible then
             local currentTime = os.time()
             local elapsed = currentTime - startTime
             timeLabel.Text = "დრო: " .. formatTime(elapsed)
         end
     end
 end)
-
-print("Georgian Anti-AFK Loaded (Started Minimized)")
