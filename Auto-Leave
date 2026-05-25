@@ -204,6 +204,7 @@ openButton.MouseButton1Click:Connect(function()
     openButton.Visible = false
 end)
 
+-- Helper: Format time displays
 local function formatTime(seconds)
     local h = math.floor(seconds / 3600)
     local m = math.floor((seconds % 3600) / 60)
@@ -211,7 +212,48 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
+-- Helper: Simulate activity to reset AFK timer
 local function simulateActivity()
     pcall(function()
         VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
         task.wait(0.1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+-- Event handler for player becoming idle
+local function onAfk()
+    afkCount = afkCount + 1
+    countLabel.Text = "AFK დაცვა: " .. afkCount .. "-ჯერ"
+    
+    statusLabel.Text = "სტატუსი: მოქმედება!"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+    
+    simulateActivity() -- Resolves correctly because simulateActivity is defined above
+    
+    task.wait(2)
+    statusLabel.Text = "სტატუსი: აქტიურია (მომლოდინე)"
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+end
+
+localPlayer.Idled:Connect(onAfk)
+
+-- Passive Anti-AFK: Simulates a minor camera input every 15 seconds
+task.spawn(function()
+    while task.wait(15) do
+        if not isDisconnecting then
+            simulateActivity()
+        end
+    end
+end)
+
+-- UI Timer update loop
+task.spawn(function()
+    while task.wait(1) do
+        if mainFrame.Visible then
+            local currentTime = os.time()
+            local elapsed = currentTime - startTime
+            timeLabel.Text = "დრო: " .. formatTime(elapsed)
+        end
+    end
+end)
