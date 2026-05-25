@@ -24,13 +24,15 @@ end
 local PlayerGui = localPlayer:WaitForChild("PlayerGui")
 local isDisconnecting = false
 
--- Thread-safe disconnect function
-local function disconnect()
+-- Thread-safe disconnect function with dynamic player name insertion
+local function disconnect(triggerPlayerName)
     if isDisconnecting then return end
     isDisconnecting = true
     
-    -- Attempt to kick the player immediately
-    localPlayer:Kick("Scammer Detected\n- Sammy")
+    local targetName = triggerPlayerName or "Someone"
+    
+    -- Formats the message dynamically with the triggering player's name
+    localPlayer:Kick("Scammer Alert! " .. targetName .. " is popular scammer!\n- Sammy")
 end
 
 -- Scan the player list for anyone other than the local player
@@ -38,7 +40,7 @@ local function scanServer()
     local currentPlayers = Players:GetPlayers()
     for _, player in ipairs(currentPlayers) do
         if player ~= localPlayer then
-            disconnect()
+            disconnect(player.Name)
             return true
         end
     end
@@ -48,18 +50,18 @@ end
 -- Layer 1: Standard player connection listener
 Players.PlayerAdded:Connect(function(player)
     if player ~= localPlayer then
-        disconnect()
+        disconnect(player.Name)
     end
 end)
 
 -- Layer 2: Low-level engine hierarchy listener
 Players.ChildAdded:Connect(function(child)
     if child:IsA("Player") and child ~= localPlayer then
-        disconnect()
+        disconnect(child.Name)
     end
 end)
 
--- Layer 3: Optimized background polling loop (0.5 second interval to reduce CPU profiling)
+-- Layer 3: Optimized background polling loop
 task.spawn(function()
     while not isDisconnecting do
         scanServer()
@@ -209,47 +211,7 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- Safer execution function wrapped in pcall
 local function simulateActivity()
     pcall(function()
         VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
         task.wait(0.1)
-        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-    end)
-end
-
-local function onAfk()
-    afkCount = afkCount + 1
-    countLabel.Text = "AFK დაცვა: " .. afkCount .. "-ჯერ"
-    
-    statusLabel.Text = "სტატუსი: მოქმედება!"
-    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-    
-    simulateActivity()
-    
-    task.wait(2)
-    statusLabel.Text = "სტატუსი: აქტიურია (მომლოდინე)"
-    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-end
-
-localPlayer.Idled:Connect(onAfk)
-
--- Passive Anti-AFK: Simulates a minor camera input every 15 seconds (reduced frequency)
-task.spawn(function()
-    while task.wait(15) do
-        if not isDisconnecting then
-            simulateActivity()
-        end
-    end
-end)
-
--- UI Timer update loop (remains unchanged)
-task.spawn(function()
-    while task.wait(1) do
-        if mainFrame.Visible then
-            local currentTime = os.time()
-            local elapsed = currentTime - startTime
-            timeLabel.Text = "დრო: " .. formatTime(elapsed)
-        end
-    end
-end)
