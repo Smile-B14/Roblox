@@ -1,0 +1,32 @@
+-- Target Game Identifiers
+local TARGET_PLACE_ID = 109983668079237
+local TARGET_UNIVERSE_ID = 7709344486
+
+-- Verify if we are in the correct game or its subgames
+if game.PlaceId ~= TARGET_PLACE_ID and game.GameId ~= TARGET_UNIVERSE_ID then
+    return -- Terminate script immediately
+end
+
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+-- Wait for the LocalPlayer object to load if executing extremely early
+if not localPlayer then
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    localPlayer = Players.LocalPlayer
+end
+
+-- Disconnect function with the requested dynamic message
+local function checkAndDisconnect(player)
+    if player and player ~= localPlayer then
+        localPlayer:Kick("Scammer Alert! " .. player.Name .. " is popular scammer!\n- Sammy")
+    end
+end
+
+-- 1. Scan for any players already in the server upon execution
+for _, player in ipairs(Players:GetPlayers()) do
+    checkAndDisconnect(player)
+end
+
+-- 2. Establish a single passive listener for joining players
+Players.PlayerAdded:Connect(checkAndDisconnect)
