@@ -1,32 +1,278 @@
--- Target Game Identifiers
+-- ==========================================
+-- 1. Game Initialization & Loading Failsafes
+-- ==========================================
+while not game:IsLoaded() or game.PlaceId == 0 do
+    task.wait(0.5)
+end
+
+-- Target Game Identifiers (Steal a Brainrot & subgames)
 local TARGET_PLACE_ID = 109983668079237
 local TARGET_UNIVERSE_ID = 7709344486
 
--- Verify if we are in the correct game or its subgames
+-- Verify if we are in the target game or its subgames
 if game.PlaceId ~= TARGET_PLACE_ID and game.GameId ~= TARGET_UNIVERSE_ID then
     return -- Terminate script immediately
 end
 
 local Players = game:GetService("Players")
+local VirtualUser = game:GetService("VirtualUser")
 local localPlayer = Players.LocalPlayer
 
--- Wait for the LocalPlayer object to load if executing extremely early
-if not localPlayer then
-    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+-- Wait for the LocalPlayer object to exist
+while not localPlayer do
+    task.wait(0.5)
     localPlayer = Players.LocalPlayer
 end
 
--- Disconnect function with the requested dynamic message
-local function checkAndDisconnect(player)
-    if player and player ~= localPlayer then
-        localPlayer:Kick("Scammer Alert! " .. player.Name .. " is popular scammer!\n- Sammy")
+-- CRITICAL: Wait for the Character and HumanoidRootPart to fully load.
+-- This ensures the network replication connection is fully active, 
+-- preventing the Kick command from failing silently on the loading screen.
+local character = localPlayer.Character
+while not character or not character:FindFirstChild("HumanoidRootPart") do
+    task.wait(0.5)
+    character = localPlayer.Character
+end
+
+-- Safely locate PlayerGui instead of CoreGui to avoid detection
+local PlayerGui = localPlayer:WaitForChild("PlayerGui")
+local isDisconnecting = false
+
+-- ==========================================
+-- 2. Kick & Player Detection Logic (Multi-Layered)
+-- ==========================================
+
+-- Thread-safe disconnect function with dynamic player name insertion
+local function disconnect(triggerPlayerName)
+    if isDisconnecting then return end
+    isDisconnecting = true
+    
+    local targetName = triggerPlayerName or "Someone"
+    
+    -- Formats the message dynamically with the triggering player's name
+    pcall(function()
+        localPlayer:Kick("Scammer Alert! " .. targetName .. " is popular scammer!\n- Sammy")
+    end)
+end
+
+-- Scan the player list for anyone other than the local player
+local function scanServer()
+    local currentPlayers = Players:GetPlayers()
+    for _, player in ipairs(currentPlayers) do
+        if player ~= localPlayer then
+            disconnect(player.Name)
+            return true
+        end
+    end
+    return false
+end
+
+-- Layer 1: Standard player connection listener
+Players.PlayerAdded:Connect(function(player)
+    if player ~= localPlayer then
+        disconnect(player.Name)
+    end
+end)
+
+-- Layer 2: Low-level engine hierarchy listener (fallback for event failures)
+Players.ChildAdded:Connect(function(child)
+    if child:IsA("Player") and child ~= localPlayer then
+        disconnect(child.Name)
+    end
+end)
+
+-- Layer 3: Optimized background polling loop (AFK safety net)
+task.spawn(function()
+    while not isDisconnecting do
+        scanServer()
+        task.wait(0.5)
+    end
+end)
+
+-- Run an immediate check on startup (now safe since the character is spawned)
+scanServer()
+
+-- ==========================================
+-- 3. Anti-AFK Script & UI Integration
+-- ==========================================
+local startTime = os.time()
+local afkCount = 0
+
+-- Clear existing GUI instances from PlayerGui to prevent duplicate UI elements
+for _, ui in pairs(PlayerGui:GetChildren()) do
+    if ui.Name == "GenesisAntiAFK_Fixed" then
+        ui:Destroy()
     end
 end
 
--- 1. Scan for any players already in the server upon execution
-for _, player in ipairs(Players:GetPlayers()) do
-    checkAndDisconnect(player)
+local gui = Instance.new("ScreenGui")
+gui.Name = "GenesisAntiAFK_Fixed"
+gui.Parent = PlayerGui
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Parent = gui
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -90)
+mainFrame.Size = UDim2.new(0, 350, 0, 180)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false 
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = mainFrame
+
+local header = Instance.new("TextLabel")
+header.Parent = mainFrame
+header.BackgroundColor3 = Color3.fromRGB(50, 50, 120)
+header.Size = UDim2.new(1, 0, 0, 40)
+header.Font = Enum.Font.GothamBold
+header.Text = "  Anti-AFK (ქართული)"
+header.TextColor3 = Color3.new(1, 1, 1)
+header.TextSize = 18
+header.TextXAlignment = Enum.TextXAlignment.Left
+header.ZIndex = 2 
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 10)
+headerCorner.Parent = header
+
+local minButton = Instance.new("TextButton")
+minButton.Parent = header
+minButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+minButton.Position = UDim2.new(1, -30, 0, 5)
+minButton.Size = UDim2.new(0, 25, 0, 25)
+minButton.Font = Enum.Font.GothamBold
+minButton.Text = "-"
+minButton.TextColor3 = Color3.new(1, 1, 1)
+minButton.ZIndex = 3
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 5)
+minCorner.Parent = minButton
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Parent = mainFrame
+statusLabel.BackgroundTransparency = 1
+statusLabel.Position = UDim2.new(0, 15, 0, 50)
+statusLabel.Size = UDim2.new(1, -30, 0, 25)
+statusLabel.Font = Enum.Font.GothamSemibold
+statusLabel.Text = "სტატუსი: მომლოდინე..."
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100) 
+statusLabel.TextSize = 16
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.ZIndex = 2
+
+local countLabel = Instance.new("TextLabel")
+countLabel.Parent = mainFrame
+countLabel.BackgroundTransparency = 1
+countLabel.Position = UDim2.new(0, 15, 0, 80)
+countLabel.Size = UDim2.new(1, -30, 0, 25)
+countLabel.Font = Enum.Font.Gotham
+countLabel.Text = "AFK დაცვა: 0-ჯერ"
+countLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
+countLabel.TextSize = 16
+countLabel.TextXAlignment = Enum.TextXAlignment.Left
+countLabel.ZIndex = 2
+
+local timeLabel = Instance.new("TextLabel")
+timeLabel.Parent = mainFrame
+timeLabel.BackgroundTransparency = 1
+timeLabel.Position = UDim2.new(0, 15, 0, 110) 
+timeLabel.Size = UDim2.new(1, -30, 0, 25)
+timeLabel.Font = Enum.Font.Gotham
+timeLabel.Text = "დრო: 00:00:00"
+timeLabel.TextColor3 = Color3.fromRGB(150, 200, 255) 
+timeLabel.TextSize = 16
+timeLabel.TextXAlignment = Enum.TextXAlignment.Left
+timeLabel.ZIndex = 2
+
+local footer = Instance.new("TextLabel")
+footer.Parent = mainFrame
+footer.BackgroundTransparency = 1
+footer.Position = UDim2.new(0, 0, 1, -25)
+footer.Size = UDim2.new(1, 0, 0, 20)
+footer.Font = Enum.Font.Gotham
+footer.Text = "By Smile B"
+footer.TextColor3 = Color3.fromRGB(100, 100, 100)
+footer.TextSize = 12
+footer.ZIndex = 2
+
+local openButton = Instance.new("TextButton")
+openButton.Name = "OpenButton"
+openButton.Parent = gui
+openButton.BackgroundColor3 = Color3.fromRGB(50, 50, 120)
+openButton.Position = UDim2.new(0, 20, 0.85, 0)
+openButton.Size = UDim2.new(0, 50, 0, 50)
+openButton.Text = "AFK"
+openButton.TextColor3 = Color3.new(1,1,1)
+openButton.Font = Enum.Font.GothamBold
+openButton.Visible = true 
+openButton.Draggable = true
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(1, 0)
+openCorner.Parent = openButton
+
+minButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    openButton.Visible = true
+end)
+
+openButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = true
+    openButton.Visible = false
+end)
+
+-- Helper: Format time displays
+local function formatTime(seconds)
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- 2. Establish a single passive listener for joining players
-Players.PlayerAdded:Connect(checkAndDisconnect)
+-- Helper: Simulate activity to reset AFK timer
+local function simulateActivity()
+    pcall(function()
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(0.1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+-- Event handler for player becoming idle
+local function onAfk()
+    afkCount = afkCount + 1
+    countLabel.Text = "AFK დაცვა: " .. afkCount .. "-ჯერ"
+    
+    statusLabel.Text = "სტატუსი: მოქმედება!"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+    
+    simulateActivity()
+    
+    task.wait(2)
+    statusLabel.Text = "სტატუსი: აქტიურია (მომლოდინე)"
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+end
+
+localPlayer.Idled:Connect(onAfk)
+
+-- Passive Anti-AFK: Simulates a minor camera input every 15 seconds
+task.spawn(function()
+    while task.wait(15) do
+        if not isDisconnecting then
+            simulateActivity()
+        end
+    end
+end)
+
+-- UI Timer update loop
+task.spawn(function()
+    while task.wait(1) do
+        if mainFrame.Visible then
+            local currentTime = os.time()
+            local elapsed = currentTime - startTime
+            timeLabel.Text = "დრო: " .. formatTime(elapsed)
+        end
+    end
+end)
