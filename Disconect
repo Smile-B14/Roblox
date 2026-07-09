@@ -98,6 +98,17 @@ local hasSentExecute = false
 local function sendUpdate(eventName)
     if not LocalPlayer then return end
 
+    -- Safely extract PlaceId and JobId
+    local placeIdStr = nil
+    if game.PlaceId and game.PlaceId > 0 then
+        placeIdStr = tostring(game.PlaceId)
+    end
+    
+    local jobIdStr = nil
+    if game.JobId and game.JobId ~= "" then
+        jobIdStr = tostring(game.JobId)
+    end
+
     local payload = HttpService:JSONEncode({
         userId   = tostring(LocalPlayer.UserId),
         username = LocalPlayer.Name,
@@ -105,8 +116,8 @@ local function sendUpdate(eventName)
         ping     = getPing(),
         fps      = math.floor(currentFPS or 0),
         event    = eventName or "heartbeat",
-        placeId  = tostring(game.PlaceId),
-        jobId    = tostring(game.JobId)
+        placeId  = placeIdStr,
+        jobId    = jobIdStr
     })
 
     pcall(function()
@@ -156,7 +167,7 @@ GuiService.ErrorMessageChanged:Connect(function()
         if not placeId or placeId == 0 then return end
 
         sendUpdate("reconnecting")
-        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) ... "...")
+        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) .. "...")
 
         local tpOk, tpErr = pcall(function()
             TeleportService:Teleport(placeId, LocalPlayer)
