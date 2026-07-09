@@ -1,8 +1,8 @@
 --[[
-    Roblox Crash Monitor - MULTI-USER VERSION
+    Roblox Crash Monitor - BULLETPROOF VERSION
 --]]
 
--- Wait for game to load
+-- 1. Wait for game to load
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -11,27 +11,39 @@ task.wait(5)
 ---------------------------------------------------------------------------
 -- Configuration
 ---------------------------------------------------------------------------
-local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update" -- MAKE SURE THIS IS YOUR URL
+local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update"
 local HEARTBEAT_INTERVAL = 3
 local RECONNECT_DELAY     = 5
 
 ---------------------------------------------------------------------------
--- HTTP request wrapper
+-- Services
+---------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+local Stats      = game:GetService("Stats")
+local HttpService = game:GetService("HttpService")
+local Players    = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+local TeleportService = game:GetService("TeleportService")
+
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------------------------
+-- HTTP request wrapper (Fixed to properly skip nil functions)
 ---------------------------------------------------------------------------
 local function httpRequest(config)
-    local candidates = {
-        request,
-        http_request,
-        (syn and syn.request),
-        (fluxus and fluxus.request),
-    }
-    if type(http) == "table" and type(http.request) == "function" then
-        table.insert(candidates, http.request)
-    end
+    local candidates = {}
+    
+    -- Safely add functions to our list only if they exist
+    if type(request) == "function" then table.insert(candidates, request) end
+    if type(http_request) == "function" then table.insert(candidates, http_request) end
+    if syn and type(syn.request) == "function" then table.insert(candidates, syn.request) end
+    if fluxus and type(fluxus.request) == "function" then table.insert(candidates, fluxus.request) end
+    if type(http) == "table" and type(http.request) == "function" then table.insert(candidates, http.request) end
+
     for _, fn in ipairs(candidates) do
-        if type(fn) == "function" then
-            local ok, res = pcall(fn, config)
-            if ok then return true, res end
+        local ok, res = pcall(fn, config)
+        if ok then 
+            return true, res 
         end
     end
     return false, nil
@@ -47,16 +59,6 @@ local function formatUptime(seconds)
     local s = seconds % 60
     return string.format("%02d:%02d:%02d", h, m, s)
 end
-
----------------------------------------------------------------------------
--- Services
----------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-local Stats      = game:GetService("Stats")
-local HttpService = game:GetService("HttpService")
-local Players    = game:GetService("Players")
-
-local LocalPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------------------------
 -- FPS & Ping measurement
@@ -79,9 +81,20 @@ end)
 
 local function getPing()
     local ok, pingValue = pcall(function()
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+        -- Safely traverse the Stats hierarchy to prevent crashes
+        local network = Stats:FindFirstChild("Network")
+        if network then
+            local serverStats = network:FindFirstChild("ServerStatsItem")
+            if serverStats then
+                local dataPing = serverStats:FindFirstChild("Data Ping")
+                if dataPing then
+                    return dataPing:GetValue()
+                end
+            end
+        end
+        return 0
     end)
-    return ok and math.floor(pingValue) or 0
+    return ok and math.floor(pingValue or 0) or 0
 end
 
 ---------------------------------------------------------------------------
@@ -93,8 +106,8 @@ local function sendUpdate(eventName)
     if not LocalPlayer then return end
 
     local payload = HttpService:JSONEncode({
-        userId = tostring(LocalPlayer.UserId), -- Required for multi-account
-        username = LocalPlayer.Name,           -- Required for multi-account
+        userId = tostring(LocalPlayer.UserId),
+        username = LocalPlayer.Name,
         uptime = formatUptime(os.time() - startTime),
         ping   = getPing(),
         fps    = math.floor(currentFPS or 0),
@@ -113,7 +126,8 @@ end
 
 -- LAG-PROOF Heartbeat loop
 local lastHeartbeatTime = os.clock()
-task.delay(1, function()
+task.spawn(function()
+    task.wait(1)
     while true do
         RunService.Heartbeat:Wait()
         if os.clock() - lastHeartbeatTime >= HEARTBEAT_INTERVAL then
@@ -132,9 +146,6 @@ end)
 ---------------------------------------------------------------------------
 -- Smart Auto-Reconnect & Event Handling
 ---------------------------------------------------------------------------
-local GuiService       = game:GetService("GuiService")
-local TeleportService  = game:GetService("TeleportService")
-
 local isReconnecting = false
 
 GuiService.ErrorMessageChanged:Connect(function()
@@ -144,13 +155,16 @@ GuiService.ErrorMessageChanged:Connect(function()
     sendUpdate("disconnect")
     warn("[CrashMonitor] Disconnect detected - sent crash event to Discord.")
 
-    task.delay(RECONNECT_DELAY, function()
+    -- Use task.spawn instead of task.delay for maximum executor compatibility
+    task.spawn(function()
+        task.wait(RECONNECT_DELAY)
+        
         if not LocalPlayer then return end
         local placeId = game.PlaceId
         if not placeId or placeId == 0 then return end
 
         sendUpdate("reconnecting")
-        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) ?? "...")
+        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) .. "...")
 
         local tpOk, tpErr = pcall(function()
             TeleportService:Teleport(placeId, LocalPlayer)
