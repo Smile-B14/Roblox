@@ -1,8 +1,8 @@
 --[[
-    Roblox Crash Monitor - BULLETPROOF VERSION
+    Roblox Crash Monitor - FINAL BULLETPROOF VERSION
+    Features: Game Info, JobId, Multi-User, Lag-Proof Heartbeats, Auto-Reconnect
 --]]
 
--- 1. Wait for game to load
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -13,27 +13,25 @@ task.wait(5)
 ---------------------------------------------------------------------------
 local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update"
 local HEARTBEAT_INTERVAL = 3
-local RECONNECT_DELAY     = 5
+local RECONNECT_DELAY    = 5
 
 ---------------------------------------------------------------------------
 -- Services
 ---------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-local Stats      = game:GetService("Stats")
-local HttpService = game:GetService("HttpService")
-local Players    = game:GetService("Players")
-local GuiService = game:GetService("GuiService")
+local RunService      = game:GetService("RunService")
+local Stats           = game:GetService("Stats")
+local HttpService     = game:GetService("HttpService")
+local Players         = game:GetService("Players")
+local GuiService      = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------------------------
--- HTTP request wrapper (Fixed to properly skip nil functions)
+-- HTTP request wrapper
 ---------------------------------------------------------------------------
 local function httpRequest(config)
     local candidates = {}
-    
-    -- Safely add functions to our list only if they exist
     if type(request) == "function" then table.insert(candidates, request) end
     if type(http_request) == "function" then table.insert(candidates, http_request) end
     if syn and type(syn.request) == "function" then table.insert(candidates, syn.request) end
@@ -42,9 +40,7 @@ local function httpRequest(config)
 
     for _, fn in ipairs(candidates) do
         local ok, res = pcall(fn, config)
-        if ok then 
-            return true, res 
-        end
+        if ok then return true, res end
     end
     return false, nil
 end
@@ -63,9 +59,9 @@ end
 ---------------------------------------------------------------------------
 -- FPS & Ping measurement
 ---------------------------------------------------------------------------
-local frameCount    = 0
-local currentFPS    = 0
-local startTime     = os.time()
+local frameCount = 0
+local currentFPS = 0
+local startTime  = os.time()
 
 RunService.RenderStepped:Connect(function()
     frameCount += 1
@@ -81,15 +77,12 @@ end)
 
 local function getPing()
     local ok, pingValue = pcall(function()
-        -- Safely traverse the Stats hierarchy to prevent crashes
         local network = Stats:FindFirstChild("Network")
         if network then
             local serverStats = network:FindFirstChild("ServerStatsItem")
             if serverStats then
                 local dataPing = serverStats:FindFirstChild("Data Ping")
-                if dataPing then
-                    return dataPing:GetValue()
-                end
+                if dataPing then return dataPing:GetValue() end
             end
         end
         return 0
@@ -106,20 +99,22 @@ local function sendUpdate(eventName)
     if not LocalPlayer then return end
 
     local payload = HttpService:JSONEncode({
-        userId = tostring(LocalPlayer.UserId),
+        userId   = tostring(LocalPlayer.UserId),
         username = LocalPlayer.Name,
-        uptime = formatUptime(os.time() - startTime),
-        ping   = getPing(),
-        fps    = math.floor(currentFPS or 0),
-        event  = eventName or "heartbeat"
+        uptime   = formatUptime(os.time() - startTime),
+        ping     = getPing(),
+        fps      = math.floor(currentFPS or 0),
+        event    = eventName or "heartbeat",
+        placeId  = tostring(game.PlaceId),
+        jobId    = tostring(game.JobId)
     })
 
     pcall(function()
         httpRequest({
-            Url = SERVER_URL,
-            Method = "POST",
+            Url     = SERVER_URL,
+            Method  = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body = payload,
+            Body    = payload,
         })
     end)
 end
@@ -132,7 +127,6 @@ task.spawn(function()
         RunService.Heartbeat:Wait()
         if os.clock() - lastHeartbeatTime >= HEARTBEAT_INTERVAL then
             lastHeartbeatTime = os.clock()
-            
             if not hasSentExecute then
                 sendUpdate("execute")
                 hasSentExecute = true
@@ -144,7 +138,7 @@ task.spawn(function()
 end)
 
 ---------------------------------------------------------------------------
--- Smart Auto-Reconnect & Event Handling
+-- Auto-Reconnect
 ---------------------------------------------------------------------------
 local isReconnecting = false
 
@@ -153,18 +147,16 @@ GuiService.ErrorMessageChanged:Connect(function()
     isReconnecting = true
 
     sendUpdate("disconnect")
-    warn("[CrashMonitor] Disconnect detected - sent crash event to Discord.")
+    warn("[CrashMonitor] Disconnect detected - sent crash event.")
 
-    -- Use task.spawn instead of task.delay for maximum executor compatibility
     task.spawn(function()
         task.wait(RECONNECT_DELAY)
-        
         if not LocalPlayer then return end
         local placeId = game.PlaceId
         if not placeId or placeId == 0 then return end
 
         sendUpdate("reconnecting")
-        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) .. "...")
+        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) ... "...")
 
         local tpOk, tpErr = pcall(function()
             TeleportService:Teleport(placeId, LocalPlayer)
