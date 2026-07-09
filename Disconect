@@ -1,0 +1,170 @@
+--[[
+    Roblox Crash Monitor - ADVANCED STATE MACHINE VERSION
+--]]
+
+-- 1. ჯერ ველოდებით თამაშის სრულად ჩატვირთვას
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+-- 2. ჩატვირთვის შემდეგ დამატებით ვუცდით 5 წამს სტაბილურობისთვის
+task.wait(5)
+--[[
+    Roblox Crash Monitor - MULTI-USER VERSION
+--]]
+
+---------------------------------------------------------------------------
+-- Configuration
+---------------------------------------------------------------------------
+local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update" -- CHANGE THIS
+local HEARTBEAT_INTERVAL = 3
+local RECONNECT_DELAY     = 5
+
+---------------------------------------------------------------------------
+-- HTTP request wrapper
+---------------------------------------------------------------------------
+local function httpRequest(config)
+    local candidates = {
+        request,
+        http_request,
+        (syn and syn.request),
+        (fluxus and fluxus.request),
+    }
+    if type(http) == "table" and type(http.request) == "function" then
+        table.insert(candidates, http.request)
+    end
+    for _, fn in ipairs(candidates) do
+        if type(fn) == "function" then
+            local ok, res = pcall(fn, config)
+            if ok then return true, res end
+        end
+    end
+    return false, nil
+end
+
+---------------------------------------------------------------------------
+-- Utility
+---------------------------------------------------------------------------
+local function formatUptime(seconds)
+    seconds = math.max(0, math.floor(seconds))
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+---------------------------------------------------------------------------
+-- Services
+---------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+local Stats      = game:GetService("Stats")
+local HttpService = game:GetService("HttpService")
+local Players    = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------------------------
+-- FPS & Ping measurement
+---------------------------------------------------------------------------
+local frameCount    = 0
+local currentFPS    = 0
+local startTime     = os.time()
+
+RunService.RenderStepped:Connect(function()
+    frameCount += 1
+end)
+
+task.spawn(function()
+    while true do
+        local startFrames = frameCount
+        task.wait(1)
+        currentFPS = frameCount - startFrames
+    end
+end)
+
+local function getPing()
+    local ok, pingValue = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    return ok and math.floor(pingValue) or 0
+end
+
+---------------------------------------------------------------------------
+-- Heartbeat & Event Sender
+---------------------------------------------------------------------------
+local hasSentExecute = false
+
+local function sendUpdate(eventName)
+    if not LocalPlayer then return end
+
+    local payload = HttpService:JSONEncode({
+        userId = tostring(LocalPlayer.UserId), -- Required for multi-account
+        username = LocalPlayer.Name,           -- Required for multi-account
+        uptime = formatUptime(os.time() - startTime),
+        ping   = getPing(),
+        fps    = math.floor(currentFPS or 0),
+        event  = eventName or "heartbeat"
+    })
+
+    pcall(function()
+        httpRequest({
+            Url = SERVER_URL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = payload,
+        })
+    end)
+end
+
+-- LAG-PROOF Heartbeat loop
+local lastHeartbeatTime = os.clock()
+task.delay(1, function()
+    while true do
+        RunService.Heartbeat:Wait()
+        if os.clock() - lastHeartbeatTime >= HEARTBEAT_INTERVAL then
+            lastHeartbeatTime = os.clock()
+            
+            if not hasSentExecute then
+                sendUpdate("execute")
+                hasSentExecute = true
+            else
+                sendUpdate("heartbeat")
+            end
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
+-- Smart Auto-Reconnect & Event Handling
+---------------------------------------------------------------------------
+local GuiService       = game:GetService("GuiService")
+local TeleportService  = game:GetService("TeleportService")
+
+local isReconnecting = false
+
+GuiService.ErrorMessageChanged:Connect(function()
+    if isReconnecting then return end
+    isReconnecting = true
+
+    sendUpdate("disconnect")
+    warn("[CrashMonitor] Disconnect detected - sent crash event to Discord.")
+
+    task.delay(RECONNECT_DELAY, function()
+        if not LocalPlayer then return end
+        local placeId = game.PlaceId
+        if not placeId or placeId == 0 then return end
+
+        sendUpdate("reconnecting")
+        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) .. "...")
+
+        local tpOk, tpErr = pcall(function()
+            TeleportService:Teleport(placeId, LocalPlayer)
+        end)
+
+        if not tpOk then
+            warn("[CrashMonitor] Teleport failed: " .. tostring(tpErr))
+            sendUpdate("disconnect")
+            isReconnecting = false 
+        end
+    end)
+end)
