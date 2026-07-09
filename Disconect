@@ -1,22 +1,17 @@
 --[[
-    Roblox Crash Monitor - ADVANCED STATE MACHINE VERSION
+    Roblox Crash Monitor - MULTI-USER VERSION
 --]]
 
--- 1. ჯერ ველოდებით თამაშის სრულად ჩატვირთვას
+-- Wait for game to load
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
-
--- 2. ჩატვირთვის შემდეგ დამატებით ვუცდით 5 წამს სტაბილურობისთვის
 task.wait(5)
---[[
-    Roblox Crash Monitor - MULTI-USER VERSION
---]]
 
 ---------------------------------------------------------------------------
 -- Configuration
 ---------------------------------------------------------------------------
-local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update" -- CHANGE THIS
+local SERVER_URL = "https://roblox-disconet-message-xfav.onrender.com/update" -- MAKE SURE THIS IS YOUR URL
 local HEARTBEAT_INTERVAL = 3
 local RECONNECT_DELAY     = 5
 
@@ -155,7 +150,7 @@ GuiService.ErrorMessageChanged:Connect(function()
         if not placeId or placeId == 0 then return end
 
         sendUpdate("reconnecting")
-        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) .. "...")
+        warn("[CrashMonitor] Teleporting to place " .. tostring(placeId) ?? "...")
 
         local tpOk, tpErr = pcall(function()
             TeleportService:Teleport(placeId, LocalPlayer)
