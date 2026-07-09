@@ -98,7 +98,6 @@ local hasSentExecute = false
 local function sendUpdate(eventName)
     if not LocalPlayer then return end
 
-    -- Safely extract PlaceId and JobId
     local placeIdStr = nil
     if game.PlaceId and game.PlaceId > 0 then
         placeIdStr = tostring(game.PlaceId)
