@@ -18,12 +18,13 @@ local RECONNECT_DELAY    = 5
 ---------------------------------------------------------------------------
 -- Services
 ---------------------------------------------------------------------------
-local RunService      = game:GetService("RunService")
-local Stats           = game:GetService("Stats")
-local HttpService     = game:GetService("HttpService")
-local Players         = game:GetService("Players")
-local GuiService      = game:GetService("GuiService")
-local TeleportService = game:GetService("TeleportService")
+local RunService         = game:GetService("RunService")
+local Stats              = game:GetService("Stats")
+local HttpService        = game:GetService("HttpService")
+local Players            = game:GetService("Players")
+local GuiService         = game:GetService("GuiService")
+local TeleportService    = game:GetService("TeleportService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -55,6 +56,17 @@ local function formatUptime(seconds)
     local s = seconds % 60
     return string.format("%02d:%02d:%02d", h, m, s)
 end
+
+-- Fetch Game Name directly from Roblox
+local currentGameName = "Unknown"
+task.spawn(function()
+    local ok, info = pcall(function()
+        return MarketplaceService:GetProductInfo(game.PlaceId)
+    end)
+    if ok and info and info.Name then
+        currentGameName = info.Name
+    end
+end)
 
 ---------------------------------------------------------------------------
 -- FPS & Ping measurement
@@ -116,7 +128,8 @@ local function sendUpdate(eventName)
         fps      = math.floor(currentFPS or 0),
         event    = eventName or "heartbeat",
         placeId  = placeIdStr,
-        jobId    = jobIdStr
+        jobId    = jobIdStr,
+        gameName = currentGameName -- Send the game name directly
     })
 
     pcall(function()
