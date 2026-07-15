@@ -129,7 +129,7 @@ local function sendUpdate(eventName)
         event    = eventName or "heartbeat",
         placeId  = placeIdStr,
         jobId    = jobIdStr,
-        gameName = currentGameName -- Send the game name directly
+        gameName = currentGameName
     })
 
     pcall(function()
