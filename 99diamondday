@@ -9,11 +9,46 @@ local whitelistUrl = "https://raw.githubusercontent.com/Smile-B14/Roblox/main/wh
 
 local expireUnixTime = 0
 local isInitialized = false
+local timeOffset = 0
 
 local function kick(message)
     player:Kick(message)
 end
 
+-- ინტერნეტის რეალური დროის სინქრონიზაცია (ტელეფონის საათის მოტყუების საწინააღმდეგოდ)
+local function syncRealTime()
+    local req = (syn and syn.request) or (http and http.request) or request or http_request
+    local realUtc = nil
+
+    if req then
+        local success, res = pcall(function()
+            return req({
+                Url = "https://worldtimeapi.org/api/timezone/Etc/UTC?v=" .. os.time(),
+                Method = "GET",
+                Headers = { ["Cache-Control"] = "no-cache" }
+            })
+        end)
+        if success and res and res.Success then
+            local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+            if ok and data and data.unixtime then
+                realUtc = data.unixtime
+            end
+        end
+    end
+
+    if not realUtc then
+        realUtc = DateTime.now().UnixTimestamp
+    end
+
+    -- აანგარიშებს სხვაობას რეალურ UTC-სა და სერვერის წამზომს შორის
+    timeOffset = realUtc - workspace:GetServerTimeNow()
+end
+
+local function getSecureUtc()
+    return workspace:GetServerTimeNow() + timeOffset
+end
+
+-- ტაიმერის UI
 local gui = Instance.new("ScreenGui")
 gui.Name = "WhitelistTimer"
 local successGui = pcall(function() gui.Parent = CoreGui end)
@@ -35,8 +70,9 @@ player.Chatted:Connect(function(msg)
     end
 end)
 
+-- JSON-ის წამოღება ქეშის გვერდის ავლით
 local function fetchLatestWhitelist()
-    local cacheUrl = whitelistUrl .. "?v=" .. tostring(os.time()) .. tostring(math.random(1000, 9999))
+    local cacheUrl = whitelistUrl .. "?v=" .. tostring(os.time()) .. "_" .. math.random(1000, 9999)
     local req = (syn and syn.request) or (http and http.request) or request or http_request
     
     if req then
@@ -78,6 +114,7 @@ local function fetchAndUpdateTime()
     local day, month, year, hour, minute = expireTimeStr:match("^(%d+)[-%./](%d+)[-%./](%d+)%s+(%d+):(%d+)$")
     if not day then return false, "format" end
 
+    -- თბილისის დროის (UTC+4) კონვერტაცია UTC დროში
     local expireUtc = os.time({
         year = tonumber(year), 
         month = tonumber(month), 
@@ -93,6 +130,9 @@ local function fetchAndUpdateTime()
     return true, nil
 end
 
+-- 1. დროის სინქრონიზაცია და საწყისი ჩატვირთვა
+syncRealTime()
+
 task.spawn(function()
     local attempts = 0
     while not isInitialized and attempts < 5 do
@@ -106,20 +146,22 @@ task.spawn(function()
     end
 end)
 
+-- 2. ფონური განახლება ცოცხალი ცვლილებებისთვის
 task.spawn(function()
     while task.wait(10) do
         local ok, err = fetchAndUpdateTime()
         if not ok and err == "removed" then
-            kick("შენი სახელი წაიშალა სიიდან ან დრო ამოიწურა.")
+            kick("შენი სახელი წაიშალა სიიდან ან წვდომა გაუქმდა.")
             break
         end
     end
 end)
 
+-- 3. ტაიმერის განახლება და დაცული KICK
 RunService.RenderStepped:Connect(function()
-    if expireUnixTime == 0 then return end
+    if expireUnixTime == 0 or not isInitialized then return end
 
-    local currentUtc = os.time()
+    local currentUtc = getSecureUtc()
     local timeLeft = expireUnixTime - currentUtc
 
     if timeLeft <= 0 then
@@ -130,7 +172,7 @@ RunService.RenderStepped:Connect(function()
     if textLabel.Visible then
         local hours = math.floor(timeLeft / 3600)
         local mins = math.floor((timeLeft % 3600) / 60)
-        local secs = timeLeft % 60
+        local secs = math.floor(timeLeft % 60)
         textLabel.Text = string.format("დრო: %02d:%02d:%02d", hours, mins, secs)
     end
 end)
@@ -139,3 +181,4 @@ print("Access granted for " .. player.Name .. ". Starting script...")
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/caomod2077/Script/main/FNDayFarm.lua"))()
 end)
+
