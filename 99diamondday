@@ -1,102 +1,141 @@
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local username = player.Name:gsub("%s+", ""):lower()
-
--- GitHub raw URL to your JSON whitelist
 local whitelistUrl = "https://raw.githubusercontent.com/Smile-B14/Roblox/main/whitelist.json"
+
+local expireUnixTime = 0
+local isInitialized = false
 
 local function kick(message)
     player:Kick(message)
 end
 
--- Returns current Tbilisi time (UTC+4) in total minutes of the day
-local function getTbilisiMinutes()
-    local tbilisiTimeTable = os.date("!*t", os.time() + 14400)
-    return tbilisiTimeTable.hour * 60 + tbilisiTimeTable.min
+local gui = Instance.new("ScreenGui")
+gui.Name = "WhitelistTimer"
+local successGui = pcall(function() gui.Parent = CoreGui end)
+if not successGui then gui.Parent = player:WaitForChild("PlayerGui") end
+
+local textLabel = Instance.new("TextLabel", gui)
+textLabel.Size = UDim2.new(0, 180, 0, 30)
+textLabel.Position = UDim2.new(0, 10, 0, 10)
+textLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+textLabel.BackgroundTransparency = 0.5
+textLabel.TextColor3 = Color3.new(1, 1, 1)
+textLabel.TextScaled = true
+textLabel.Visible = false
+textLabel.Text = "იტვირთება..."
+
+player.Chatted:Connect(function(msg)
+    if msg:lower() == "/time" then
+        textLabel.Visible = not textLabel.Visible
+    end
+end)
+
+local function fetchLatestWhitelist()
+    local cacheUrl = whitelistUrl .. "?v=" .. tostring(os.time()) .. tostring(math.random(1000, 9999))
+    local req = (syn and syn.request) or (http and http.request) or request or http_request
+    
+    if req then
+        local success, response = pcall(function()
+            return req({
+                Url = cacheUrl,
+                Method = "GET",
+                Headers = {
+                    ["Cache-Control"] = "no-cache, no-store, must-revalidate",
+                    ["Pragma"] = "no-cache",
+                    ["Expires"] = "0"
+                }
+            })
+        end)
+        if success and type(response) == "table" and response.Success then
+            return response.Body
+        end
+    end
+    return game:HttpGetAsync(cacheUrl, true)
 end
 
--- Function to fetch and validate whitelist from GitHub
-local function checkWhitelist()
-    -- Append timestamp parameter (?nocache=...) to prevent Roblox from caching old JSON data
-    local success, rawData = pcall(function()
-        return game:HttpGet(whitelistUrl .. "?nocache=" .. os.time())
-    end)
+local function fetchAndUpdateTime()
+    local success, rawData = pcall(fetchLatestWhitelist)
+    if not success or type(rawData) ~= "string" or rawData == "" then return false, "network" end
 
-    if not success then
-        return false, "შეცდომა: სერვერთან დაკავშირება ვერ მოხერხდა."
-    end
+    local decodeSuccess, whitelist = pcall(function() return HttpService:JSONDecode(rawData) end)
+    if not decodeSuccess or type(whitelist) ~= "table" then return false, "format" end
 
-    local decodeSuccess, whitelist = pcall(function()
-        return HttpService:JSONDecode(rawData)
-    end)
-
-    if not decodeSuccess or type(whitelist) ~= "table" then
-        return false, "შეცდომა: whitelist მონაცემები დაზიანებულია."
-    end
-
-    -- Find matching user
-    local expireTime = nil
+    local expireTimeStr = nil
     for savedName, savedTime in pairs(whitelist) do
         if tostring(savedName):gsub("%s+", ""):lower() == username then
-            expireTime = tostring(savedTime)
+            expireTimeStr = tostring(savedTime)
             break
         end
     end
 
-    if not expireTime then
-        return false, "წვდომა არ გაქვს."
-    end
+    if not expireTimeStr then return false, "removed" end
 
-    -- Parse HH:MM format
-    local hour, minute = expireTime:match("^(%d+):(%d+)$")
-    if not hour or not minute then
-        return false, "შეცდომა: დროის ფორმატი არასწორია."
-    end
+    local day, month, year, hour, minute = expireTimeStr:match("^(%d+)[-%./](%d+)[-%./](%d+)%s+(%d+):(%d+)$")
+    if not day then return false, "format" end
 
-    hour = tonumber(hour)
-    minute = tonumber(minute)
-
-    if hour > 23 or minute > 59 then
-        return false, "შეცდომა: დრო არასწორია."
-    end
-
-    local expireMinutes = hour * 60 + minute
-    local currentTbilisiMinutes = getTbilisiMinutes()
-
-    -- Expiration check
-    if currentTbilisiMinutes >= expireMinutes then
-        return false, "წვდომის დრო ამოიწურა."
-    end
+    local expireUtc = os.time({
+        year = tonumber(year), 
+        month = tonumber(month), 
+        day = tonumber(day), 
+        hour = tonumber(hour), 
+        min = tonumber(minute), 
+        sec = 0
+    }) - 14400
+    
+    expireUnixTime = expireUtc
+    isInitialized = true
 
     return true, nil
 end
 
--- ==========================================
--- 1. Initial Check
--- ==========================================
-local allowed, kickReason = checkWhitelist()
-if not allowed then
-    kick(kickReason)
-    return
-end
-
--- ==========================================
--- 2. Start Background Monitor Loop FIRST
--- ==========================================
 task.spawn(function()
-    while task.wait(5) do -- Checks every 5 seconds
-        local stillAllowed, reason = checkWhitelist()
-        if not stillAllowed then
-            kick(reason)
+    local attempts = 0
+    while not isInitialized and attempts < 5 do
+        local ok = fetchAndUpdateTime()
+        if ok then break end
+        attempts = attempts + 1
+        task.wait(2)
+    end
+    if not isInitialized then
+        kick("შეცდომა: სერვერთან კავშირი ვერ დამყარდა.")
+    end
+end)
+
+task.spawn(function()
+    while task.wait(10) do
+        local ok, err = fetchAndUpdateTime()
+        if not ok and err == "removed" then
+            kick("შენი სახელი წაიშალა სიიდან ან დრო ამოიწურა.")
             break
         end
     end
 end)
 
--- ==========================================
--- 3. Load and Run Main Script
--- ==========================================
+RunService.RenderStepped:Connect(function()
+    if expireUnixTime == 0 then return end
+
+    local currentUtc = os.time()
+    local timeLeft = expireUnixTime - currentUtc
+
+    if timeLeft <= 0 then
+        kick("წვდომის დრო ამოიწურა.")
+        return
+    end
+
+    if textLabel.Visible then
+        local hours = math.floor(timeLeft / 3600)
+        local mins = math.floor((timeLeft % 3600) / 60)
+        local secs = timeLeft % 60
+        textLabel.Text = string.format("დრო: %02d:%02d:%02d", hours, mins, secs)
+    end
+end)
+
 print("Access granted for " .. player.Name .. ". Starting script...")
-loadstring(game:HttpGet("https://raw.githubusercontent.com/caomod2077/Script/main/FNDayFarm.lua"))()
+task.spawn(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/caomod2077/Script/main/FNDayFarm.lua"))()
+end)
