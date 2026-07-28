@@ -1,0 +1,272 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Clean up old UI
+if game.CoreGui:FindFirstChild("MobilePhaseUI") then
+    game.CoreGui.MobilePhaseUI:Destroy()
+end
+
+-- Create Mobile-Optimized UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MobilePhaseUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game.CoreGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 60, 0, 60)
+-- Moved UP so it's not near the bottom edge
+MainFrame.Position = UDim2.new(1, -80, 1, -200) 
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BackgroundTransparency = 0.2
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(1, 0) -- Perfect circle
+UICorner.Parent = MainFrame
+
+local PhaseBtn = Instance.new("TextButton")
+PhaseBtn.Size = UDim2.new(1, -10, 1, -10)
+PhaseBtn.Position = UDim2.new(0, 5, 0, 5)
+PhaseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 180)
+PhaseBtn.Text = "PHASE"
+PhaseBtn.TextColor3 = Color3.new(1, 1, 1)
+PhaseBtn.Font = Enum.Font.SourceSansBold
+PhaseBtn.TextSize = 16
+PhaseBtn.Parent = MainFrame
+
+local UICorner2 = Instance.new("UICorner")
+UICorner2.CornerRadius = UDim.new(1, 0)
+UICorner2.Parent = PhaseBtn
+
+local isPhasing = false
+local pressTime = 0
+local isHolding = false
+local previewModel = nil
+local previewConn = nil
+
+-- Function to calculate safe landing spot (Crash-protected)
+local function GetTargetCFrame()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local root = char.HumanoidRootPart
+    
+    local lookDir = root.CFrame.LookVector
+    local flatLook = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
+    if flatLook.Magnitude < 0.1 then flatLook = Vector3.new(0, 0, -1) end
+    
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {char}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    
+    local targetDist = 15
+    local hitSomething = workspace:Raycast(root.Position, flatLook * 15, params)
+    
+    if hitSomething then
+        -- Safely scan for empty space past the wall
+        local success, dist = pcall(function()
+            for i = 15, 50, 1 do
+                local checkPos = root.Position + (flatLook * i)
+                local parts = workspace:GetPartBoundsInBox(CFrame.new(checkPos), Vector3.new(2, 5, 2), params)
+                if #parts == 0 then
+                    return i
+                end
+            end
+            return nil
+        end)
+        if success and dist then
+            targetDist = dist
+        end
+    end
+    
+    local targetPos = root.Position + (flatLook * targetDist)
+    return CFrame.new(targetPos) * (root.CFrame - root.CFrame.Position)
+end
+
+-- Preview Logic (Crash-protected)
+local function HidePreview()
+    if previewConn then previewConn:Disconnect() previewConn = nil end
+    if previewModel then previewModel:Destroy() previewModel = nil end
+end
+
+local function ShowPreview()
+    HidePreview()
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    local success, model = pcall(function()
+        local m = char:Clone()
+        for _, desc in ipairs(m:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                desc.Transparency = 0.6
+                desc.CanCollide = false
+                desc.Anchored = true
+                desc.BrickColor = BrickColor.new("Cyan")
+                desc.Material = Enum.Material.ForceField
+            elseif desc:IsA("Decal") then
+                desc.Transparency = 1
+            elseif desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("Humanoid") then
+                desc:Destroy()
+            end
+        end
+        m.Name = "PhasePreview"
+        m.Parent = workspace
+        return m
+    end)
+    
+    if success then
+        previewModel = model
+        previewConn = RunService.RenderStepped:Connect(function()
+            if previewModel and previewModel.Parent then
+                local targetCF = GetTargetCFrame()
+                if targetCF then
+                    previewModel:PivotTo(targetCF)
+                end
+            end
+        end)
+    end
+end
+
+-- Phasing Logic (Bulletproof Anti-Freeze)
+local function doPhase()
+    if isPhasing then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not root or not hum then return end
+
+    isPhasing = true
+    PhaseBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    PhaseBtn.Text = "PHASING..."
+
+    -- 1. Save Stats
+    local walkSpeed = hum.WalkSpeed
+    local jumpPower = hum.JumpPower
+    local jumpHeight = hum.JumpHeight
+    local useJumpPower = hum.UseJumpPower
+    local originalHealth = hum.Health
+    local originalMaxHealth = hum.MaxHealth
+
+    -- 2. Freeze & Invincible
+    hum.WalkSpeed = 0
+    if useJumpPower then hum.JumpPower = 0 else hum.JumpHeight = 0 end
+    root.Anchored = true
+    hum.MaxHealth = math.huge
+    hum.Health = math.huge
+
+    -- 3. Visuals
+    local particles = Instance.new("ParticleEmitter")
+    particles.Color = ColorSequence.new(Color3.fromRGB(0, 255, 255))
+    particles.LightEmission = 1
+    particles.Size = NumberSequence.new(2)
+    particles.Transparency = NumberSequence.new(0.5)
+    particles.Lifetime = NumberRange.new(0.5)
+    particles.Speed = NumberRange.new(5)
+    particles.Rate = 100
+    particles.Parent = root
+
+    local partsToRestore = {}
+    for _, part in pairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            part.CanCollide = false
+            part.Transparency = 0.7
+            table.insert(partsToRestore, part)
+        end
+    end
+
+    -- 4. Calculate Target & Tween
+    local targetCFrame = GetTargetCFrame()
+    if not targetCFrame then 
+        targetCFrame = root.CFrame * CFrame.new(0, 0, -15) 
+    end
+
+    local moveTween = TweenService:Create(root, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {CFrame = targetCFrame})
+    moveTween:Play()
+
+    -- 5. Restore Function (Can only run once)
+    local isRestored = false
+    local function restore()
+        if isRestored then return end
+        isRestored = true
+        
+        if particles then particles.Enabled = false; Debris:AddItem(particles, 1) end
+        
+        for _, part in pairs(partsToRestore) do
+            if part and part.Parent then
+                part.Transparency = 0
+            end
+        end
+        task.wait(0.2)
+        
+        for _, part in pairs(partsToRestore) do
+            if part and part.Parent then
+                part.CanCollide = true
+            end
+        end
+        if root and root.Parent then root.CanCollide = false end
+
+        if hum and hum.Parent then
+            hum.MaxHealth = originalMaxHealth
+            hum.Health = originalHealth
+            hum.WalkSpeed = walkSpeed
+            if useJumpPower then hum.JumpPower = jumpPower else hum.JumpHeight = jumpHeight end
+        end
+        if root and root.Parent then
+            root.Anchored = false
+        end
+
+        isPhasing = false
+        PhaseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 180)
+        PhaseBtn.Text = "PHASE"
+    end
+
+    -- 6. Hard Failsafe & Normal Wait
+    -- If the script breaks, this guarantees you unfreeze after 1.5s
+    task.delay(1.5, restore)
+    
+    -- Normal wait for 1.05 seconds, then restore
+    task.wait(1.05)
+    restore()
+end
+
+-- Input Handling (Tap vs Hold)
+PhaseBtn.MouseButton1Down:Connect(function()
+    if isPhasing then return end
+    pressTime = tick()
+    isHolding = true
+    PhaseBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- Cyan to show preview mode
+    ShowPreview()
+end)
+
+PhaseBtn.MouseButton1Up:Connect(function()
+    if isPhasing then return end
+    if not isHolding then return end
+    isHolding = false
+    
+    local duration = tick() - pressTime
+    HidePreview()
+    
+    if duration < 0.3 then
+        -- It was a quick tap, execute phase
+        doPhase()
+    else
+        -- It was a hold, just remove preview
+        PhaseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 180)
+    end
+end)
+
+-- Safety if finger slides off button
+PhaseBtn.MouseLeave:Connect(function()
+    if isHolding and not isPhasing then
+        isHolding = false
+        HidePreview()
+        PhaseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 180)
+    end
+end)
