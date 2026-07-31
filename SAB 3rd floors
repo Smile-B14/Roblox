@@ -1,0 +1,85 @@
+local Workspace = game:GetService("Workspace")
+
+-- ფიქსირებული, ზუსტი ზომები პირველი სახურავიდან (53 x 0.2 x 53)
+local roofSize = Vector3.new(53, 0.2, 53)
+local roofY = 27
+
+-- ოფსეტი პირველი ბაზიდან პირველ პლატფორმამდე:
+-- Target Base Center: X = -316.94, Z = 6.61
+-- Target Roof Center: X = -315.44, Z = 6.61
+-- Offset: X = +1.5, Z = 0
+local offsetFromBase = Vector3.new(1.5, 0, 0)
+
+-- ყველა 8 ვალიდური ბაზა
+local bases = {
+    -- მარცხენა მხარე (X ≈ -502.25)
+    { c1 = Vector3.new(-534.25, 12.00, -144.39), c2 = Vector3.new(-470.25, -12.00, -56.39) },
+    { c1 = Vector3.new(-534.25, 12.00, -37.39),  c2 = Vector3.new(-470.25, -12.00, 50.61) },
+    { c1 = Vector3.new(-534.25, 12.00, 69.61),   c2 = Vector3.new(-470.25, -12.00, 157.61) },
+    { c1 = Vector3.new(-534.25, 12.00, 176.61),  c2 = Vector3.new(-470.25, -12.00, 264.61) },
+
+    -- მარჯვენა მხარე (X ≈ -316.94)
+    { c1 = Vector3.new(-348.94, 12.00, -144.39), c2 = Vector3.new(-284.94, -12.00, -56.39) },
+    { c1 = Vector3.new(-348.94, 12.00, -37.39),  c2 = Vector3.new(-284.94, -12.00, 50.61) },
+    { c1 = Vector3.new(-348.94, 12.00, 69.61),   c2 = Vector3.new(-284.94, -12.00, 157.61) },
+    { c1 = Vector3.new(-348.94, 12.00, 176.61),  c2 = Vector3.new(-284.94, -12.00, 264.61) }
+}
+
+if Workspace:FindFirstChild("GeneratedRoofs") then
+    Workspace.GeneratedRoofs:Destroy()
+end
+
+local folder = Instance.new("Folder")
+folder.Name = "GeneratedRoofs"
+folder.Parent = Workspace
+
+for i, b in ipairs(bases) do
+    -- ზუსტი ცენტრის გამოთვლა კოორდინატების მიმდევრობის მიუხედავად
+    local minX = math.min(b.c1.X, b.c2.X)
+    local maxX = math.max(b.c1.X, b.c2.X)
+    local minZ = math.min(b.c1.Z, b.c2.Z)
+    local maxZ = math.max(b.c1.Z, b.c2.Z)
+
+    local baseCenterX = (minX + maxX) / 2
+    local baseCenterZ = (minZ + maxZ) / 2
+
+    local targetPosition = Vector3.new(baseCenterX + offsetFromBase.X, roofY, baseCenterZ + offsetFromBase.Z)
+
+    local part = Instance.new("Part")
+    part.Name = "RoofPlatform_" .. i
+    part.Size = roofSize
+    part.Position = targetPosition
+    part.Anchored = true
+    part.CanCollide = true
+    part.Material = Enum.Material.SmoothPlastic
+    part.Color = Color3.fromRGB(0, 170, 255)
+    part.Parent = folder
+
+    local surfaceGui = Instance.new("SurfaceGui")
+    surfaceGui.Face = Enum.NormalId.Top
+    surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+    surfaceGui.CanvasSize = Vector2.new(1000, 1000)
+    surfaceGui.Parent = part
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(0.9, 0, 0.9, 0)
+    textLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+    textLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = "Smile B"
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.SourceSansBold
+
+    -- ტექსტის ორიენტაცია მხარეების მიხედვით
+    if baseCenterX < -400 then
+        textLabel.Rotation = 0
+    else
+        textLabel.Rotation = 180
+    end
+
+    textLabel.Parent = surfaceGui
+end
+
+print("ყველა პლატფორმის ზომა და პოზიცია სრულყოფილად გასწორდა!")
+
