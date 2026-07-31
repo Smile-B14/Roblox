@@ -1,64 +1,87 @@
 local Workspace = game:GetService("Workspace")
 
--- ფიქსირებული, ზუსტი ზომები პირველი სახურავიდან (53 x 0.2 x 53)
-local roofSize = Vector3.new(53, 0.2, 53)
-local roofY = 27
+-- 1. კონფიგურაცია
+local CONFIG = {
+    FOLDER_NAME = "GeneratedRoofs",
+    MAIN_FOLDER_NAME = "MainPlatforms",
+    SMALL_FOLDER_NAME = "SmallPlatforms",
+    
+    TEXT_FONT = Enum.Font.SourceSansBold,
+    TEXT_COLOR = Color3.fromRGB(255, 255, 255),
+    
+    MAIN_ROOF_SIZE = Vector3.new(53, 0.2, 53),
+    MAIN_ROOF_Y = 27,
+    MAIN_OFFSET = Vector3.new(1.5, 0, 0),
+    MAIN_COLOR = Color3.fromRGB(0, 170, 255),
+    MAIN_CANVAS = Vector2.new(500, 500),
+    MAIN_TEXT = "Smile B",
+    
+    SMALL_COLOR = Color3.fromRGB(0, 200, 100),
+    SMALL_CANVAS = Vector2.new(500, 1000),
+    SMALL_TEXT = "SMB"
+}
 
--- ოფსეტი პირველი ბაზიდან პირველ პლატფორმამდე:
--- Target Base Center: X = -316.94, Z = 6.61
--- Target Roof Center: X = -315.44, Z = 6.61
--- Offset: X = +1.5, Z = 0
-local offsetFromBase = Vector3.new(1.5, 0, 0)
-
--- ყველა 8 ვალიდური ბაზა
-local bases = {
-    -- მარცხენა მხარე (X ≈ -502.25)
+local MAIN_BASES = {
+    -- მარცხენა მხარე
     { c1 = Vector3.new(-534.25, 12.00, -144.39), c2 = Vector3.new(-470.25, -12.00, -56.39) },
     { c1 = Vector3.new(-534.25, 12.00, -37.39),  c2 = Vector3.new(-470.25, -12.00, 50.61) },
     { c1 = Vector3.new(-534.25, 12.00, 69.61),   c2 = Vector3.new(-470.25, -12.00, 157.61) },
     { c1 = Vector3.new(-534.25, 12.00, 176.61),  c2 = Vector3.new(-470.25, -12.00, 264.61) },
-
-    -- მარჯვენა მხარე (X ≈ -316.94)
+    -- მარჯვენა მხარე
     { c1 = Vector3.new(-348.94, 12.00, -144.39), c2 = Vector3.new(-284.94, -12.00, -56.39) },
     { c1 = Vector3.new(-348.94, 12.00, -37.39),  c2 = Vector3.new(-284.94, -12.00, 50.61) },
     { c1 = Vector3.new(-348.94, 12.00, 69.61),   c2 = Vector3.new(-284.94, -12.00, 157.61) },
     { c1 = Vector3.new(-348.94, 12.00, 176.61),  c2 = Vector3.new(-284.94, -12.00, 264.61) }
 }
 
-if Workspace:FindFirstChild("GeneratedRoofs") then
-    Workspace.GeneratedRoofs:Destroy()
+local SMALL_BASES = {
+    -- მარცხენა მხარე
+    { c1 = Vector3.new(-540.38, 15.42, 184.90), c2 = Vector3.new(-530.38, 14.92, 194.90) },
+    { c1 = Vector3.new(-540.44, 15.42, 77.38),  c2 = Vector3.new(-530.44, 14.92, 87.38) },
+    { c1 = Vector3.new(-540.68, 16.42, -29.71), c2 = Vector3.new(-530.68, 15.92, -19.71) },
+    { c1 = Vector3.new(-540.55, 16.42, -136.31), c2 = Vector3.new(-530.55, 15.92, -126.31) },
+    -- მარჯვენა მხარე
+    { c1 = Vector3.new(-288.79, 16.42, -74.42), c2 = Vector3.new(-278.79, 15.92, -64.42) },
+    { c1 = Vector3.new(-289.16, 16.42, 32.71),  c2 = Vector3.new(-279.16, 15.92, 42.71) },
+    { c1 = Vector3.new(-288.71, 15.42, 139.67), c2 = Vector3.new(-278.71, 14.92, 149.67) },
+    { c1 = Vector3.new(-288.12, 16.42, 246.63), c2 = Vector3.new(-278.12, 15.92, 256.63) }
+}
+
+-- 2. საქაღალდეების მომზადება
+local existingFolder = Workspace:FindFirstChild(CONFIG.FOLDER_NAME)
+if existingFolder then
+    existingFolder:Destroy()
 end
 
-local folder = Instance.new("Folder")
-folder.Name = "GeneratedRoofs"
-folder.Parent = Workspace
+local mainFolder = Instance.new("Folder")
+mainFolder.Name = CONFIG.FOLDER_NAME
+mainFolder.Parent = Workspace
 
-for i, b in ipairs(bases) do
-    -- ზუსტი ცენტრის გამოთვლა კოორდინატების მიმდევრობის მიუხედავად
-    local minX = math.min(b.c1.X, b.c2.X)
-    local maxX = math.max(b.c1.X, b.c2.X)
-    local minZ = math.min(b.c1.Z, b.c2.Z)
-    local maxZ = math.max(b.c1.Z, b.c2.Z)
+local mainPlatformsFolder = Instance.new("Folder")
+mainPlatformsFolder.Name = CONFIG.MAIN_FOLDER_NAME
+mainPlatformsFolder.Parent = mainFolder
 
-    local baseCenterX = (minX + maxX) / 2
-    local baseCenterZ = (minZ + maxZ) / 2
+local smallPlatformsFolder = Instance.new("Folder")
+smallPlatformsFolder.Name = CONFIG.SMALL_FOLDER_NAME
+smallPlatformsFolder.Parent = mainFolder
 
-    local targetPosition = Vector3.new(baseCenterX + offsetFromBase.X, roofY, baseCenterZ + offsetFromBase.Z)
-
+-- 3. უნივერსალური ფუნქცია
+local function createPlatform(config)
     local part = Instance.new("Part")
-    part.Name = "RoofPlatform_" .. i
-    part.Size = roofSize
-    part.Position = targetPosition
+    part.Name = config.name
+    part.Size = config.size
+    part.Position = config.position
     part.Anchored = true
     part.CanCollide = true
     part.Material = Enum.Material.SmoothPlastic
-    part.Color = Color3.fromRGB(0, 170, 255)
-    part.Parent = folder
+    part.Color = config.color
 
     local surfaceGui = Instance.new("SurfaceGui")
     surfaceGui.Face = Enum.NormalId.Top
+    surfaceGui.AlwaysOnTop = false
+    surfaceGui.LightInfluence = 0
     surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
-    surfaceGui.CanvasSize = Vector2.new(1000, 1000)
+    surfaceGui.CanvasSize = config.canvasSize
     surfaceGui.Parent = part
 
     local textLabel = Instance.new("TextLabel")
@@ -66,20 +89,61 @@ for i, b in ipairs(bases) do
     textLabel.AnchorPoint = Vector2.new(0.5, 0.5)
     textLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
     textLabel.BackgroundTransparency = 1
-    textLabel.Text = "Smile B"
-    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Text = config.text
+    textLabel.TextColor3 = CONFIG.TEXT_COLOR
     textLabel.TextScaled = true
-    textLabel.Font = Enum.Font.SourceSansBold
-
-    -- ტექსტის ორიენტაცია მხარეების მიხედვით
-    if baseCenterX < -400 then
-        textLabel.Rotation = 0
-    else
-        textLabel.Rotation = 180
-    end
-
+    textLabel.Font = CONFIG.TEXT_FONT
+    textLabel.Rotation = config.rotation
     textLabel.Parent = surfaceGui
+
+    part.Parent = config.parentFolder
 end
 
-print("ყველა პლატფორმის ზომა და პოზიცია სრულყოფილად გასწორდა!")
+-- 4. დიდი პლატფორმების შექმნა ("Smile B")
+for i, base in ipairs(MAIN_BASES) do
+    local minX = math.min(base.c1.X, base.c2.X)
+    local maxX = math.max(base.c1.X, base.c2.X)
+    local minZ = math.min(base.c1.Z, base.c2.Z)
+    local maxZ = math.max(base.c1.Z, base.c2.Z)
 
+    local centerX = (minX + maxX) / 2
+    local centerZ = (minZ + maxZ) / 2
+    local position = Vector3.new(centerX + CONFIG.MAIN_OFFSET.X, CONFIG.MAIN_ROOF_Y, centerZ + CONFIG.MAIN_OFFSET.Z)
+
+    createPlatform({
+        name = "RoofPlatform_" .. i,
+        size = CONFIG.MAIN_ROOF_SIZE,
+        position = position,
+        color = CONFIG.MAIN_COLOR,
+        rotation = (centerX < -400) and 0 or 180,
+        parentFolder = mainPlatformsFolder,
+        canvasSize = CONFIG.MAIN_CANVAS,
+        text = CONFIG.MAIN_TEXT
+    })
+end
+
+-- 5. მცირე პლატფორმების შექმნა ("SMB")
+for i, base in ipairs(SMALL_BASES) do
+    local minX = math.min(base.c1.X, base.c2.X)
+    local maxX = math.max(base.c1.X, base.c2.X)
+    local minY = math.min(base.c1.Y, base.c2.Y)
+    local maxY = math.max(base.c1.Y, base.c2.Y)
+    local minZ = math.min(base.c1.Z, base.c2.Z)
+    local maxZ = math.max(base.c1.Z, base.c2.Z)
+
+    local size = Vector3.new(5, 0.3, maxZ - minZ)
+    local rawCenterX = (minX + maxX) / 2
+    local xShift = (rawCenterX < -400) and 4 or -4
+    local center = Vector3.new(rawCenterX + xShift, ((minY + maxY) / 2) + 0.1, (minZ + maxZ) / 2)
+
+    createPlatform({
+        name = "SmallPlatform_" .. i,
+        size = size,
+        position = center,
+        color = CONFIG.SMALL_COLOR,
+        rotation = (rawCenterX < -400) and 0 or 180,
+        parentFolder = smallPlatformsFolder,
+        canvasSize = CONFIG.SMALL_CANVAS,
+        text = CONFIG.SMALL_TEXT
+    })
+end
