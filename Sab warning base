@@ -1,0 +1,210 @@
+if game.PlaceId ~= 109983668079237 then
+    return
+end
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local localPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+local isSafeModeActive = true
+local isKickTriggered = false
+local joinCountdown = 27
+
+-- 1. Kick / Disconnect ფუნქცია
+local function executeKick(reason)
+    if not isSafeModeActive or isKickTriggered then return end
+    isKickTriggered = true
+
+    task.spawn(function()
+        while true do
+            localPlayer:Kick("\n[SafeMode Protected]\n" .. (reason or "Base Lock Expiry Guard"))
+            task.wait(0.01)
+            TeleportService:Teleport(1, localPlayer)
+        end
+    end)
+end
+
+-- 2. UI შექმნა
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+for _, oldGui in ipairs(playerGui:GetChildren()) do
+    if oldGui.Name == "SafeModeControlGui" then
+        oldGui:Destroy()
+    end
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SafeModeControlGui"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Name = "ControlFrame"
+frame.Size = UDim2.new(0, 260, 0, 65)
+frame.Position = UDim2.new(0.5, -130, 0, 45)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.BackgroundTransparency = 0.2
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 8)
+frameCorner.Parent = frame
+
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Thickness = 1.5
+frameStroke.Color = Color3.fromRGB(255, 60, 60)
+frameStroke.Parent = frame
+
+-- 27s Countdown Label
+local countdownLabel = Instance.new("TextLabel")
+countdownLabel.Name = "CountdownLabel"
+countdownLabel.Size = UDim2.new(1, 0, 0, 20)
+countdownLabel.Position = UDim2.new(0, 0, 0, 5)
+countdownLabel.BackgroundTransparency = 1
+countdownLabel.TextColor3 = Color3.fromRGB(255, 220, 0)
+countdownLabel.TextSize = 13
+countdownLabel.Font = Enum.Font.FredokaOne
+countdownLabel.Text = "⏳ Kick in: 27s"
+countdownLabel.Parent = frame
+
+-- Stop SafeMode Button
+local stopBtn = Instance.new("TextButton")
+stopBtn.Name = "StopButton"
+stopBtn.Size = UDim2.new(0, 120, 0, 30)
+stopBtn.Position = UDim2.new(0, 7, 0, 28)
+stopBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopBtn.TextSize = 11
+stopBtn.Font = Enum.Font.FredokaOne
+stopBtn.Text = "🛑 STOP SAFEMODE"
+stopBtn.Parent = frame
+
+local stopCorner = Instance.new("UICorner")
+stopCorner.CornerRadius = UDim.new(0, 6)
+stopCorner.Parent = stopBtn
+
+-- Quick Leave Button
+local leaveBtn = Instance.new("TextButton")
+leaveBtn.Name = "LeaveButton"
+leaveBtn.Size = UDim2.new(0, 120, 0, 30)
+leaveBtn.Position = UDim2.new(0, 133, 0, 28)
+leaveBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 220)
+leaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+leaveBtn.TextSize = 11
+leaveBtn.Font = Enum.Font.FredokaOne
+leaveBtn.Text = "⚡ QUICK LEAVE"
+leaveBtn.Parent = frame
+
+local leaveCorner = Instance.new("UICorner")
+leaveCorner.CornerRadius = UDim.new(0, 6)
+leaveCorner.Parent = leaveBtn
+
+-- ღილაკების ივენთები
+stopBtn.MouseButton1Click:Connect(function()
+    isSafeModeActive = false
+    stopBtn.Text = "🛡️ DISABLED"
+    stopBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    countdownLabel.Text = "⏸️ SafeMode Paused"
+    countdownLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    frameStroke.Color = Color3.fromRGB(100, 100, 100)
+end)
+
+leaveBtn.MouseButton1Click:Connect(function()
+    executeKick("Quick Leave Clicked")
+end)
+
+-- 3. 27-წამიანი უკუთვლის ტაიმერი
+task.spawn(function()
+    while joinCountdown > 0 and isSafeModeActive and not isKickTriggered do
+        countdownLabel.Text = "⏳ Kick in: " .. joinCountdown .. "s"
+        task.wait(1)
+        joinCountdown = joinCountdown - 1
+    end
+
+    if isSafeModeActive and not isKickTriggered then
+        countdownLabel.Text = "⏳ Kicking..."
+        executeKick("27s Join Safety Timeout")
+    end
+end)
+
+-- 4. Plot-ის პოვნა
+local cachedPlot = nil
+
+local function getMyPlot()
+    if cachedPlot and cachedPlot.Parent then
+        return cachedPlot
+    end
+
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+
+    local myName = localPlayer.Name:lower()
+    local myDisplayName = localPlayer.DisplayName:lower()
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("StringValue") then
+                local txt = desc:IsA("TextLabel") and desc.Text:lower() or desc.Value:lower()
+                if txt ~= "" and (txt:find(myName, 1, true) or txt:find(myDisplayName, 1, true)) then
+                    cachedPlot = plot
+                    return plot
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- 5. წამების ამოღება
+local function parseSeconds(text)
+    if not text or text == "" then return 999 end
+    local m, s = text:match("(%d+):(%d+)")
+    if m and s then
+        return (tonumber(m) * 60) + tonumber(s)
+    end
+    local num = text:match("%d+")
+    if num then
+        return tonumber(num)
+    end
+    return 999
+end
+
+-- 6. LIVE ULTRA-FAST CHECK (RunService RenderStepped)
+RunService.Heartbeat:Connect(function()
+    if not isSafeModeActive or isKickTriggered then return end
+
+    local myPlot = getMyPlot()
+
+    if myPlot then
+        local purchases = myPlot:FindFirstChild("Purchases")
+
+        if purchases then
+            for _, item in ipairs(purchases:GetChildren()) do
+                local main = item:FindFirstChild("Main")
+                local billboard = main and main:FindFirstChild("BillboardGui")
+                local remainingTime = billboard and billboard:FindFirstChild("RemainingTime")
+
+                if remainingTime and remainingTime:IsA("TextLabel") and remainingTime.Text ~= "" then
+                    local rawText = remainingTime.Text
+                    local seconds = parseSeconds(rawText)
+
+                    -- 4 წამზე ან ნაკლებზე მყისიერი Kick
+                    if seconds <= 4 or rawText:lower():find("open") or rawText:lower():find("unlocked") then
+                        executeKick("Base Lock Expiring Live (<= 4s)")
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+
