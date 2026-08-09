@@ -24,14 +24,18 @@ local State = {
 }
 ENV[SCRIPT_KEY] = State
 
+--==============================================================
+-- CONFIG
+--==============================================================
 local SPIN_POSITION = Vector3.new(-384, -6, 68)
 local BUY_POSITION = Vector3.new(-378, -6, 73)
 local ARRIVAL_DISTANCE = 4
 local ACTIVE_RANGE = 100
 local SCAN_INTERVAL = 0.025
-local SPIN_RESULT_TIMEOUT = 3.0
-local SPIN_RETRY_GAP = 0.20
-local BUY_RETRY_GAP = 0.08
+local SPIN_RESULT_TIMEOUT = 4
+local SPIN_RETRY_GAP = 0.25
+local BUY_PROMPT_WAIT = 1.5
+local BUY_RETRY_GAP = 0.10
 local MAX_BUY_TIME = 5
 local DATA_REFRESH_SECONDS = 300
 local PARSE_YIELD_EVERY = 35
@@ -67,6 +71,9 @@ local function Track(conn)
     return conn
 end
 
+--==============================================================
+-- SAVE / LOAD
+--==============================================================
 local function HasFileSupport()
     return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
 end
@@ -76,6 +83,7 @@ local function SelectedToArray()
     for name, enabled in pairs(Settings.Selected) do
         if enabled then out[#out + 1] = name end
     end
+    table.sort(out)
     return out
 end
 
@@ -133,6 +141,9 @@ local function LoadSaved()
 end
 LoadSaved()
 
+--==============================================================
+-- CHARACTER / MACHINE
+--==============================================================
 local Character, Humanoid, Root
 local function LoadCharacter()
     Character = Player.Character or Player.CharacterAdded:Wait()
@@ -149,6 +160,9 @@ if not SpinPrompt then
     return
 end
 
+--==============================================================
+-- UTILS
+--==============================================================
 local function FormatMoney(n)
     if n == nil then return "?" end
     local a = math.abs(n)
@@ -178,6 +192,14 @@ local function ParseNumber(text)
     return n and (n * mult) or nil
 end
 
+local function FlatDistance(a, b)
+    local dx, dz = a.X - b.X, a.Z - b.Z
+    return math.sqrt(dx * dx + dz * dz)
+end
+
+--==============================================================
+-- DYNAMIC DATABASE
+--==============================================================
 local function DecompileWithTimeout(module, timeout)
     if typeof(decompile) ~= "function" then return nil, "decompile unavailable" end
     local finished, success, result = false, false, nil
@@ -220,8 +242,15 @@ local function ParseAnimals(source)
         local rarity = chunk:match('Rarity%s*=%s*"([^"]+)"')
         local data = { Name = displayName, InternalKey = internalKey, Generation = generation, Price = price, Rarity = rarity }
         db[displayName] = data
-        if internalKey then db[internalKey] = data end
-        if not seen[displayName] then seen[displayName] = true; names[#names + 1] = displayName end
+        db[string.lower(displayName)] = data
+        if internalKey then
+            db[internalKey] = data
+            db[string.lower(internalKey)] = data
+        end
+        if not seen[displayName] then
+            seen[displayName] = true
+            names[#names + 1] = displayName
+        end
         count += 1
         if count % PARSE_YIELD_EVERY == 0 then task.wait() end
         pos = e + 1
@@ -243,8 +272,8 @@ local function NormalizeMutationName(name)
 end
 
 local function ParseMutations(source)
-    local db = { Normal = { Key = "Normal", DisplayText = "Normal", Modifier = 0 } }
-    db.normal = db.Normal
+    local normal = { Key = "Normal", DisplayText = "Normal", Modifier = 0 }
+    local db = { Normal = normal, normal = normal }
     local names = { "Normal" }
     local pos, count = 1, 0
     while not State.Dead do
@@ -297,16 +326,22 @@ local function RefreshGameData()
     return GameData.Ready
 end
 
-local function GetAnimalData(name) return GameData.Animals[name] end
+local function GetAnimalData(name)
+    if not name then return nil end
+    return GameData.Animals[name] or GameData.Animals[string.lower(name)]
+end
+
 local function GetMutationData(name)
     if name == nil then return GameData.Mutations.Normal or GameData.Mutations.normal end
     return GameData.Mutations[name] or GameData.Mutations[NormalizeMutationName(name)] or GameData.Mutations.Normal or GameData.Mutations.normal
 end
+
 local function GetEffectiveGeneration(base, mutation)
     if base == nil then return nil end
     local m = GetMutationData(mutation)
     return base * (1 + ((m and m.Modifier) or 0))
 end
+
 local function GetMutationMultiplier(mutation)
     local m = GetMutationData(mutation)
     return 1 + ((m and m.Modifier) or 0)
@@ -356,7 +391,9 @@ local function DetectMutation(model)
     return "Normal"
 end
 
--- Critical prompt fix: never restart a hold while it is still filling.
+--==============================================================
+-- PROMPTS
+--==============================================================
 local PromptBusy = setmetatable({}, { __mode = "k" })
 local function FirePromptOnce(prompt)
     if not prompt or not prompt.Parent or not prompt.Enabled then return false end
@@ -364,10 +401,11 @@ local function FirePromptOnce(prompt)
     if PromptBusy[prompt] then return false end
     PromptBusy[prompt] = true
     local ok = pcall(function()
+        -- Do NOT pass HoldDuration here. Solara handles the hold itself.
         fireproximityprompt(prompt)
     end)
     local hold = tonumber(prompt.HoldDuration) or 0
-    task.delay(math.max(hold, 0.05) + 0.18, function()
+    task.delay(math.max(hold, 0.05) + 0.20, function()
         PromptBusy[prompt] = nil
     end)
     return ok
@@ -379,33 +417,34 @@ local function GetBuyPrompt(model)
     return attachment and attachment:FindFirstChildWhichIsA("ProximityPrompt") or nil
 end
 
-local function IsActiveBrainrot(model)
+-- IMPORTANT FIX:
+-- Result detection no longer requires PromptAttachment.
+-- Inactive cached Brainrots are parked near Y=100000; the active result is physically by the machine.
+local function IsDisplayedResult(model)
     if not model or not model.Parent or not model:IsA("Model") then return false end
-    local root = model:FindFirstChild("RootPart")
-    if not root then return false end
-    if (root.Position - BUY_POSITION).Magnitude >= ACTIVE_RANGE then return false end
-    return GetBuyPrompt(model) ~= nil
+    local rp = model:FindFirstChild("RootPart")
+    if not rp then return false end
+    if math.abs(rp.Position.Y) > 1000 then return false end
+    return (rp.Position - BUY_POSITION).Magnitude < ACTIVE_RANGE
 end
 
 local function GetActiveBrainrot()
     local folder = workspace:FindFirstChild("RNGMachineDisplay")
     if not folder then return nil end
-    local best, bestDistance = nil, math.huge
+    local best, bestDist = nil, math.huge
     for _, model in ipairs(folder:GetChildren()) do
-        if IsActiveBrainrot(model) then
+        if IsDisplayedResult(model) then
             local rp = model:FindFirstChild("RootPart")
             local dist = rp and (rp.Position - BUY_POSITION).Magnitude or math.huge
-            if dist < bestDistance then best, bestDistance = model, dist end
+            if dist < bestDist then best, bestDist = model, dist end
         end
     end
     return best
 end
 
-local function FlatDistance(a, b)
-    local dx, dz = a.X - b.X, a.Z - b.Z
-    return math.sqrt(dx * dx + dz * dz)
-end
-
+--==============================================================
+-- MOVEMENT
+--==============================================================
 local function DirectMove(position)
     if not Humanoid or not Root then return false end
     Humanoid:MoveTo(position)
@@ -423,7 +462,13 @@ local function MoveTo(position)
     if not State.Running or State.Dead then return false end
     if not Root or not Root.Parent then LoadCharacter() end
     if FlatDistance(Root.Position, position) <= ARRIVAL_DISTANCE then return true end
-    local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, AgentJumpHeight = 7, AgentMaxSlope = 45 })
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentJumpHeight = 7,
+        AgentMaxSlope = 45,
+    })
     local ok = pcall(function() path:ComputeAsync(Root.Position, position) end)
     if not ok or path.Status ~= Enum.PathStatus.Success then return DirectMove(position) end
     for _, waypoint in ipairs(path:GetWaypoints()) do
@@ -440,6 +485,9 @@ local function MoveTo(position)
     return FlatDistance(Root.Position, position) <= ARRIVAL_DISTANCE + 3
 end
 
+--==============================================================
+-- WEBHOOK
+--==============================================================
 local function GetRequestFunction()
     if typeof(request) == "function" then return request end
     if typeof(http_request) == "function" then return http_request end
@@ -473,7 +521,9 @@ local function SendWebhook(name, data, mutation, actualGeneration, reason)
     end)
 end
 
+--==============================================================
 -- UI
+--==============================================================
 local GUI = Instance.new("ScreenGui")
 GUI.Name = "SmileB_RNG_Final"
 GUI.ResetOnSpawn = false
@@ -516,13 +566,16 @@ MinimizeButton.TextColor3 = Color3.new(1,1,1)
 MinimizeButton.TextSize = 20
 MinimizeButton.Font = Enum.Font.GothamBold
 MinimizeButton.Parent = TitleBar
-local mc = Instance.new("UICorner"); mc.CornerRadius = UDim.new(0,8); mc.Parent = MinimizeButton
+local mc = Instance.new("UICorner")
+mc.CornerRadius = UDim.new(0,8)
+mc.Parent = MinimizeButton
 
 local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1,-20,1,-54)
 Content.Position = UDim2.fromOffset(10,46)
 Content.BackgroundTransparency = 1
 Content.Parent = Frame
+
 local MiniButton = Instance.new("TextButton")
 MiniButton.Size = UDim2.fromScale(1,1)
 MiniButton.BackgroundTransparency = 1
@@ -566,10 +619,13 @@ local function OpenUI()
     TweenService:Create(MiniButton, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = MiniButton.Rotation + 360 }):Play()
     local tw = TweenService:Create(Frame, TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT) })
     TweenService:Create(FrameCorner, TweenInfo.new(0.28), { CornerRadius = UDim.new(0,12) }):Play()
-    tw:Play(); tw.Completed:Wait()
+    tw:Play()
+    tw.Completed:Wait()
     if not State.Minimized then MiniButton.Visible = false; TitleBar.Visible = true; Content.Visible = true end
-    Animating = false; QueueSave()
+    Animating = false
+    QueueSave()
 end
+
 local function MinimizeUI()
     if State.Minimized or Animating then return end
     Animating, State.Minimized = true, true
@@ -578,7 +634,10 @@ local function MinimizeUI()
     TweenService:Create(MiniButton, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = 360 }):Play()
     local tw = TweenService:Create(Frame, TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(MINI_SIZE, MINI_SIZE) })
     TweenService:Create(FrameCorner, TweenInfo.new(0.28), { CornerRadius = UDim.new(1,0) }):Play()
-    tw:Play(); tw.Completed:Wait(); Animating = false; QueueSave()
+    tw:Play()
+    tw.Completed:Wait()
+    Animating = false
+    QueueSave()
 end
 Track(MinimizeButton.MouseButton1Click:Connect(MinimizeUI))
 AttachDrag(MiniButton, true, OpenUI)
@@ -624,16 +683,23 @@ local function CreateToggle(text, position, size, getter, setter)
     b.Size, b.Position, b.BorderSizePixel = size, position, 0
     b.TextColor3, b.Font, b.TextSize = Color3.new(1,1,1), Enum.Font.GothamBold, 10
     b.Parent = Content
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,8); c.Parent = b
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0,8)
+    c.Parent = b
     local function refresh()
         local on = getter()
         b.Text = text .. ": " .. (on and "ON" or "OFF")
         b.BackgroundColor3 = on and Color3.fromRGB(45,145,75) or Color3.fromRGB(72,72,80)
     end
-    Track(b.MouseButton1Click:Connect(function() setter(not getter()); refresh(); QueueSave() end))
+    Track(b.MouseButton1Click:Connect(function()
+        setter(not getter())
+        refresh()
+        QueueSave()
+    end))
     refresh()
     return b
 end
+
 CreateToggle("NAME", UDim2.fromOffset(0,96), UDim2.fromOffset(125,32), function() return Settings.NameFilter end, function(v) Settings.NameFilter = v end)
 CreateToggle("MONEY", UDim2.fromOffset(133,96), UDim2.fromOffset(125,32), function() return Settings.MoneyFilter end, function(v) Settings.MoneyFilter = v end)
 CreateToggle("AUTO DATA", UDim2.fromOffset(266,96), UDim2.new(1,-266,0,32), function() return Settings.AutoRefresh end, function(v) Settings.AutoRefresh = v end)
@@ -650,11 +716,19 @@ MoneyInput.ClearTextOnFocus = false
 MoneyInput.Font = Enum.Font.Gotham
 MoneyInput.TextSize = 11
 MoneyInput.Parent = Content
-local mic = Instance.new("UICorner"); mic.CornerRadius = UDim.new(0,8); mic.Parent = MoneyInput
+local mic = Instance.new("UICorner")
+mic.CornerRadius = UDim.new(0,8)
+mic.Parent = MoneyInput
+
 local function ApplyMoneyInput()
     local value = ParseNumber(MoneyInput.Text)
-    if value then Settings.MinGeneration = value; MoneyInput.Text = tostring(value); QueueSave()
-    else MoneyInput.Text = tostring(Settings.MinGeneration) end
+    if value then
+        Settings.MinGeneration = value
+        MoneyInput.Text = tostring(value)
+        QueueSave()
+    else
+        MoneyInput.Text = tostring(Settings.MinGeneration)
+    end
 end
 Track(MoneyInput.FocusLost:Connect(ApplyMoneyInput))
 
@@ -669,7 +743,9 @@ SearchBox.TextColor3 = Color3.new(1,1,1)
 SearchBox.Font = Enum.Font.Gotham
 SearchBox.TextSize = 11
 SearchBox.Parent = Content
-local sc = Instance.new("UICorner"); sc.CornerRadius = UDim.new(0,8); sc.Parent = SearchBox
+local sc = Instance.new("UICorner")
+sc.CornerRadius = UDim.new(0,8)
+sc.Parent = SearchBox
 
 local ClearButton = Instance.new("TextButton")
 ClearButton.Size = UDim2.fromOffset(92,32)
@@ -681,7 +757,9 @@ ClearButton.TextColor3 = Color3.new(1,1,1)
 ClearButton.Font = Enum.Font.GothamBold
 ClearButton.TextSize = 10
 ClearButton.Parent = Content
-local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0,8); cc.Parent = ClearButton
+local cc = Instance.new("UICorner")
+cc.CornerRadius = UDim.new(0,8)
+cc.Parent = ClearButton
 
 local SelectedLabel = Instance.new("TextLabel")
 SelectedLabel.Size = UDim2.new(1,0,0,18)
@@ -692,7 +770,12 @@ SelectedLabel.TextXAlignment = Enum.TextXAlignment.Left
 SelectedLabel.Font = Enum.Font.Gotham
 SelectedLabel.TextSize = 10
 SelectedLabel.Parent = Content
-local function CountSelected() local n=0; for _,v in pairs(Settings.Selected) do if v then n += 1 end end; return n end
+
+local function CountSelected()
+    local n = 0
+    for _, v in pairs(Settings.Selected) do if v then n += 1 end end
+    return n
+end
 UpdateSelectedCount = function() SelectedLabel.Text = "Selected Brainrots: " .. CountSelected() end
 UpdateSelectedCount()
 
@@ -704,54 +787,98 @@ List.BorderSizePixel = 0
 List.ScrollBarThickness = 5
 List.CanvasSize = UDim2.fromOffset(0,0)
 List.Parent = Content
-local lc = Instance.new("UICorner"); lc.CornerRadius = UDim.new(0,8); lc.Parent = List
+local lc = Instance.new("UICorner")
+lc.CornerRadius = UDim.new(0,8)
+lc.Parent = List
 local Layout = Instance.new("UIListLayout")
 Layout.Padding = UDim.new(0,3)
 Layout.Parent = List
 
+-- FIX: checked targets are always sorted to the top.
 local RenderVersion = 0
 RenderDatabase = function()
     RenderVersion += 1
     local version = RenderVersion
-    for _, child in ipairs(List:GetChildren()) do if child ~= Layout then child:Destroy() end end
+    for _, child in ipairs(List:GetChildren()) do
+        if child ~= Layout then child:Destroy() end
+    end
+
     local query = string.lower(SearchBox.Text)
-    local added = 0
+    local ordered = {}
     for _, name in ipairs(GameData.AnimalNames) do
-        if version ~= RenderVersion then return end
         if query == "" or string.find(string.lower(name), query, 1, true) then
-            local data = GetAnimalData(name)
-            local b = Instance.new("TextButton")
-            b.Size = UDim2.new(1,-7,0,30)
-            b.BorderSizePixel = 0
-            b.TextXAlignment = Enum.TextXAlignment.Left
-            b.Font = Enum.Font.Gotham
-            b.TextSize = 10
-            b.TextColor3 = Color3.new(1,1,1)
-            b.Parent = List
-            local function refreshRow()
-                local selected = Settings.Selected[name] == true
-                b.BackgroundColor3 = selected and Color3.fromRGB(40,110,65) or Color3.fromRGB(42,42,49)
-                b.Text = (selected and "  ✓ " or "    ") .. name .. " | " .. ((data and data.Rarity) or "?") .. " | $" .. FormatMoney(data and data.Generation) .. "/s"
-            end
-            refreshRow()
-            Track(b.MouseButton1Click:Connect(function()
-                Settings.Selected[name] = Settings.Selected[name] and nil or true
-                refreshRow(); UpdateSelectedCount(); QueueSave()
-            end))
-            added += 1
-            if added >= MAX_VISIBLE_ROWS then break end
+            ordered[#ordered + 1] = name
         end
     end
-    task.defer(function() if List.Parent then List.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 5) end end)
+
+    table.sort(ordered, function(a, b)
+        local aSelected = Settings.Selected[a] == true
+        local bSelected = Settings.Selected[b] == true
+        if aSelected ~= bSelected then return aSelected end
+        local ad = GetAnimalData(a)
+        local bd = GetAnimalData(b)
+        local ag = ad and ad.Generation or 0
+        local bg = bd and bd.Generation or 0
+        if ag ~= bg then return ag > bg end
+        return a < b
+    end)
+
+    local added = 0
+    for _, name in ipairs(ordered) do
+        if version ~= RenderVersion then return end
+        local data = GetAnimalData(name)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1,-7,0,30)
+        b.BorderSizePixel = 0
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.Font = Enum.Font.Gotham
+        b.TextSize = 10
+        b.TextColor3 = Color3.new(1,1,1)
+        b.Parent = List
+
+        local function refreshRow()
+            local selected = Settings.Selected[name] == true
+            b.BackgroundColor3 = selected and Color3.fromRGB(40,110,65) or Color3.fromRGB(42,42,49)
+            b.Text = (selected and "  ✓ " or "    ") .. name .. " | " .. ((data and data.Rarity) or "?") .. " | $" .. FormatMoney(data and data.Generation) .. "/s"
+        end
+        refreshRow()
+
+        -- Clicking again explicitly unchecks it.
+        b.MouseButton1Click:Connect(function()
+            if Settings.Selected[name] then
+                Settings.Selected[name] = nil
+            else
+                Settings.Selected[name] = true
+            end
+            UpdateSelectedCount()
+            QueueSave()
+            -- Re-render immediately so selected rows jump to top / unchecked rows return to normal position.
+            RenderDatabase()
+        end)
+
+        added += 1
+        if added >= MAX_VISIBLE_ROWS then break end
+    end
+
+    task.defer(function()
+        if List.Parent then List.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 5) end
+    end)
 end
 
 local SearchToken = 0
 Track(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     SearchToken += 1
     local token = SearchToken
-    task.delay(0.12, function() if token == SearchToken and not State.Dead then RenderDatabase() end end)
+    task.delay(0.12, function()
+        if token == SearchToken and not State.Dead then RenderDatabase() end
+    end)
 end))
-Track(ClearButton.MouseButton1Click:Connect(function() Settings.Selected = {}; UpdateSelectedCount(); RenderDatabase(); QueueSave() end))
+Track(ClearButton.MouseButton1Click:Connect(function()
+    Settings.Selected = {}
+    UpdateSelectedCount()
+    RenderDatabase()
+    QueueSave()
+end))
 
 CreateToggle("WEBHOOK", UDim2.fromOffset(0,444), UDim2.fromOffset(105,32), function() return Settings.WebhookEnabled end, function(v) Settings.WebhookEnabled = v end)
 local WebhookInput = Instance.new("TextBox")
@@ -766,7 +893,9 @@ WebhookInput.Font = Enum.Font.Gotham
 WebhookInput.TextSize = 9
 WebhookInput.ClearTextOnFocus = false
 WebhookInput.Parent = Content
-local wc = Instance.new("UICorner"); wc.CornerRadius = UDim.new(0,8); wc.Parent = WebhookInput
+local wc = Instance.new("UICorner")
+wc.CornerRadius = UDim.new(0,8)
+wc.Parent = WebhookInput
 Track(WebhookInput.FocusLost:Connect(function() Settings.WebhookURL = WebhookInput.Text; QueueSave() end))
 
 local MentionInput = Instance.new("TextBox")
@@ -781,7 +910,9 @@ MentionInput.Font = Enum.Font.Gotham
 MentionInput.TextSize = 9
 MentionInput.ClearTextOnFocus = false
 MentionInput.Parent = Content
-local mnc = Instance.new("UICorner"); mnc.CornerRadius = UDim.new(0,8); mnc.Parent = MentionInput
+local mnc = Instance.new("UICorner")
+mnc.CornerRadius = UDim.new(0,8)
+mnc.Parent = MentionInput
 Track(MentionInput.FocusLost:Connect(function() Settings.WebhookMention = MentionInput.Text; QueueSave() end))
 
 local StartButton = Instance.new("TextButton")
@@ -794,8 +925,13 @@ StartButton.TextColor3 = Color3.new(1,1,1)
 StartButton.Font = Enum.Font.GothamBold
 StartButton.TextSize = 11
 StartButton.Parent = Content
-local sbc = Instance.new("UICorner"); sbc.CornerRadius = UDim.new(0,8); sbc.Parent = StartButton
+local sbc = Instance.new("UICorner")
+sbc.CornerRadius = UDim.new(0,8)
+sbc.Parent = StartButton
 
+--==============================================================
+-- CLEANUP
+--==============================================================
 function State.Cleanup()
     State.Running = false
     State.Dead = true
@@ -806,26 +942,43 @@ function State.Cleanup()
     if ENV[SCRIPT_KEY] == State then ENV[SCRIPT_KEY] = nil end
 end
 
-Track(Player.CharacterAdded:Connect(function() task.wait(0.7); if not State.Dead then LoadCharacter() end end))
+Track(Player.CharacterAdded:Connect(function()
+    task.wait(0.7)
+    if not State.Dead then LoadCharacter() end
+end))
 
+--==============================================================
+-- FILTER
+--==============================================================
 local function ShouldBuy(model, mutation)
     local data = GetAnimalData(model.Name)
     local base = data and data.Generation or nil
     local actual = GetEffectiveGeneration(base, mutation)
     local nameMatch, moneyMatch = false, false
+
     if Settings.NameFilter then
         nameMatch = Settings.Selected[model.Name] == true
-        if not nameMatch and data and data.Name then nameMatch = Settings.Selected[data.Name] == true end
+        if not nameMatch and data then
+            if data.Name then nameMatch = Settings.Selected[data.Name] == true end
+            if not nameMatch and data.InternalKey then nameMatch = Settings.Selected[data.InternalKey] == true end
+        end
     end
-    if Settings.MoneyFilter and actual then moneyMatch = actual >= Settings.MinGeneration end
+
+    if Settings.MoneyFilter and actual ~= nil then
+        moneyMatch = actual >= Settings.MinGeneration
+    end
+
     return nameMatch or moneyMatch, data, nameMatch, moneyMatch, actual
 end
 
--- Spins exactly once, then waits for the old result to transition.
--- No 0.08-second prompt spam, so the hold circle can finish.
+--==============================================================
+-- SPIN RESULT SYNCHRONIZATION
+--==============================================================
+-- FIX: result detection is based on the model actually moving from the parked
+-- Y=100000 area to the machine. It does NOT depend on the buy prompt existing.
 local function SpinAndWaitForNext(currentModel)
-    local oldWasActive = currentModel and IsActiveBrainrot(currentModel) or false
-    local sawGap = not oldWasActive
+    local old = currentModel or GetActiveBrainrot()
+    local sawGap = (old == nil)
 
     while State.Running and not State.Dead do
         if not PromptBusy[SpinPrompt] and SpinPrompt.Parent and SpinPrompt.Enabled then
@@ -833,12 +986,19 @@ local function SpinAndWaitForNext(currentModel)
             if fired then
                 local started = os.clock()
                 while State.Running and not State.Dead and os.clock() - started < SPIN_RESULT_TIMEOUT do
-                    if currentModel and not IsActiveBrainrot(currentModel) then sawGap = true end
+                    if old and not IsDisplayedResult(old) then sawGap = true end
                     local active = GetActiveBrainrot()
+
                     if active then
-                        if not currentModel then return active end
-                        if active ~= currentModel then return active end
-                        if sawGap and active == currentModel then return active end
+                        if not old then
+                            return active
+                        end
+                        if active ~= old then
+                            return active
+                        end
+                        if sawGap and active == old then
+                            return active
+                        end
                     end
                     task.wait(SCAN_INTERVAL)
                 end
@@ -849,46 +1009,108 @@ local function SpinAndWaitForNext(currentModel)
     return nil
 end
 
-local function BuyUntilGone(model)
-    local started, attempts = os.clock(), 0
-    while State.Running and not State.Dead and os.clock() - started < MAX_BUY_TIME do
-        if not IsActiveBrainrot(model) then SetStatus("Purchased / result removed"); return true end
+--==============================================================
+-- BUY
+--==============================================================
+local function WaitForBuyPrompt(model, timeout)
+    local started = os.clock()
+    while State.Running and not State.Dead and os.clock() - started < timeout do
+        if not IsDisplayedResult(model) then return nil end
         local prompt = GetBuyPrompt(model)
-        if prompt and prompt.Enabled and not PromptBusy[prompt] then
-            if FirePromptOnce(prompt) then attempts += 1 end
+        if prompt and prompt.Enabled then return prompt end
+        task.wait(0.03)
+    end
+    return GetBuyPrompt(model)
+end
+
+local function BuyUntilGone(model)
+    local started = os.clock()
+    local attempts = 0
+
+    while State.Running and not State.Dead and os.clock() - started < MAX_BUY_TIME do
+        if not IsDisplayedResult(model) then
+            SetStatus("Purchased / result removed")
+            return true
+        end
+
+        local prompt = WaitForBuyPrompt(model, BUY_PROMPT_WAIT)
+        if prompt and prompt.Parent and prompt.Enabled and not PromptBusy[prompt] then
+            if FirePromptOnce(prompt) then
+                attempts += 1
+                -- Let the full hold finish before attempting another purchase.
+                local waitUntil = os.clock() + math.max(prompt.HoldDuration, 0.05) + 0.22
+                while State.Running and not State.Dead and os.clock() < waitUntil do
+                    if not IsDisplayedResult(model) then
+                        SetStatus("Purchased / result removed")
+                        return true
+                    end
+                    task.wait(0.03)
+                end
+            end
         end
         task.wait(BUY_RETRY_GAP)
     end
-    SetStatus("Purchase retry timeout (" .. attempts .. ")")
+
+    SetStatus("Purchase timeout (" .. attempts .. " tries)")
     return false
 end
 
+--==============================================================
+-- MAIN
+--==============================================================
 local Spins = 0
 local function MainLoop()
     if State.LoopRunning then return end
     State.LoopRunning = true
-    if not GameData.Ready then SetStatus("Waiting for database..."); while State.Running and not State.Dead and not GameData.Ready do task.wait(0.1) end end
+
+    if not GameData.Ready then
+        SetStatus("Waiting for database...")
+        while State.Running and not State.Dead and not GameData.Ready do task.wait(0.1) end
+    end
     if not State.Running or State.Dead then State.LoopRunning = false; return end
+
     SetStatus("Walking to spinner...")
     if not MoveTo(SPIN_POSITION) then State.LoopRunning = false; return end
+
     SetStatus("Spinning...")
     local current = SpinAndWaitForNext(nil)
+
     while State.Running and not State.Dead do
-        if not current then current = SpinAndWaitForNext(nil); continue end
+        if not current then
+            current = SpinAndWaitForNext(nil)
+            continue
+        end
+
+        -- A confirmed new displayed result increments the counter.
         Spins += 1
+
         local mutation = DetectMutation(current)
         local buy, data, nameMatch, moneyMatch, actual = ShouldBuy(current, mutation)
         local rarity = data and data.Rarity or "?"
         local mult = GetMutationMultiplier(mutation)
-        ResultLabel.Text = "Spins: " .. Spins .. "\n" .. current.Name .. " | " .. mutation .. " | " .. rarity .. " | $" .. FormatMoney(actual) .. "/s" .. (mutation ~= "Normal" and (" | " .. string.format("%.3gx", mult)) or "")
+
+        ResultLabel.Text = "Spins: " .. tostring(Spins)
+            .. "\n" .. current.Name
+            .. " | " .. mutation
+            .. " | " .. rarity
+            .. " | $" .. FormatMoney(actual) .. "/s"
+            .. (mutation ~= "Normal" and (" | " .. string.format("%.3gx", mult)) or "")
+
+        print("[SmileB RNG] RESULT", Spins, current.Name, "income", actual, "nameMatch", nameMatch, "moneyMatch", moneyMatch)
+
         if buy then
             local reason = (nameMatch and moneyMatch) and "Name + Money" or (nameMatch and "Name" or "Money")
             SetStatus("FOUND: " .. reason .. " | buying...")
             SendWebhook(current.Name, data, mutation, actual, reason)
-            if MoveTo(BUY_POSITION) then BuyUntilGone(current) end
+
+            if MoveTo(BUY_POSITION) then
+                BuyUntilGone(current)
+            end
+
             if not State.Running then break end
             SetStatus("Returning to spinner...")
             MoveTo(SPIN_POSITION)
+            if not State.Running then break end
             SetStatus("Spinning...")
             current = SpinAndWaitForNext(nil)
         else
@@ -896,6 +1118,7 @@ local function MainLoop()
             current = SpinAndWaitForNext(current)
         end
     end
+
     State.LoopRunning = false
     if not State.Dead then SetStatus("Stopped") end
 end
@@ -905,15 +1128,23 @@ Track(StartButton.MouseButton1Click:Connect(function()
     Settings.WebhookURL = WebhookInput.Text
     Settings.WebhookMention = MentionInput.Text
     QueueSave()
+
     State.Running = not State.Running
     if State.Running then
         StartButton.Text = "STOP"
         StartButton.BackgroundColor3 = Color3.fromRGB(180,55,55)
         task.spawn(function()
             local ok, err = pcall(MainLoop)
-            if not ok then warn("[SmileB RNG]", err); SetStatus("ERROR: " .. tostring(err)) end
-            State.Running, State.LoopRunning = false, false
-            if not State.Dead and StartButton.Parent then StartButton.Text = "START"; StartButton.BackgroundColor3 = Color3.fromRGB(45,155,78) end
+            if not ok then
+                warn("[SmileB RNG]", err)
+                SetStatus("ERROR: " .. tostring(err))
+            end
+            State.Running = false
+            State.LoopRunning = false
+            if not State.Dead and StartButton.Parent then
+                StartButton.Text = "START"
+                StartButton.BackgroundColor3 = Color3.fromRGB(45,155,78)
+            end
         end)
     else
         StartButton.Text = "START"
@@ -922,6 +1153,9 @@ Track(StartButton.MouseButton1Click:Connect(function()
     end
 end))
 
+--==============================================================
+-- DATA REFRESH
+--==============================================================
 task.spawn(RefreshGameData)
 task.spawn(function()
     while not State.Dead do
@@ -933,9 +1167,11 @@ task.spawn(function()
 end)
 
 if Settings.Minimized then
-    task.defer(function() task.wait(0.15); if not State.Dead and not State.Minimized then MinimizeUI() end end)
+    task.defer(function()
+        task.wait(0.15)
+        if not State.Dead and not State.Minimized then MinimizeUI() end
+    end)
 end
 
 print("[SmileB RNG] Loaded")
-print("[SmileB RNG] Dynamic Animals + Mutations enabled")
-print("[SmileB RNG] Prompt hold spam bug fixed")
+print("[SmileB RNG] Fixed result detection, counter, name/money targeting, and selected sorting")
