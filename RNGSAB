@@ -1,0 +1,986 @@
+-- Steal a Brainrot - RNG Machine Visualizer (client-only)
+-- Inspected place paths: ReplicatedStorage.LuckIcons, ReplicatedStorage.Datas.Animals,
+-- ReplicatedStorage.Shared.BrainrotAssets, ReplicatedStorage.Animations.Animals,
+-- ReplicatedStorage.Sounds.Sfx["RNG Machine"], workspace.RNGMachine, and RNGMachine* tags.
+-- This script never calls FireServer/InvokeServer and never changes replicated RNG data.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local env = getgenv and getgenv() or _G
+local KEY = "SAB_RNG_MACHINE_VISUAL_ONLY_V1"
+
+if env[KEY] and type(env[KEY].Cleanup) == "function" then
+	pcall(env[KEY].Cleanup)
+	task.wait()
+end
+
+-- Immediate loader shown while game modules/assets and WindUI initialize.
+local LoaderGui = Instance.new("ScreenGui")
+LoaderGui.Name = "SmileB_RNGLoader"; LoaderGui.ResetOnSpawn = false; LoaderGui.DisplayOrder = 999999; LoaderGui.Parent = playerGui
+local LoaderCard = Instance.new("Frame"); LoaderCard.AnchorPoint=Vector2.new(0.5,0.5); LoaderCard.Position=UDim2.fromScale(0.5,0.5); LoaderCard.Size=UDim2.fromOffset(250,90); LoaderCard.BackgroundColor3=Color3.fromRGB(17,18,23); LoaderCard.Parent=LoaderGui; Instance.new("UICorner",LoaderCard).CornerRadius=UDim.new(0,14)
+local LoaderSpinner = Instance.new("ImageLabel"); LoaderSpinner.AnchorPoint=Vector2.new(0.5,0.5); LoaderSpinner.Position=UDim2.fromOffset(45,45); LoaderSpinner.Size=UDim2.fromOffset(42,42); LoaderSpinner.BackgroundTransparency=1; LoaderSpinner.Image="rbxassetid://6031094678"; LoaderSpinner.ImageColor3=Color3.fromRGB(94,255,155); LoaderSpinner.Parent=LoaderCard
+local LoaderText = Instance.new("TextLabel"); LoaderText.Position=UDim2.fromOffset(78,18); LoaderText.Size=UDim2.new(1,-90,1,-36); LoaderText.BackgroundTransparency=1; LoaderText.Text="Script By Smile B"; LoaderText.TextColor3=Color3.new(1,1,1); LoaderText.Font=Enum.Font.GothamBold; LoaderText.TextSize=16; LoaderText.TextXAlignment=Enum.TextXAlignment.Left; LoaderText.Parent=LoaderCard
+local LoaderRunning=true
+task.spawn(function() while LoaderRunning and LoaderSpinner.Parent do LoaderSpinner.Rotation=(LoaderSpinner.Rotation+12)%360; task.wait(0.03) end end)
+
+local state = {
+	dead = false,
+	playing = false,
+	token = 0,
+	connections = {},
+	instances = {},
+	tweens = {},
+	tracks = {},
+	sounds = {},
+	troves = {},
+	vfxSnapshots = {},
+	vfxClones = {},
+	sequence = {},
+	brainrot = nil,
+	gui = nil,
+	display = nil,
+	oldSpinningText = nil,
+	armed = false,
+	fakePrompt = nil,
+	realPrompt = nil,
+	realPromptWasEnabled = nil,
+	windWindow = nil,
+}
+env[KEY] = state
+
+local function trackConnection(c)
+	state.connections[#state.connections + 1] = c
+	return c
+end
+
+local function own(instance)
+	state.instances[#state.instances + 1] = instance
+	return instance
+end
+
+local function safeDestroy(instance)
+	if instance then pcall(function() instance:Destroy() end) end
+end
+
+local function stopVisuals()
+	state.playing = false
+	state.token += 1
+	for _, tween in ipairs(state.tweens) do pcall(function() tween:Cancel() end) end
+	table.clear(state.tweens)
+	for _, track in ipairs(state.tracks) do pcall(function() track:Stop(0.1) end) end
+	table.clear(state.tracks)
+	for _, sound in ipairs(state.sounds) do safeDestroy(sound) end
+	table.clear(state.sounds)
+	for _, trove in ipairs(state.troves) do pcall(function() trove:Destroy() end) end
+	table.clear(state.troves)
+	for object, properties in pairs(state.vfxSnapshots) do
+		if object.Parent then for property, value in pairs(properties) do pcall(function() object[property] = value end) end end
+	end
+	table.clear(state.vfxSnapshots)
+	for _, clone in ipairs(state.vfxClones) do safeDestroy(clone) end
+	table.clear(state.vfxClones)
+	if state.display then safeDestroy(state.display); state.display = nil end
+	if state.oldSpinningText then
+		local s = state.oldSpinningText
+		if s.label and s.label.Parent then
+			s.label.Text = s.text
+			s.label.Visible = s.visible
+			s.label.TextXAlignment = s.alignment
+		end
+		if s.image and s.image.Parent and s.imageValue then s.image.Image = s.imageValue end
+		state.oldSpinningText = nil
+	end
+end
+
+local function disarmMachine()
+	state.armed = false
+	if state.fakePrompt then safeDestroy(state.fakePrompt); state.fakePrompt = nil end
+	if state.realPrompt and state.realPrompt.Parent and state.realPromptWasEnabled ~= nil then
+		state.realPrompt.Enabled = state.realPromptWasEnabled
+	end
+	state.realPrompt, state.realPromptWasEnabled = nil, nil
+end
+
+local function cleanup()
+	if state.dead then return end
+	state.dead = true
+	stopVisuals()
+	disarmMachine()
+	if state.windWindow then pcall(function() state.windWindow:Destroy() end); state.windWindow = nil end
+	for _, c in ipairs(state.connections) do pcall(function() c:Disconnect() end) end
+	for _, instance in ipairs(state.instances) do safeDestroy(instance) end
+	table.clear(state.connections)
+	table.clear(state.instances)
+	if env[KEY] == state then env[KEY] = nil end
+end
+state.Cleanup = cleanup
+
+local function taggedPart(tag)
+	for _, object in ipairs(CollectionService:GetTagged(tag)) do
+		if object:IsA("BasePart") and object:IsDescendantOf(workspace) then return object end
+	end
+end
+
+local function getCenter()
+	local center = taggedPart("RNGMachineCenter")
+	if center then return center end
+	local machine = workspace:FindFirstChild("RNGMachine")
+	if machine then
+		return machine:FindFirstChild("Center", true)
+			or machine:FindFirstChildWhichIsA("BasePart", true)
+	end
+end
+
+local function getSpinningText()
+	local machine = workspace:FindFirstChild("RNGMachine")
+	local label = machine and machine:FindFirstChild("SpinningText", true)
+	return label and label:IsA("TextLabel") and label or nil
+end
+
+local AnimalsData = require(ReplicatedStorage:WaitForChild("Datas"):WaitForChild("Animals"))
+local BrainrotAssets = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotAssets"))
+local LuckIcons = ReplicatedStorage:WaitForChild("LuckIcons")
+local LuckIconData = require(ReplicatedStorage:WaitForChild("Datas"):WaitForChild("LuckIcons"))
+local AnimalAnimations = ReplicatedStorage:WaitForChild("Animations"):WaitForChild("Animals")
+local Sounds = ReplicatedStorage:WaitForChild("Sounds"):WaitForChild("Sfx"):WaitForChild("RNG Machine")
+local VFX = require(ReplicatedStorage.Shared:WaitForChild("VFX"))
+local Trove = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local FastOverheadController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("FastOverheadController"))
+local AnimalOverheadController = require(ReplicatedStorage.Controllers:WaitForChild("AnimalOverheadController"))
+local NumberUtils = require(ReplicatedStorage:WaitForChild("Utils"):WaitForChild("NumberUtils"))
+local PlotController = require(ReplicatedStorage.Controllers:WaitForChild("PlotController"))
+local SoundController = require(ReplicatedStorage.Controllers:WaitForChild("SoundController"))
+local VirtualInstance = require(ReplicatedStorage.Shared:WaitForChild("VirtualInstance"))
+local AnimalPromptScript = ReplicatedStorage.Controllers:FindFirstChild("AnimalPrompt", true)
+local AnimalPrompt = AnimalPromptScript and require(AnimalPromptScript)
+
+local function luckNumber(name)
+	return tonumber(tostring(name):match("%d+"))
+end
+
+local luckNames = {}
+for _, child in ipairs(LuckIcons:GetChildren()) do
+	local amount = luckNumber(child.Name)
+	-- 30x/35x are leftover assets in this place snapshot, not valid RNG-machine outcomes.
+	if child:IsA("Model") and amount and amount ~= 30 and amount ~= 35 then
+		luckNames[#luckNames + 1] = child.Name .. (child.Name:match("x$") and "" or "x")
+	end
+end
+table.sort(luckNames, function(a, b) return (luckNumber(a) or 0) < (luckNumber(b) or 0) end)
+do
+	local allowed = {[2]=true,[4]=true,[6]=true,[8]=true,[10]=true,[12]=true}
+	for i = #luckNames, 1, -1 do if not allowed[luckNumber(luckNames[i])] then table.remove(luckNames, i) end end
+end
+
+local MACHINE_RESULTS = {
+	{"Bandito Axolito", 90}, {"Pi Pi Watermelon", 85}, {"Los Noobinis", 80}, {"Toiletto Focaccino", 76},
+	{"Tic Tic Ribbit", 75}, {"Brainrot God Lucky Block", 71}, {"Matteo", 70}, {"Espresso Signora", 67},
+	{"Pakrahmatmamat", 65}, {"Pakrahmatmatina", 62}, {"Quackalena", 61}, {"Brasilini Berimbini", 60},
+	{"La Vacca Saturno Saturnita", 59}, {"Dul Dul Dul", 55}, {"Fishboard", 51}, {"Gelatina Volatina", 50},
+	{"Rocketini Frostini", 49}, {"Chicleteira Bicicleteira", 45}, {"Chicleteirina Bicicleteirina", 40},
+	{"Pogo Pogo Penguin", 35}, {"Peschito Machito", 30}, {"Money Money Puggy", 25}, {"Ketupat Kepat", 20},
+	{"Scorpino Coasterino", 10}, {"Garama and Madundung", 5}, {"Yetimatic", 1},
+	{"La Breakfast Combinasion", 0.5}, {"Dragon Cannelloni", 0.1},
+}
+local machineChance = {}
+local brainrotNames = {}
+for _, entry in ipairs(MACHINE_RESULTS) do
+	local name, chance = entry[1], entry[2]
+	if AnimalsData[name] then brainrotNames[#brainrotNames + 1] = name; machineChance[name] = chance end
+end
+task.spawn(function() pcall(BrainrotAssets.preload, brainrotNames) end)
+state.brainrot = brainrotNames[1]
+
+local function modelBasePart(model)
+	return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function prepareModel(model, targetSize)
+	local primary = model.PrimaryPart
+	-- Cloned game assets can retain CollectionService tags. Remove them so unrelated
+	-- gameplay/anti-cheat observers never treat these camera-only visuals as live animals.
+	for _, tagged in ipairs(model:GetDescendants()) do
+		for _, tag in ipairs(CollectionService:GetTags(tagged)) do CollectionService:RemoveTag(tagged, tag) end
+	end
+	for _, tag in ipairs(CollectionService:GetTags(model)) do CollectionService:RemoveTag(model, tag) end
+	for _, object in ipairs(model:GetDescendants()) do
+		if object:IsA("BasePart") then
+			object.Anchored = false
+			object.CanCollide = false
+			object.CanQuery = false
+			object.CanTouch = false
+			object.Massless = true
+			if not primary then model.PrimaryPart = object; primary = object end
+		elseif object:IsA("LuaSourceContainer") then
+			object:Destroy()
+		end
+	end
+	if primary then primary.Anchored = true end
+	if targetSize then
+		local _, size = model:GetBoundingBox()
+		local largest = math.max(size.X, size.Y, size.Z)
+		if largest > 0 then model:ScaleTo(model:GetScale() * targetSize / largest) end
+	end
+	model:SetAttribute("SABVisualizerScale", model:GetScale())
+	return model
+end
+
+local function playIdle(model, name)
+	local folder = AnimalAnimations:FindFirstChild(name)
+	local animation = folder and (folder:FindFirstChild("RoadBrainrotIdle") or folder:FindFirstChild("Idle"))
+	if not (animation and animation:IsA("Animation")) then return end
+	local controller = model:FindFirstChildOfClass("AnimationController") or model:FindFirstChildOfClass("Humanoid")
+	if not controller then controller = Instance.new("AnimationController"); controller.Parent = model end
+	local animator = controller:FindFirstChildOfClass("Animator") or Instance.new("Animator", controller)
+	local ok, result = pcall(function() return animator:LoadAnimation(animation) end)
+	if ok and result then
+		result.Priority = Enum.AnimationPriority.Idle
+		result.Looped = true
+		result:Play(0.1)
+		result:AdjustSpeed(animation:GetAttribute("Speed") or 1)
+		state.tracks[#state.tracks + 1] = result
+	end
+end
+
+local function cloneLuck(name)
+	local number = luckNumber(name)
+	local source = LuckIcons:FindFirstChild(tostring(number)) or LuckIcons:FindFirstChild(tostring(number) .. "x")
+	if not (source and source:IsA("Model")) then return nil end
+	return prepareModel(source:Clone())
+end
+
+local function cloneBrainrot(name)
+	local source
+	pcall(function() source = BrainrotAssets.getModel(name) end)
+	if not (source and source:IsA("Model")) then pcall(function() source = BrainrotAssets.getModelBestEffort(name, nil, 1) end) end
+	if not (source and source:IsA("Model")) then return nil end
+	local clone = prepareModel(source:Clone())
+	-- Native RNGMachineController removes spin trails/emitters from Brainrot displays.
+	-- Without this, moving a cached model from FAR to the machine can draw lines from the sky.
+	for _, effect in ipairs(clone:GetDescendants()) do
+		if effect:IsA("Trail") or effect:IsA("ParticleEmitter") then
+			effect:Destroy()
+		elseif effect:IsA("Beam") then
+			effect.Enabled = false
+		end
+	end
+	playIdle(clone, name)
+	return clone
+end
+
+local function playSound(name, parent, speed, volumeBoost)
+	local source = Sounds:FindFirstChild(name)
+	if not (source and source:IsA("Sound")) then return end
+	local sound = source:Clone()
+	local attributeId = sound:GetAttribute("SoundId")
+	if type(attributeId) == "string" then sound:SetAttribute("SoundId", nil); sound.SoundId = attributeId end
+	sound.Looped = false
+	sound.PlaybackSpeed = speed or 1
+	sound.Volume *= volumeBoost or 1
+	sound.Parent = parent
+	state.sounds[#state.sounds + 1] = sound
+	sound.Ended:Once(function() safeDestroy(sound) end)
+	sound:Play()
+	return sound
+end
+
+local function flash(model, luck)
+	local part = modelBasePart(model)
+	if not part then return end
+	local glow = LuckIcons:FindFirstChild(tostring(luck))
+	local emitter = glow and glow:FindFirstChild("Glow", true)
+	local color = emitter and emitter:IsA("ParticleEmitter") and emitter.Color.Keypoints[1].Value or Color3.fromRGB(72, 255, 108)
+	local light = Instance.new("PointLight")
+	light.Color, light.Range, light.Brightness, light.Shadows = color, 24, 0, true
+	light.Parent = part
+	local highlight = Instance.new("Highlight")
+	highlight.Adornee, highlight.FillColor, highlight.OutlineColor = model, color, color
+	highlight.FillTransparency, highlight.OutlineTransparency = 1, 1
+	highlight.Parent = model
+	local a = TweenService:Create(light, TweenInfo.new(0.12), {Brightness = 8})
+	local b = TweenService:Create(highlight, TweenInfo.new(0.12), {FillTransparency = 0.2, OutlineTransparency = 0})
+	a:Play(); b:Play()
+	task.delay(0.45, function() safeDestroy(light); safeDestroy(highlight) end)
+end
+
+local function remember(object, property)
+	local snapshot = state.vfxSnapshots[object]
+	if not snapshot then snapshot = {}; state.vfxSnapshots[object] = snapshot end
+	if snapshot[property] == nil then pcall(function() snapshot[property] = object[property] end) end
+end
+
+local function getLuckStyle(amount)
+	local iconModel = LuckIcons:FindFirstChild(tostring(amount))
+	local glow = iconModel and iconModel:FindFirstChild("Glow", true)
+	if glow and glow:IsA("ParticleEmitter") then
+		return glow.Color, glow.Color.Keypoints[1].Value, LuckIconData[("%sx"):format(amount)]
+	end
+	return nil, nil, LuckIconData[("%sx"):format(amount)]
+end
+
+local function styleVfx(root, sequence, color, texture)
+	for _, object in ipairs(root:GetDescendants()) do
+		local iconEffect = object.Name == "LuckIcons" or object.Name == "LuckIcon"
+		if object:IsA("ParticleEmitter") or object:IsA("Beam") or object:IsA("Trail") then
+			if iconEffect and texture then remember(object, "Texture"); object.Texture = texture
+			elseif sequence then remember(object, "Color"); object.Color = sequence end
+		elseif object:IsA("Light") and color then remember(object, "Color"); object.Color = color end
+	end
+end
+
+local function restoreMachineVfx()
+	for object, properties in pairs(state.vfxSnapshots) do
+		if object.Parent then for property, value in pairs(properties) do pcall(function() object[property] = value end) end end
+	end
+	table.clear(state.vfxSnapshots)
+end
+
+local function setLuckyMachineVfx(amount, enabled)
+	if not enabled then restoreMachineVfx(); return end
+	local sequence, color, texture = getLuckStyle(amount)
+	for _, tag in ipairs({"RNGMachineRecolorVFX", "RNGMachinePadVFX"}) do
+		for _, root in ipairs(CollectionService:GetTagged(tag)) do
+			if root:IsDescendantOf(workspace) then
+				if root:IsA("BasePart") and color and tag == "RNGMachineRecolorVFX" then remember(root, "Color"); root.Color = color end
+				styleVfx(root, sequence, color, texture)
+				for _, object in ipairs(root:GetDescendants()) do
+					if object:IsA("ParticleEmitter") or object:IsA("Beam") or object:IsA("Trail") then remember(object, "Enabled") end
+				end
+				pcall(VFX.enable, root, true)
+			end
+		end
+	end
+end
+
+local function emitLuckEffects(amount)
+	local sequence, color, texture = getLuckStyle(amount)
+	local tag = amount >= 12 and "RNGMachine12xExplosionVFX" or (amount >= 10 and "RNGMachine10xExplosionVFX" or "RNGMachineLuckExplosionVFX")
+	for _, root in ipairs(CollectionService:GetTagged(tag)) do
+		if root:IsDescendantOf(workspace) then styleVfx(root, sequence, color, texture); pcall(VFX.emit, root) end
+	end
+	if amount == 10 or amount == 12 then
+		local library = ReplicatedStorage:FindFirstChild("RNGMachineVFX")
+		local source = library and library:FindFirstChild(("%sxLuckMapVFX"):format(amount))
+		if source then
+			local clone = own(source:Clone())
+			state.vfxClones[#state.vfxClones + 1] = clone
+			clone.Name = "SAB_LocalLuckMapVFX"
+			clone.Parent = workspace
+			styleVfx(clone, sequence, color, texture)
+			pcall(VFX.emit, clone)
+			task.delay(10, function() safeDestroy(clone) end)
+		end
+	end
+end
+
+local function playLever()
+	local root = taggedPart("RNGMachineLeverRoot")
+	local controller = root and root.Parent and root.Parent:IsA("Model") and root.Parent:FindFirstChildWhichIsA("Animator", true)
+	local controllerModule = ReplicatedStorage:FindFirstChild("Controllers") and ReplicatedStorage.Controllers:FindFirstChild("RNGMachineController")
+	local animation = controllerModule and controllerModule:FindFirstChild("LeverAnimation")
+	if controller and animation and animation:IsA("Animation") then
+		local ok, track = pcall(function() return controller:LoadAnimation(animation) end)
+		if ok and track then track:Play(0.1); state.tracks[#state.tracks + 1] = track end
+	end
+end
+
+local function setMachineText(text)
+	local label = getSpinningText()
+	if not label then return end
+	if not state.oldSpinningText then
+		local image = label:FindFirstChild("ImageLabel")
+		state.oldSpinningText = {label = label, text = label.Text, visible = label.Visible, alignment = label.TextXAlignment,
+			image = image, imageValue = image and image:IsA("ImageLabel") and image.Image or nil}
+	end
+	label.Text = text
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.Visible = true
+	local image = label:FindFirstChild("ImageLabel")
+	if image and image:IsA("ImageLabel") then
+		local ok, thumbnail = pcall(Players.GetUserThumbnailAsync, Players, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+		if ok then image.Image = thumbnail end
+	end
+end
+
+local FAR = CFrame.new(0, 100000, 100000)
+
+local function groundedCFrame(model, desired)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.IgnoreWater = true
+	params.FilterDescendantsInstances = {state.display, player.Character}
+	local origin = desired.Position + Vector3.new(0, 25, 0)
+	local hit = workspace:Raycast(origin, Vector3.new(0, -100, 0), params)
+	if not hit then return desired end
+	local pivot = model:GetPivot()
+	local box, size = model:GetBoundingBox()
+	local footOffset = pivot.Position.Y - (box.Position.Y - size.Y * 0.5)
+	local position = Vector3.new(desired.Position.X, hit.Position.Y + footOffset, desired.Position.Z)
+	return CFrame.fromMatrix(position, desired.XVector, desired.YVector, desired.ZVector)
+end
+
+local function walkFacingCFrame(position, direction)
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude < 0.001 then flat = Vector3.new(0, 0, -1) end
+	-- The road controller uses movement yaw directly. The +90° offset is display-only.
+	return CFrame.lookAt(position, position + flat.Unit)
+end
+
+local function getLocalBaseDestination()
+	local ok, plot = pcall(PlotController.GetMyPlot, PlotController)
+	if not ok or not plot or not plot.PlotModel then return nil end
+	local plotModel = plot.PlotModel
+	local delivery = plotModel:FindFirstChild("DeliveryHitbox") or plotModel:FindFirstChild("Entrance", true)
+	local podiums = plotModel:FindFirstChild("AnimalPodiums")
+	local animalList = plot.Channel and plot.Channel:Get("AnimalList") or {}
+	local emptyPodium
+	if podiums then
+		local children = podiums:GetChildren()
+		table.sort(children, function(a,b) return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge) end)
+		for _, podium in ipairs(children) do
+			local index = tonumber(podium.Name) or podium.Name
+			local entry = animalList[index] or animalList[tostring(index)]
+			local spawn = podium:FindFirstChild("Base") and podium.Base:FindFirstChild("Spawn")
+			if spawn and (entry == nil or entry == "Empty") and not podium:GetAttribute("DeferDisplay") then emptyPodium = podium; break end
+		end
+	end
+	return {plot=plot, model=plotModel, delivery=delivery, podium=emptyPodium}
+end
+
+local function simulateLocalPodium(model, name, podium, token)
+	local spawn = podium and podium:FindFirstChild("Base") and podium.Base:FindFirstChild("Spawn")
+	if not (spawn and model.Parent) then return false end
+	model:PivotTo(spawn:GetPivot())
+	local idleFolder = AnimalAnimations:FindFirstChild(name)
+	local idle = idleFolder and (idleFolder:FindFirstChild("Idle") or idleFolder:FindFirstChild("RoadBrainrotIdle"))
+	local animator = model:FindFirstChildWhichIsA("Animator", true)
+	if animator and idle then local ok, track=pcall(function() return animator:LoadAnimation(idle) end); if ok and track then track.Looped=true; track:Play(0.1); state.tracks[#state.tracks+1]=track end end
+	local trove = Trove.new(); state.troves[#state.troves+1]=trove
+	local generation = type(AnimalsData[name] and AnimalsData[name].Generation)=="number" and AnimalsData[name].Generation or 0
+	if name:find("Lucky Block",1,true) then generation=0 end
+	local startedAt = os.clock()
+	local claim = podium:FindFirstChild("Claim") and podium.Claim:FindFirstChild("Main")
+	if claim and claim:IsA("BasePart") then
+		local ok = pcall(function()
+		local cashGui, removeCash = FastOverheadController.createFastOverhead({adornee=claim, guiTemplate=FastOverheadController.GuiTemplates.CashPad})
+		trove:Add(removeCash)
+		local collect = VirtualInstance.wrap(cashGui.Collect)
+		local collectAmount = VirtualInstance.wrap(cashGui.CollectAmount)
+		local offline = VirtualInstance.wrap(cashGui.Offline); offline.Visible=false
+		local collectedAt=os.clock()
+		local wasInside=false
+		trove:Add(task.spawn(function()
+			while model.Parent and token==state.token do
+				collectAmount.Text=("$%s"):format(NumberUtils:ToString(math.floor(os.clock()-collectedAt)*generation)); collect.Visible=true
+				local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+				local inside=root and (Vector3.new(root.Position.X,claim.Position.Y,root.Position.Z)-claim.Position).Magnitude <= math.max(claim.Size.X,claim.Size.Z)*0.65
+				if inside and not wasInside then collectedAt=os.clock(); collectAmount.Text="$0"; SoundController:PlaySound("Sounds.Sfx.Success") end
+				wasInside=inside and true or false
+				task.wait(0.1)
+			end
+		end))
+		end)
+		if not ok then warn("[RNG Visualizer] Native local cash pad could not be created") end
+	end
+	local attachment=spawn:FindFirstChild("PromptAttachment")
+	if not attachment then attachment=Instance.new("Attachment"); attachment.Name="PromptAttachment"; attachment.Parent=spawn; trove:Add(attachment) end
+	if not AnimalPrompt then return true end
+	-- Empty podium prompts already occupy E/F locally. Disable and restore them so the
+	-- visual Brainrot's authentic prompts are not suppressed by OnePerButton exclusivity.
+	for _, existing in ipairs(attachment:GetChildren()) do
+		if existing:IsA("ProximityPrompt") then local old=existing.Enabled; existing.Enabled=false; trove:Add(function() if existing.Parent then existing.Enabled=old end end) end
+	end
+	local grab=AnimalPrompt.new(podium.Name,name,attachment,{Exclusivity=Enum.ProximityPromptExclusivity.AlwaysShow})
+	local sell=AnimalPrompt.new(podium.Name,name,attachment,{KeyboardKeyCode=Enum.KeyCode.F,GamepadKeyCode=Enum.KeyCode.ButtonY,UIOffset=Vector2.new(0,-72),Exclusivity=Enum.ProximityPromptExclusivity.AlwaysShow})
+	trove:Add(function() grab:Destroy(); sell:Destroy() end)
+	local grabbed=false
+	grab:SetState("Grab",function()
+		if not model.Parent then return end
+		SoundController:PlaySound("Sounds.Sfx.Activated")
+		grabbed=not grabbed; grab:SetState(grabbed and "Place" or "Grab")
+		if grabbed then
+			trove:Add(game:GetService("RunService").RenderStepped:Connect(function() local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart"); if grabbed and root and model.Parent then model:PivotTo(root.CFrame*CFrame.new(0,0,-4)) end end))
+		else model:PivotTo(spawn:GetPivot()) end
+	end)
+	sell:SetState("Sell",function() SoundController:PlaySound("Sounds.Sfx.Activated"); safeDestroy(model); trove:Destroy() end)
+	return true
+end
+
+local function walkPurchasedModel(model, name, token)
+	local destination = getLocalBaseDestination()
+	local target = destination and (destination.delivery or (destination.podium and destination.podium.Base.Spawn))
+	if not (target and target:IsA("BasePart")) then warn("[RNG Visualizer] Local base destination is not streamed in; keeping purchased Brainrot at the machine"); return end
+	local animationFolder = AnimalAnimations:FindFirstChild(name)
+	local walkAnimation = animationFolder and animationFolder:FindFirstChild("Walk")
+	local animator = model:FindFirstChildWhichIsA("Animator", true)
+	for _, active in ipairs(animator and animator:GetPlayingAnimationTracks() or {}) do active:AdjustWeight(0.001,0.1) end
+	if animator and walkAnimation and walkAnimation:IsA("Animation") then
+		local ok, track = pcall(function() return animator:LoadAnimation(walkAnimation) end)
+		if ok and track then track.Looped = true; track.Priority=Enum.AnimationPriority.Movement; track:Play(0.1,1,1); track:AdjustWeight(1,0.1); track:AdjustSpeed((walkAnimation:GetAttribute("Speed") or 1)*0.75); state.tracks[#state.tracks + 1] = track end
+	end
+	local start = model:GetPivot()
+	local finishPosition = target.Position
+	local direction = Vector3.new(finishPosition.X - start.Position.X, 0, finishPosition.Z - start.Position.Z)
+	local finish = walkFacingCFrame(finishPosition, direction.Magnitude > 0.01 and direction or start.LookVector)
+	local driver = Instance.new("CFrameValue"); driver.Value = start; driver.Parent = state.display
+	local connection = driver.Changed:Connect(function(value) if token == state.token and model.Parent then model:PivotTo(groundedCFrame(model, value)) end end)
+	state.connections[#state.connections + 1] = connection
+	local duration = math.clamp((finishPosition - start.Position).Magnitude / 12, 2, 8)
+	local tween = TweenService:Create(driver, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Value = finish})
+	state.tweens[#state.tweens + 1] = tween; tween:Play(); tween.Completed:Wait()
+	connection:Disconnect(); safeDestroy(driver)
+	if token~=state.token or not model.Parent then return end
+	if destination.podium then
+		local ok, placed = pcall(simulateLocalPodium,model,name,destination.podium,token)
+		if ok and placed then return end
+		warn("[RNG Visualizer] Podium presentation failed; keeping Brainrot at delivery")
+	end
+	-- A full base has no native empty slot. Keep the local result waiting at delivery.
+	model:PivotTo(groundedCFrame(model, target:GetPivot() * CFrame.new(0,0,-3)))
+end
+
+local function addNativeOverhead(model, name, lifetime)
+	local data = AnimalsData[name]
+	local primary = model.PrimaryPart
+	if not (data and primary) or data.HideOverhead then return nil end
+	local trove = Trove.new()
+	state.troves[#state.troves + 1] = trove
+	local attachment = model:FindFirstChild("OVERHEAD_ATTACHMENT", true)
+	if not (attachment and attachment:IsA("Attachment")) then
+		attachment = Instance.new("Attachment")
+		attachment.Name = "RNGMachineOverhead"
+		attachment.Parent = primary
+		attachment.WorldCFrame = model:GetPivot() * CFrame.new(0, model:GetExtentsSize().Y * 0.75 * (data.OverheadYOffsetModifier or 1), 0)
+		trove:Add(attachment)
+	end
+	local overhead, removeOverhead = FastOverheadController.createFastOverhead({
+		adornee = attachment,
+		guiTemplate = FastOverheadController.GuiTemplates.AnimalOverhead,
+	})
+	trove:Add(removeOverhead)
+	AnimalOverheadController:Populate({HidePrice=true, Overhead=overhead, Index=name, Player=player, Trove=trove})
+	if overhead:FindFirstChild("Generation") then
+		local generation = data.Generation
+		if name:find("Lucky Block", 1, true) then generation = 0 end
+		overhead.Generation.Text = ("$%*/s"):format(NumberUtils:ToString(type(generation) == "number" and generation or 0))
+		overhead.Generation.Visible = not data.HideGeneration
+	end
+	local timerLabel = overhead:FindFirstChild("Stolen")
+	if timerLabel and timerLabel:IsA("TextLabel") then
+		timerLabel.Visible = true; timerLabel.LayoutOrder = -1; timerLabel.Size = UDim2.fromScale(1, 0.25)
+		local expires = os.clock() + lifetime
+		trove:Add(task.spawn(function()
+			while model.Parent and os.clock() < expires do
+				timerLabel.Text = ("%ds"):format(math.max(0, math.ceil(expires - os.clock())))
+				task.wait(0.1)
+			end
+			if timerLabel.Parent then timerLabel.Text = "0s" end
+		end))
+	end
+	model.Destroying:Once(function() pcall(function() trove:Destroy() end) end)
+	return overhead, timerLabel
+end
+
+local function addLocalPurchasePrompt(model, name, token)
+	local part = modelBasePart(model)
+	if not part then return end
+	local overhead, timerLabel = addNativeOverhead(model, name, 60)
+	local attachment = Instance.new("Attachment"); attachment.Name = "PromptAttachment"; attachment.Parent = part
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SAB_LocalPurchase"; prompt.ActionText = "Purchase"; prompt.ObjectText = name
+	prompt.HoldDuration = 0.25; prompt.RequiresLineOfSight = false; prompt.MaxActivationDistance = 12
+	prompt.Style = Enum.ProximityPromptStyle.Custom; prompt.Exclusivity = Enum.ProximityPromptExclusivity.OnePerButton
+	prompt.Parent = attachment
+	local purchased = false
+	trackConnection(prompt.Triggered:Connect(function(triggeringPlayer)
+		if triggeringPlayer ~= player or token ~= state.token then return end
+		purchased = true
+		prompt.Enabled = false
+		SoundController:PlaySound("Sounds.Sfx.Activated")
+		if timerLabel and timerLabel.Parent then timerLabel.Visible=false end
+		if overhead and overhead.Parent and overhead:FindFirstChild("Generation") then overhead.Generation.Visible=true end
+		task.spawn(walkPurchasedModel, model, name, token)
+	end))
+	task.delay(60, function()
+		if not purchased and token == state.token and model.Parent then prompt.Enabled = false; safeDestroy(model) end
+	end)
+end
+
+local function animateResult(kind, name, stage, token)
+	local center = getCenter()
+	if not center then return false, "RNGMachineCenter tag was not found" end
+	if not state.display then
+		state.display = Instance.new("Folder")
+		state.display.Name = "SAB_RNGMachineVisualizerDisplay"
+		state.display.Parent = workspace.CurrentCamera or workspace
+	end
+	local entries = {}
+	local desiredIndex = 7
+	for i = 1, 10 do
+		local candidate
+		if i == desiredIndex then
+			candidate = kind == "Luck" and cloneLuck(name) or cloneBrainrot(name)
+		else
+			local fallback = brainrotNames[((i * 17 + stage - 2) % math.max(1, #brainrotNames)) + 1]
+			candidate = fallback and cloneBrainrot(fallback)
+		end
+		if candidate then candidate.Parent = state.display; candidate:PivotTo(FAR); entries[i] = candidate end
+	end
+	if not entries[desiredIndex] then return false, "Could not load display model: " .. tostring(name) end
+	playLever()
+	local spinner = Instance.new("NumberValue")
+	spinner.Name = "Spinner"
+	spinner.Parent = state.display
+	local lastTick, lastIndex = 0, -1
+	-- Slightly quicker than the inspected game's default, without feeling rushed.
+	local duration = math.max(2.2, 3.05 - (stage - 1) * 0.08)
+	local rotations = 7 * 10 + desiredIndex
+	local connection = spinner.Changed:Connect(function(value)
+		if token ~= state.token or not state.playing then return end
+		local pivot = center:GetPivot()
+		for i, model in pairs(entries) do
+			if model.Parent then
+				local phase = math.clamp((value - (i - 1)) % 10 * 0.5, 0, 1)
+				local arc = math.sin(phase * math.pi)
+				if arc < 0.01 then model:PivotTo(FAR) else
+					local baseScale = model:GetAttribute("SABVisualizerScale") or model:GetScale()
+					model:ScaleTo(math.max(0.001, baseScale * arc))
+					local desired = pivot * CFrame.new(arc * -5 + 5, 0, (phase - 0.5) * 20) * CFrame.Angles(0, math.pi / 2, 0)
+					model:PivotTo(groundedCFrame(model, desired))
+				end
+			end
+		end
+		local current = (math.floor(value + 0.5) - 1) % 10 + 1
+		if current ~= lastIndex and os.clock() - lastTick >= 0.1 then
+			lastIndex, lastTick = current, os.clock()
+			playSound(stage == 1 and "RegularSpin" or "LuckySpin", center, math.min((stage - 1) * 0.08 + 1, 1.4), stage <= 1 and 1 or math.min((stage - 2) * 0.12 + 1.12, 1.8))
+		end
+	end)
+	state.connections[#state.connections + 1] = connection
+	local tween = TweenService:Create(spinner, TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Value = rotations})
+	state.tweens[#state.tweens + 1] = tween
+	tween:Play()
+	tween.Completed:Wait()
+	if token ~= state.token or not state.playing then return false end
+	connection:Disconnect()
+	spinner:Destroy()
+	local winner = entries[desiredIndex]
+	for i, model in pairs(entries) do if i ~= desiredIndex then safeDestroy(model) end end
+	winner:ScaleTo(winner:GetAttribute("SABVisualizerScale") or winner:GetScale())
+	winner:PivotTo(groundedCFrame(winner, center:GetPivot() * CFrame.Angles(0, math.pi / 2, 0)))
+	if kind == "Luck" then
+		local amount = luckNumber(name) or 1
+		playSound("LuckLanded", center, math.min((stage - 1) * 0.08 + 1, 1.4), math.min((stage - 1) * 0.12 + 1.2, 1.8))
+		flash(winner, amount)
+		setLuckyMachineVfx(amount, true)
+		emitLuckEffects(amount)
+	else
+		setLuckyMachineVfx(1, false)
+		playSound("BrainrotLanded", center, math.min((stage - 1) * 0.08 + 1, 1.4), math.min((stage - 2) * 0.12 + 1.12, 1.8))
+		addLocalPurchasePrompt(winner, name, token)
+	end
+	return true
+end
+
+-- Compact UI
+local gui = own(Instance.new("ScreenGui"))
+gui.Name = "SAB_RNGMachineVisualizer"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = playerGui
+state.gui = gui
+
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.fromOffset(390, 430)
+main.Position = UDim2.new(0.5, -195, 0.5, -215)
+main.BackgroundColor3 = Color3.fromRGB(18, 19, 25)
+main.BorderSizePixel = 0
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+local stroke = Instance.new("UIStroke", main); stroke.Color = Color3.fromRGB(91, 255, 150); stroke.Thickness = 1.5
+local phoneScale = Instance.new("UIScale", main)
+local function fitToScreen()
+	local camera = workspace.CurrentCamera
+	local viewport = camera and camera.ViewportSize or Vector2.new(390, 430)
+	phoneScale.Scale = math.clamp(math.min((viewport.X - 20) / 390, (viewport.Y - 20) / 430), 0.62, 1)
+end
+fitToScreen()
+if workspace.CurrentCamera then trackConnection(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitToScreen)) end
+
+local top = Instance.new("TextButton")
+top.Size = UDim2.new(1, 0, 0, 42); top.BackgroundColor3 = Color3.fromRGB(28, 30, 39); top.BorderSizePixel = 0
+top.Text = "  RNG MACHINE VISUALIZER  •  LOCAL ONLY"; top.TextColor3 = Color3.fromRGB(235, 255, 242)
+top.TextXAlignment = Enum.TextXAlignment.Left; top.Font = Enum.Font.GothamBold; top.TextSize = 14; top.AutoButtonColor = false; top.Parent = main
+Instance.new("UICorner", top).CornerRadius = UDim.new(0, 12)
+
+local close = Instance.new("TextButton")
+close.Size = UDim2.fromOffset(34, 28); close.Position = UDim2.new(1, -39, 0, 7); close.BackgroundColor3 = Color3.fromRGB(204, 70, 75)
+close.Text = "×"; close.TextColor3 = Color3.new(1,1,1); close.Font = Enum.Font.GothamBold; close.TextSize = 20; close.Parent = top
+Instance.new("UICorner", close).CornerRadius = UDim.new(0, 8)
+trackConnection(close.Activated:Connect(cleanup))
+local hide = Instance.new("TextButton")
+hide.Size = UDim2.fromOffset(30, 28); hide.Position = UDim2.new(1, -74, 0, 7); hide.BackgroundColor3 = Color3.fromRGB(63, 66, 80)
+hide.Text = "—"; hide.TextColor3 = Color3.new(1,1,1); hide.Font = Enum.Font.GothamBold; hide.TextSize = 15; hide.Parent = top
+Instance.new("UICorner", hide).CornerRadius = UDim.new(0, 8)
+local reopen = Instance.new("TextButton")
+reopen.Size = UDim2.fromOffset(54, 40); reopen.Position = UDim2.new(0, 10, 0.5, -20); reopen.BackgroundColor3 = Color3.fromRGB(35, 150, 82)
+reopen.Text = "RNG"; reopen.TextColor3 = Color3.new(1,1,1); reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 12; reopen.Visible = false; reopen.Parent = gui
+Instance.new("UICorner", reopen).CornerRadius = UDim.new(0, 10)
+trackConnection(hide.Activated:Connect(function() main.Visible = false; reopen.Visible = true end))
+trackConnection(reopen.Activated:Connect(function() main.Visible = true; reopen.Visible = false end))
+
+do
+	local dragging, startMouse, startPos
+	trackConnection(top.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging, startMouse, startPos = true, input.Position, main.Position
+		end
+	end))
+	trackConnection(UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - startMouse
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end))
+	trackConnection(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end))
+end
+
+local function label(text, y, size)
+	local x = Instance.new("TextLabel"); x.BackgroundTransparency = 1; x.Position = UDim2.fromOffset(14, y); x.Size = UDim2.new(1, -28, 0, size or 22)
+	x.Text = text; x.TextColor3 = Color3.fromRGB(210, 214, 225); x.TextXAlignment = Enum.TextXAlignment.Left; x.Font = Enum.Font.GothamSemibold; x.TextSize = 12; x.Parent = main
+	return x
+end
+
+label("LUCK SEQUENCE  (click to queue)", 50)
+local luckScroll = Instance.new("ScrollingFrame")
+luckScroll.Position = UDim2.fromOffset(14, 74); luckScroll.Size = UDim2.new(1, -28, 0, 54); luckScroll.BackgroundColor3 = Color3.fromRGB(12,13,18)
+luckScroll.BorderSizePixel = 0; luckScroll.ScrollBarThickness = 3; luckScroll.ScrollingDirection = Enum.ScrollingDirection.X; luckScroll.CanvasSize = UDim2.new(0, math.max(360, #luckNames * 58), 0, 0); luckScroll.Parent = main
+Instance.new("UICorner", luckScroll).CornerRadius = UDim.new(0, 8)
+local luckLayout = Instance.new("UIListLayout", luckScroll); luckLayout.FillDirection = Enum.FillDirection.Horizontal; luckLayout.Padding = UDim.new(0, 5); luckLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+local luckPadding = Instance.new("UIPadding", luckScroll); luckPadding.PaddingLeft = UDim.new(0,5); luckPadding.PaddingRight = UDim.new(0,5)
+
+local sequenceText = label("Queue: empty", 133, 34)
+sequenceText.TextWrapped = true; sequenceText.TextColor3 = Color3.fromRGB(122, 255, 170)
+local clearQueue = Instance.new("TextButton"); clearQueue.Size = UDim2.fromOffset(56, 24); clearQueue.Position = UDim2.new(1,-70,0,138); clearQueue.Text = "CLEAR"; clearQueue.Font = Enum.Font.GothamBold; clearQueue.TextSize = 10
+clearQueue.BackgroundColor3 = Color3.fromRGB(55,58,70); clearQueue.TextColor3 = Color3.new(1,1,1); clearQueue.Parent = main; Instance.new("UICorner",clearQueue).CornerRadius=UDim.new(0,6)
+local function refreshSequence()
+	sequenceText.Text = #state.sequence == 0 and "Queue: empty" or ("Queue: " .. table.concat(state.sequence, "  →  "))
+end
+trackConnection(clearQueue.Activated:Connect(function() table.clear(state.sequence); refreshSequence() end))
+for _, name in ipairs(luckNames) do
+	local button = Instance.new("TextButton"); button.Size = UDim2.fromOffset(53,40); button.BackgroundColor3 = Color3.fromRGB(45,78,58); button.Text = name
+	button.TextColor3 = Color3.new(1,1,1); button.Font = Enum.Font.GothamBold; button.TextSize = 13; button.Parent = luckScroll; Instance.new("UICorner",button).CornerRadius=UDim.new(0,7)
+	trackConnection(button.Activated:Connect(function() if #state.sequence < 12 then state.sequence[#state.sequence+1]=name; refreshSequence() end end))
+end
+
+label("RNG MACHINE BRAINROT  (live place data)", 174)
+local search = Instance.new("TextBox"); search.Position = UDim2.fromOffset(14,198); search.Size = UDim2.new(1,-28,0,34); search.BackgroundColor3=Color3.fromRGB(31,33,42)
+search.PlaceholderText="Search Brainrots..."; search.Text=""; search.TextColor3=Color3.new(1,1,1); search.PlaceholderColor3=Color3.fromRGB(145,148,160); search.Font=Enum.Font.Gotham; search.TextSize=12; search.ClearTextOnFocus=false; search.Parent=main; Instance.new("UICorner",search).CornerRadius=UDim.new(0,8)
+local results = Instance.new("ScrollingFrame"); results.Position=UDim2.fromOffset(14,238); results.Size=UDim2.new(1,-28,0,100); results.BackgroundColor3=Color3.fromRGB(12,13,18); results.BorderSizePixel=0; results.ScrollBarThickness=3; results.AutomaticCanvasSize=Enum.AutomaticSize.Y; results.CanvasSize=UDim2.new(); results.Parent=main; Instance.new("UICorner",results).CornerRadius=UDim.new(0,8)
+local resultsLayout=Instance.new("UIListLayout",results); resultsLayout.Padding=UDim.new(0,3)
+local selected = label(("Selected: %s  •  %s%%"):format(tostring(state.brainrot or "none"), tostring(machineChance[state.brainrot] or "?")), 343, 24); selected.Size=UDim2.new(1,-138,0,24); selected.TextColor3=Color3.fromRGB(255,218,105)
+local arm=Instance.new("TextButton"); arm.Position=UDim2.new(1,-124,0,343); arm.Size=UDim2.fromOffset(110,24); arm.BackgroundColor3=Color3.fromRGB(54,64,86); arm.Text="ARM MACHINE"; arm.TextColor3=Color3.new(1,1,1); arm.Font=Enum.Font.GothamBold; arm.TextSize=10; arm.Parent=main; Instance.new("UICorner",arm).CornerRadius=UDim.new(0,7)
+local resultButtons = {}
+for _, name in ipairs(brainrotNames) do
+	local data = AnimalsData[name]
+	local displayName = tostring((data and data.DisplayName) or name)
+	local button=Instance.new("TextButton"); button.Name=name; button.Size=UDim2.new(1,-5,0,27); button.BackgroundColor3=Color3.fromRGB(30,32,40); button.BorderSizePixel=0
+	button.Text=("  %s   •   %s%%"):format(displayName, tostring(machineChance[name] or "?")); button.TextXAlignment=Enum.TextXAlignment.Left; button.TextColor3=Color3.fromRGB(225,227,235); button.Font=Enum.Font.Gotham; button.TextSize=11; button.Parent=results
+	resultButtons[#resultButtons+1]={button=button,search=(name.." "..displayName):lower()}
+	trackConnection(button.Activated:Connect(function() state.brainrot=name; selected.Text=("Selected: %s  •  %s%%"):format(displayName, tostring(machineChance[name] or "?")) end))
+end
+trackConnection(search:GetPropertyChangedSignal("Text"):Connect(function()
+	local query=search.Text:lower()
+	for _, item in ipairs(resultButtons) do item.button.Visible=query=="" or item.search:find(query,1,true)~=nil end
+end))
+
+local status=label("Ready — visuals are visible only to you", 369, 20); status.TextColor3=Color3.fromRGB(156,160,174)
+local play=Instance.new("TextButton"); play.Position=UDim2.fromOffset(14,394); play.Size=UDim2.new(0.66,-18,0,28); play.BackgroundColor3=Color3.fromRGB(50,185,101); play.Text="PLAY SEQUENCE"; play.TextColor3=Color3.new(1,1,1); play.Font=Enum.Font.GothamBold; play.TextSize=12; play.Parent=main; Instance.new("UICorner",play).CornerRadius=UDim.new(0,8)
+local stop=Instance.new("TextButton"); stop.Position=UDim2.new(0.66,4,0,394); stop.Size=UDim2.new(0.34,-18,0,28); stop.BackgroundColor3=Color3.fromRGB(198,70,76); stop.Text="STOP / RESET"; stop.TextColor3=Color3.new(1,1,1); stop.Font=Enum.Font.GothamBold; stop.TextSize=11; stop.Parent=main; Instance.new("UICorner",stop).CornerRadius=UDim.new(0,8)
+
+local function startSequence()
+	if state.playing then return end
+	if not getCenter() then status.Text="Move near the RNG Machine (center not streamed in)"; return end
+	if #state.sequence==0 and not state.brainrot then status.Text="Choose at least one result"; return end
+	stopVisuals(); state.playing=true; state.token+=1; local token=state.token
+	task.spawn(function()
+		setMachineText(player.DisplayName.." is spinning...")
+		local stage=1
+		for _, luck in ipairs(state.sequence) do
+			if token~=state.token then return end
+			status.Text=("Stage %d — landing %s"):format(stage,luck)
+			local ok,err=animateResult("Luck",luck,stage,token)
+			if not ok then if err then status.Text=err end; stopVisuals(); return end
+			task.wait(); if state.display then safeDestroy(state.display); state.display=nil end; stage+=1
+		end
+		if state.brainrot and token==state.token then
+			status.Text=("Final stage — landing %s"):format(state.brainrot)
+			local ok,err=animateResult("Brainrot",state.brainrot,stage,token)
+			if not ok then if err then status.Text=err end; stopVisuals(); return end
+		end
+		if token==state.token then state.playing=false; status.Text="Complete — press STOP / RESET to restore" end
+	end)
+end
+
+local function armMachine()
+	if state.armed then
+		disarmMachine(); arm.Text="ARM MACHINE"; arm.BackgroundColor3=Color3.fromRGB(54,64,86); status.Text="Machine trigger disarmed"; return
+	end
+	local real
+	for _, prompt in ipairs(CollectionService:GetTagged("RNGMachineSpinPrompt")) do
+		if prompt:IsA("ProximityPrompt") and prompt:IsDescendantOf(workspace) then real=prompt; break end
+	end
+	if not real then status.Text="Move near the RNG Machine (spin prompt not streamed in)"; return end
+	state.realPrompt, state.realPromptWasEnabled = real, real.Enabled
+	real.Enabled = false
+	local fake = real:Clone()
+	for _, tag in ipairs(CollectionService:GetTags(fake)) do CollectionService:RemoveTag(fake, tag) end
+	fake.Name="SAB_LocalSpinPrompt"; fake.Enabled=true; fake.Style=Enum.ProximityPromptStyle.Default
+	fake.ActionText=real.ActionText ~= "" and real.ActionText or "Spin"; fake.ObjectText="RNG Machine"; fake.Parent=real.Parent
+	state.fakePrompt=fake; state.armed=true; arm.Text="ARMED: USE MACHINE"; arm.BackgroundColor3=Color3.fromRGB(43,166,91); status.Text="Armed — use the machine's Spin button"
+	trackConnection(real:GetPropertyChangedSignal("Enabled"):Connect(function() if state.armed and real.Enabled then real.Enabled=false end end))
+	trackConnection(fake.Triggered:Connect(function(triggeringPlayer) if triggeringPlayer==player then startSequence() end end))
+end
+
+trackConnection(stop.Activated:Connect(function() stopVisuals(); status.Text="Stopped — machine visuals restored" end))
+trackConnection(play.Activated:Connect(startSequence))
+trackConnection(arm.Activated:Connect(armMachine))
+
+-- WindUI interface (official current distribution/API).
+-- Keep the legacy GUI disabled as a fallback implementation reference only.
+gui.Enabled = false
+local windOk, WindUI = pcall(function()
+	return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+end)
+if windOk and WindUI then
+	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(700, 500)
+	local windSize = UDim2.fromOffset(math.clamp(viewport.X - 30, 330, 620), math.clamp(viewport.Y - 50, 390, 500))
+	local Window = WindUI:CreateWindow({
+		Title = "RNG Machine Visualizer",
+		Icon = "dices",
+		Author = "Local only",
+		Folder = "SABRNGVisualizer",
+		Size = windSize,
+		MinSize = Vector2.new(320, 360),
+		MaxSize = Vector2.new(720, 620),
+		ToggleKey = Enum.KeyCode.RightShift,
+		Transparent = true,
+		Theme = "Dark",
+		Resizable = true,
+		SideBarWidth = 150,
+		HideSearchBar = false,
+		ScrollBarEnabled = true,
+		User = {Enabled = false},
+	})
+	state.windWindow = Window
+	local MainTab = Window:Tab({Title = "Machine", Icon = "sparkles"})
+
+	local Setup = MainTab:Section({Title = "RNG Machine Setup", Box = true, Opened = true})
+	local resultSource, selectedMachine, selectedFun = "Machine", brainrotNames[1], nil
+	Setup:Dropdown({
+		Title = "Result source",
+		Desc = "Explicitly choose which Brainrot list is active",
+		Values = {"Machine", "Fun only"}, Value = "Machine", Multi = false, AllowNone = false,
+		Callback = function(value)
+			resultSource = value
+			state.brainrot = value == "Fun only" and (selectedFun or selectedMachine) or selectedMachine
+		end,
+	})
+	table.clear(state.sequence)
+	if luckNames[1] then state.sequence[1] = luckNames[1] end
+	refreshSequence()
+	Setup:Dropdown({
+		Title = "Target luck",
+		Desc = "Earlier luck tiers are added automatically",
+		Values = luckNames,
+		Value = luckNames[1],
+		Multi = false,
+		AllowNone = false,
+		Callback = function(value)
+			table.clear(state.sequence)
+			local target = luckNumber(value)
+			for _, luck in ipairs(luckNames) do
+				if (luckNumber(luck) or math.huge) <= (target or 0) then state.sequence[#state.sequence + 1] = luck end
+			end
+			refreshSequence()
+		end,
+	})
+	local machineDisplay, machineLookup = {}, {}
+	for _, name in ipairs(brainrotNames) do
+		local display = ("%s  •  %s%%"):format((AnimalsData[name] and AnimalsData[name].DisplayName) or name, tostring(machineChance[name] or "?"))
+		machineDisplay[#machineDisplay + 1] = display; machineLookup[display] = name
+	end
+	Setup:Dropdown({
+		Title = "Machine Brainrot",
+		Desc = "Verified RNG Machine result",
+		Values = machineDisplay,
+		Value = machineDisplay[1],
+		Multi = false,
+		AllowNone = false,
+		Callback = function(value)
+			selectedMachine = machineLookup[value] or selectedMachine
+			if resultSource == "Machine" then state.brainrot = selectedMachine end
+		end,
+	})
+	local machineSet = {}; for _, name in ipairs(brainrotNames) do machineSet[name] = true end
+	local otherDisplay, otherLookup = {}, {}
+	for name, data in pairs(AnimalsData) do
+		if type(name) == "string" and type(data) == "table" and not machineSet[name] and data.DisplayName then
+			local display = "🔴 " .. tostring(data.DisplayName)
+			-- Preserve duplicate display names without inventing a different model key.
+			if otherLookup[display] then display = display .. "  [" .. name .. "]" end
+			otherDisplay[#otherDisplay + 1] = display; otherLookup[display] = name
+		end
+	end
+	table.sort(otherDisplay, function(a, b) return a:lower() < b:lower() end)
+	local Other = MainTab:Section({Title = "🔴 OTHER BRAINROTS — FUN ONLY", Box = true, Opened = true})
+	Other:Paragraph({
+		Title = "Not obtainable from the RNG Machine",
+		Desc = "These are shown in red and are available only for local visualization.",
+		Color = "Red",
+	})
+	Other:Dropdown({
+		Title = "All other Brainrots",
+		Desc = ("%d live Animals entries"):format(#otherDisplay),
+		Values = otherDisplay,
+		Multi = false,
+		AllowNone = true,
+		Callback = function(value)
+			local name = otherLookup[value]
+			if name then selectedFun=name; if resultSource=="Fun only" then state.brainrot=name end; WindUI:Notify({Title="Fun result selected", Content=((AnimalsData[name] and AnimalsData[name].DisplayName) or name).." is not an RNG Machine result. Switch Result source to Fun only to activate it.", Duration=3, Icon="triangle-alert"}) end
+		end,
+	})
+	local Controls = MainTab:Section({Title = "Machine Trigger", Box = true, Opened = true})
+	Controls:Toggle({
+		Title = "Arm RNG Machine",
+		Desc = "Enabled: the machine Spin prompt plays your selected local sequence",
+		Value = false,
+		Callback = function(enabled)
+			if enabled then
+				if not state.armed then armMachine() end
+				if not state.armed then WindUI:Notify({Title="Could not arm", Content="Move near the RNG Machine and try again.", Duration=3, Icon="triangle-alert"}) end
+			else
+				stopVisuals()
+				if state.armed then disarmMachine() end
+			end
+		end,
+	})
+	Controls:Paragraph({Title = "Visual only", Desc = "Choose one target luck and one Brainrot, enable Arm, then use the machine.", Color = "Green"})
+	Window:SelectTab(1)
+else
+	gui.Enabled = true
+	warn("[RNG Visualizer] WindUI could not load; using compact fallback UI.")
+end
+
+print(("[RNG Visualizer] Loaded %d luck models and %d RNG-machine Brainrots. No remotes are used."):format(#luckNames,#brainrotNames))
+LoaderRunning=false
+safeDestroy(LoaderGui)
