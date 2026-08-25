@@ -1,0 +1,125 @@
+name: SB99 one-time robustness polish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sb99-polish-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Refetch latest main
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+      - name: Patch current helper safely
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('99 Nights Helper Godmode')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'local previousWasFarming = type(previousState) == "table" and previousState.autoFarm == true',
+              'local previousWasFarming = (type(previousState) == "table" and previousState.autoFarm == true)\n    or type(G.SB99_FARM_RESTORE) == "table"',
+              're-execution farm recovery'
+          )
+
+          replace_once(
+              '        if activeLock and activeLock.token == token then\n  invokeLocks[remote] = nil\n        end',
+              '        if activeLock and activeLock.token == token then\n            invokeLocks[remote] = nil\n        end',
+              'utility remote lock formatting'
+          )
+
+          replace_once(
+              '''    local sources = {\n        player:FindFirstChild("Inventory"),\n        player:FindFirstChild("Backpack"),\n        workspace:FindFirstChild("Items"),\n    }\n\n    for sourceIndex, container in ipairs(sources) do''',
+              '''    -- Build a compact list. ipairs stops at the first nil slot, so a\n    -- missing Inventory must not hide Backpack or world food.\n    local sources = {}\n    local inventory = player:FindFirstChild("Inventory")\n    local backpack = player:FindFirstChild("Backpack")\n    local worldItems = workspace:FindFirstChild("Items")\n\n    if inventory then table.insert(sources, inventory) end\n    if backpack then table.insert(sources, backpack) end\n    if worldItems then table.insert(sources, worldItems) end\n\n    for sourceIndex, container in ipairs(sources) do''',
+              'food source compaction'
+          )
+
+          replace_once(
+              '''local function ownedContainers()\n    return {\n        player:FindFirstChild("Inventory"),\n        player:FindFirstChild("Backpack"),\n        player.Character,\n    }\nend''',
+              '''local function ownedContainers()\n    -- Keep this array compact because findBestOwned iterates it with ipairs.\n    -- Some executors/games do not expose Inventory, but Backpack/Character\n    -- still need to be searched for the best axe and sack.\n    local containers = {}\n    local inventory = player:FindFirstChild("Inventory")\n    local backpack = player:FindFirstChild("Backpack")\n    local character = player.Character\n\n    if inventory then table.insert(containers, inventory) end\n    if backpack then table.insert(containers, backpack) end\n    if character then table.insert(containers, character) end\n\n    return containers\nend''',
+              'owned container compaction'
+          )
+
+          replace_once(
+              '''    local folders = {\n        map:FindFirstChild("Foliage"),\n        map:FindFirstChild("Landmarks"),\n    }\n\n    local seen = {}''',
+              '''    -- Build a compact folder list. If Foliage is absent, ipairs on a\n    -- sparse literal would otherwise skip Landmarks entirely.\n    local folders = {}\n    local foliage = map:FindFirstChild("Foliage")\n    local landmarks = map:FindFirstChild("Landmarks")\n    if foliage then table.insert(folders, foliage) end\n    if landmarks then table.insert(folders, landmarks) end\n\n    local seen = {}''',
+              'tree folder compaction'
+          )
+
+          replace_once(
+              '''        local ownerText = tostring(owner)\n        local ownerNumber = tonumber(owner)\n        local unowned = owner == false\n            or ownerText == ""\n            or ownerText == "nil"\n            or ownerNumber == 0''',
+              '''        local ownerText = tostring(owner)\n        local ownerNormalized = string.lower(ownerText)\n        local ownerNumber = tonumber(owner)\n        local unowned = owner == false\n            or ownerText == ""\n            or ownerNormalized == "nil"\n            or ownerNormalized == "none"\n            or ownerNumber == 0''',
+              'owner normalization'
+          )
+
+          if text == original:
+              raise SystemExit('No meaningful patch was produced')
+
+          # Lightweight structural/static sanity checks. This intentionally avoids\n          # pretending to be a full Luau parser while catching common bad edits.\n          if text.count('(') != text.count(')'):
+              raise SystemExit('parenthesis count mismatch')
+          if text.count('{') != text.count('}'):
+              raise SystemExit('brace count mismatch')
+          if text.count('[') != text.count(']'):
+              raise SystemExit('bracket count mismatch')
+          if re.search(r'WaitForChild\([^\n,\)]*\)', text):
+              raise SystemExit('found an unbounded WaitForChild call')
+          if 'local sources = {\n        player:FindFirstChild("Inventory")' in text:
+              raise SystemExit('sparse food source pattern still present')
+          if 'local function ownedContainers()\n    return {' in text:
+              raise SystemExit('sparse owned container pattern still present')
+
+          path.write_text(text, encoding='utf-8')
+          print('Patched helper safely')
+          PY
+
+      - name: Verify diff is scoped
+        run: |
+          git diff --check
+          test -n "$(git diff -- '99 Nights Helper Godmode')"
+          test "$(git diff --name-only | grep -v '^99 Nights Helper Godmode$' | wc -l)" -eq 0
+
+      - name: Commit helper improvement
+        run: |
+          git config user.name "Smile B Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -- '99 Nights Helper Godmode'
+          git commit -m "fix: harden missing-container handling"
+          git push origin main
+
+      - name: Remove one-time workflow
+        if: always()
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          if [ -f .github/workflows/sb99-polish-once.yml ]; then
+            git rm .github/workflows/sb99-polish-once.yml
+            git commit -m "chore: remove one-time SB99 polish workflow"
+            git push origin main
+          fi
