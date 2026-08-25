@@ -1,0 +1,178 @@
+name: SB99 guarded polish
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-hourly-polish.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refresh latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Patch utility remote recovery
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('99 Nights Helper Godmode')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''-- Utility RemoteFunctions are isolated behind a timeout/busy guard. A server
+-- that stops replying can no longer freeze Auto Eat, gear pickup, or cooking.
+local invokeBusy = setmetatable({}, { __mode = "k" })
+local function callUtilityRemote(remote, timeoutSeconds, ...)
+    if not isLive(remote) then
+        return false, nil
+    end
+
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(remote.FireServer, remote, ...)
+        return ok, ok and true or nil
+    end
+
+    if not remote:IsA("RemoteFunction") or invokeBusy[remote] then
+        return false, nil
+    end
+
+    local args = table.pack(...)
+    local done = false
+    local ok = false
+    local result = nil
+    invokeBusy[remote] = true
+
+    task.spawn(function()
+        ok, result = pcall(remote.InvokeServer, remote, table.unpack(args, 1, args.n))
+        invokeBusy[remote] = nil
+        done = true
+    end)
+
+    local deadline = os.clock() + (timeoutSeconds or 2)
+    while state.active and not done and os.clock() < deadline do
+        task.wait()
+    end
+
+    if not done then
+        return false, nil
+    end
+
+    return ok, result
+end
+'''
+
+          new = '''-- Utility RemoteFunctions are isolated behind a timeout guard. Each call owns
+-- a tokenized expiring lock: a hung InvokeServer cannot freeze Auto Eat, gear
+-- pickup, or cooking forever, and a late old response cannot unlock a newer call.
+local invokeLocks = setmetatable({}, { __mode = "k" })
+local function callUtilityRemote(remote, timeoutSeconds, ...)
+    if not isLive(remote) then
+        return false, nil
+    end
+
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(remote.FireServer, remote, ...)
+        return ok, ok and true or nil
+    end
+
+    if not remote:IsA("RemoteFunction") then
+        return false, nil
+    end
+
+    local timeout = math.max(0.25, tonumber(timeoutSeconds) or 2)
+    local now = os.clock()
+    local existing = invokeLocks[remote]
+    if existing and existing.expiresAt > now then
+        return false, nil
+    end
+
+    local args = table.pack(...)
+    local token = {}
+    local done = false
+    local ok = false
+    local result = nil
+
+    -- Keep a short cooldown beyond the caller timeout. If the server never
+    -- answers, the next attempt can still recover instead of being blocked forever.
+    invokeLocks[remote] = {
+        token = token,
+        expiresAt = now + timeout + 0.75,
+    }
+
+    task.spawn(function()
+        ok, result = pcall(remote.InvokeServer, remote, table.unpack(args, 1, args.n))
+        done = true
+
+        local activeLock = invokeLocks[remote]
+        if activeLock and activeLock.token == token then
+            invokeLocks[remote] = nil
+        end
+    end)
+
+    local deadline = now + timeout
+    while state.active and not done and os.clock() < deadline do
+        task.wait()
+    end
+
+    if not done then
+        return false, nil
+    end
+
+    return ok, result
+end
+'''
+
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one utility-remote block, found {count}')
+
+          updated = text.replace(old, new, 1)
+
+          # Guard against accidental truncation/corruption.
+          required = [
+              'Smile B - 99 Nights Helper',
+              'local function callUtilityRemote',
+              'local function attemptAutoEat',
+              'local function attackTarget',
+              'local function runFoodService',
+              'local function enableFarm',
+              'local function disableFarm',
+              'Godmode Active',
+              'updateButtons()',
+          ]
+          missing = [marker for marker in required if marker not in updated]
+          if missing:
+              raise SystemExit(f'Missing required markers after patch: {missing}')
+
+          # Simple delimiter sanity checks; replacement does not touch strings elsewhere.
+          pairs = [('(', ')'), ('[', ']'), ('{', '}')]
+          for left, right in pairs:
+              if updated.count(left) != updated.count(right):
+                  raise SystemExit(f'Unbalanced {left}{right}: {updated.count(left)} != {updated.count(right)}')
+
+          path.write_text(updated, encoding='utf-8')
+
+      - name: Verify scoped diff
+        run: |
+          git diff --check
+          git diff -- '99 Nights Helper Godmode'
+          test -n "$(git diff --name-only -- '99 Nights Helper Godmode')"
+
+      - name: Commit polished helper and remove temporary workflow
+        run: |
+          git config user.name 'Smile B Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/sb99-hourly-polish.yml
+          git add '99 Nights Helper Godmode'
+          git commit -m 'fix: recover utility remotes after server timeouts'
+          git push origin HEAD:main
