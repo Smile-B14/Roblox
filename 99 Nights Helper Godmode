@@ -6,7 +6,7 @@
     because older builds hooked Hunger reads and hid the Hunger bar.
 ]]
 
-local G = getgenv()
+local G = (type(getgenv) == "function" and getgenv()) or _G
 
 -- Older SB99 versions can leave a Hunger-spoofing hook alive in the same
 -- Roblox process. This build no longer aborts when that is detected; however,
@@ -78,10 +78,50 @@ local FOOD_AREA = Vector3.new(0, 20, 0)
 -- We intentionally do NOT call Client.EnemyHandler.ApplyLocalDamage here;
 -- calling it with an incomplete internal context caused EnemyHandler line 516 errors.
 
--- Shut down previous final-script run.
-if G.SB99_STATE then
-    G.SB99_STATE.active = false
+-- Shut down previous helper run cleanly. If it was farming, release any
+-- movement lock before replacing its state so re-executing never leaves the
+-- character anchored or stuck at zero movement speed.
+local previousState = G.SB99_STATE
+local previousWasFarming = type(previousState) == "table" and previousState.autoFarm == true
+if type(previousState) == "table" then
+    previousState.active = false
 end
+
+if previousWasFarming then
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local restore = G.SB99_FARM_RESTORE
+
+    if root then
+        root.Anchored = false
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    if humanoid then
+        if type(restore) == "table" then
+            humanoid.WalkSpeed = tonumber(restore.walkSpeed) or humanoid.WalkSpeed
+            humanoid.AutoRotate = restore.autoRotate ~= false
+            if humanoid.UseJumpPower then
+                humanoid.JumpPower = tonumber(restore.jumpPower) or humanoid.JumpPower
+            else
+                humanoid.JumpHeight = tonumber(restore.jumpHeight) or humanoid.JumpHeight
+            end
+        else
+            if humanoid.WalkSpeed == 0 then
+                humanoid.WalkSpeed = 16
+            end
+            humanoid.AutoRotate = true
+            if humanoid.UseJumpPower and humanoid.JumpPower == 0 then
+                humanoid.JumpPower = 50
+            elseif not humanoid.UseJumpPower and humanoid.JumpHeight == 0 then
+                humanoid.JumpHeight = 7.2
+            end
+        end
+    end
+end
+G.SB99_FARM_RESTORE = nil
 
 if G.SB99_ACTIVE_TWEEN then
     pcall(function()
@@ -221,6 +261,51 @@ local function getPart(object)
     return nil
 end
 
+local function isLive(instance)
+    return typeof(instance) == "Instance" and instance.Parent ~= nil
+end
+
+-- Utility RemoteFunctions are isolated behind a timeout/busy guard. A server
+-- that stops replying can no longer freeze Auto Eat, gear pickup, or cooking.
+local invokeBusy = setmetatable({}, { __mode = "k" })
+local function callUtilityRemote(remote, timeoutSeconds, ...)
+    if not isLive(remote) then
+        return false, nil
+    end
+
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(remote.FireServer, remote, ...)
+        return ok, ok and true or nil
+    end
+
+    if not remote:IsA("RemoteFunction") or invokeBusy[remote] then
+        return false, nil
+    end
+
+    local args = table.pack(...)
+    local done = false
+    local ok = false
+    local result = nil
+    invokeBusy[remote] = true
+
+    task.spawn(function()
+        ok, result = pcall(remote.InvokeServer, remote, table.unpack(args, 1, args.n))
+        invokeBusy[remote] = nil
+        done = true
+    end)
+
+    local deadline = os.clock() + (timeoutSeconds or 2)
+    while state.active and not done and os.clock() < deadline do
+        task.wait()
+    end
+
+    if not done then
+        return false, nil
+    end
+
+    return ok, result
+end
+
 -- No Hunger spoof in the final build. The normal game Hunger bar stays visible
 -- and receives the real replicated Hunger value.
 local function getRealHunger()
@@ -241,51 +326,53 @@ track(player:GetAttributeChangedSignal("Hunger"):Connect(function()
     end
 end))
 
--- Damage-only hook. No Hunger hooks and no Roblox method calls inside the hook.
+-- Damage-only hook. A failed executor hook must never abort the helper.
 if not G.SB99_FINAL_HOOK then
     if type(hookmetamethod) == "function"
         and type(getnamecallmethod) == "function"
         and type(newcclosure) == "function" then
 
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local s = G.SB99_STATE
-            if not s or not s.active then
+        local hookOk = pcall(function()
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                local s = G.SB99_STATE
+                if not s or not s.active then
+                    return oldNamecall(self, ...)
+                end
+
+                local method = getnamecallmethod()
+                local a1, a2, a3 = ...
+
+                if method == "FireServer" or method == "InvokeServer" then
+                    local remoteName = self.Name
+
+                    if remoteName == "ToolDamageObject"
+                        and typeof(a2) == "Instance"
+                        and a3 ~= nil then
+                        local executorCall = false
+                        if type(checkcaller) == "function" then
+                            executorCall = checkcaller()
+                        end
+                        if not executorCall then
+                            s.capturedTokens[a2.Name] = a3
+                        end
+                    end
+
+                    if s.blockedRemotes[remoteName] then
+                        if method == "InvokeServer" then
+                            return false
+                        end
+                        return nil
+                    end
+                end
+
                 return oldNamecall(self, ...)
-            end
+            end))
+        end)
 
-            local method = getnamecallmethod()
-            local a1, a2, a3 = ...
-
-            if method == "FireServer" or method == "InvokeServer" then
-                local remoteName = self.Name
-
-                -- Capture the game's own ToolDamageObject token without calling
-                -- any Roblox methods from inside the metamethod hook.
-                if remoteName == "ToolDamageObject"
-                    and typeof(a2) == "Instance"
-                    and a3 ~= nil then
-                    local executorCall = false
-                    if type(checkcaller) == "function" then
-                        executorCall = checkcaller()
-                    end
-                    if not executorCall then
-                        s.capturedTokens[a2.Name] = a3
-                    end
-                end
-
-                if s.blockedRemotes[remoteName] then
-                    if method == "InvokeServer" then
-                        return false
-                    end
-                    return nil
-                end
-            end
-
-            return oldNamecall(self, ...)
-        end))
-
-        G.SB99_FINAL_HOOK = true
+        if hookOk then
+            G.SB99_FINAL_HOOK = true
+        end
     end
 end
 
@@ -563,14 +650,7 @@ local function consumeFood(item)
     -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
     -- items that can produce Roblox's "trying to set locked parent!" warning.
     -- The current server accepts nearby items through RequestConsumeItem directly.
-    local success, response = pcall(function()
-        if RequestConsumeItem:IsA("RemoteFunction") then
-            return RequestConsumeItem:InvokeServer(item)
-        else
-            RequestConsumeItem:FireServer(item)
-            return true
-        end
-    end)
+    local success, response = callUtilityRemote(RequestConsumeItem, 1.5, item)
 
     task.wait(0.10)
 
@@ -788,14 +868,7 @@ local function requestHotbarPickup(item)
         return false
     end
 
-    local success, response = pcall(function()
-        if RequestHotbarItem:IsA("RemoteFunction") then
-            return RequestHotbarItem:InvokeServer(item)
-        else
-            RequestHotbarItem:FireServer(item)
-            return true
-        end
-    end)
+    local success, response = callUtilityRemote(RequestHotbarItem, 1.5, item)
 
     return success and (
         response == true
@@ -805,7 +878,7 @@ end
 
 local gearCooldown = setmetatable({}, { __mode = "k" })
 
-local function grabUpgrade(item, scoreFunction)
+local function grabUpgrade(item)
     if not item or not item.Parent then
         return
     end
@@ -839,11 +912,11 @@ task.spawn(function()
             local worldSack, worldSackScore = findBestWorld(sackScore)
 
             if worldAxe and worldAxeScore > ownedAxeScore then
-                grabUpgrade(worldAxe, axeScore)
+                grabUpgrade(worldAxe)
             end
 
             if worldSack and worldSackScore > ownedSackScore then
-                grabUpgrade(worldSack, sackScore)
+                grabUpgrade(worldSack)
             end
         end
 
@@ -868,8 +941,15 @@ local lastArmed = nil
 local lastArmTime = 0
 
 local function ensureAxeArmed(weapon)
-    if not weapon or not EquipItemHandle then
+    if not weapon or not weapon.Parent then
         return
+    end
+
+    if not isLive(EquipItemHandle) then
+        refreshRemotes()
+        if not isLive(EquipItemHandle) then
+            return
+        end
     end
 
     local now = os.clock()
@@ -911,9 +991,9 @@ end
 local attackCooldown = setmetatable({}, { __mode = "k" })
 
 local function attackTarget(target, isTree)
-    if not ToolDamageObject then
+    if not isLive(ToolDamageObject) then
         refreshRemotes()
-        if not ToolDamageObject then
+        if not isLive(ToolDamageObject) then
             return
         end
     end
@@ -922,41 +1002,63 @@ local function attackTarget(target, isTree)
         return
     end
 
+    if not isTree then
+        local humanoid = target:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health <= 0 then
+            return
+        end
+    end
+
     local root = getRoot()
     local weapon = bestAxe
-
-    if not root or not weapon then
+    if not root or not root.Parent or not weapon or not weapon.Parent then
         return
     end
 
     local now = os.clock()
     local previous = attackCooldown[target]
-
     if previous and now - previous < state.targetCooldown then
         return
     end
-
-    attackCooldown[target] = now
-    ensureAxeArmed(weapon)
 
     local hitId = makeHitId(weapon)
     if not hitId then
         return
     end
 
+    attackCooldown[target] = now
+    ensureAxeArmed(weapon)
+
+    local remote = ToolDamageObject
     local attackCFrame = root.CFrame
-    state.inflight = state.inflight + 1
 
-    task.spawn(function()
-        pcall(function()
-            if ToolDamageObject:IsA("RemoteFunction") then
-                ToolDamageObject:InvokeServer(target, weapon, hitId, attackCFrame)
-            else
-                ToolDamageObject:FireServer(target, weapon, hitId, attackCFrame)
-            end
-        end)
-
+    -- RemoteEvents do not yield, so avoid spawning thousands of tiny tasks.
+    if remote:IsA("RemoteEvent") then
+        state.inflight = state.inflight + 1
+        pcall(remote.FireServer, remote, target, weapon, hitId, attackCFrame)
         state.inflight = math.max(0, state.inflight - 1)
+        return
+    end
+
+    if not remote:IsA("RemoteFunction") then
+        return
+    end
+
+    state.inflight = state.inflight + 1
+    local released = false
+    local function releaseInflight()
+        if released then
+            return
+        end
+        released = true
+        state.inflight = math.max(0, state.inflight - 1)
+    end
+
+    -- A hung InvokeServer can no longer permanently exhaust the attack pool.
+    task.delay(2, releaseInflight)
+    task.spawn(function()
+        pcall(remote.InvokeServer, remote, target, weapon, hitId, attackCFrame)
+        releaseInflight()
     end)
 end
 
@@ -1262,19 +1364,23 @@ end
 local function cookItem(item)
     local mainFire = getMainFire()
 
-    if not item or not item.Parent or not mainFire or not RequestCookItem then
+    if not item or not item.Parent or not mainFire then
         return false
     end
 
-    local ok = pcall(function()
-        if RequestCookItem:IsA("RemoteFunction") then
-            RequestCookItem:InvokeServer(mainFire, item)
-        else
-            RequestCookItem:FireServer(mainFire, item)
+    if not isLive(RequestCookItem) then
+        refreshRemotes()
+        if not isLive(RequestCookItem) then
+            return false
         end
-    end)
+    end
 
-    return ok
+    local ok, response = callUtilityRemote(RequestCookItem, 1.5, mainFire, item)
+    if not ok then
+        return false
+    end
+
+    return response ~= false
 end
 
 local function runFoodService()
@@ -1287,62 +1393,57 @@ local function runFoodService()
     cancelFarmTween()
 
     local serviceOk = pcall(function()
-    -- Always stay under center while servicing food.
-    local character = getCharacter()
-    if character then
-        character:PivotTo(CFrame.new(FARM_HOME))
-    end
-    lockFarmCharacter()
-
-    local items = workspace:FindFirstChild("Items")
-
-    if items then
-        local foods = {}
-
-        -- Snapshot before requests can replace/remove raw food.
-        for _, item in ipairs(items:GetChildren()) do
-            if isFoodItem(item) then
-                table.insert(foods, item)
-            end
+        -- Always stay under center while servicing food.
+        local character = getCharacter()
+        if character then
+            character:PivotTo(CFrame.new(FARM_HOME))
         end
+        lockFarmCharacter()
 
-        local index = 0
+        local items = workspace:FindFirstChild("Items")
+        if items then
+            local foods = {}
 
-        for _, item in ipairs(foods) do
-            if not state.autoFarm then
-                break
-            end
-
-            if item and item.Parent then
-                index = index + 1
-
-                local column = (index - 1) % 7
-                local row = math.floor((index - 1) / 7) % 5
-
-                local offset = Vector3.new(
-                    (column - 3) * 1.6,
-                    0,
-                    (row - 2) * 1.6
-                )
-
-                dragItemTo(item, CFrame.new(FOOD_AREA + offset))
-                task.wait(0.025)
-
-                if item.Parent and isCookable(item) then
-                    cookItem(item)
-                    task.wait(0.025)
+            -- Snapshot before requests can replace/remove raw food.
+            for _, item in ipairs(items:GetChildren()) do
+                if isFoodItem(item) then
+                    table.insert(foods, item)
                 end
             end
+
+            local index = 0
+            for _, item in ipairs(foods) do
+                if not state.autoFarm then
+                    break
+                end
+
+                if item and item.Parent then
+                    index = index + 1
+                    local column = (index - 1) % 7
+                    local row = math.floor((index - 1) / 7) % 5
+                    local offset = Vector3.new(
+                        (column - 3) * 1.6,
+                        0,
+                        (row - 2) * 1.6
+                    )
+
+                    dragItemTo(item, CFrame.new(FOOD_AREA + offset))
+                    task.wait(0.025)
+
+                    if item.Parent and isCookable(item) then
+                        cookItem(item)
+                        task.wait(0.025)
+                    end
+                end
+            end
+
+            -- Give cooked replacements time to appear.
+            task.wait(3)
+
+            if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
+                attemptAutoEat()
+            end
         end
-
-        -- Give cooked replacements time to appear.
-        task.wait(3)
-
-        if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
-            attemptAutoEat()
-        end
-    end
-
     end)
 
     state.lastFoodService = os.clock()
@@ -1357,7 +1458,7 @@ local patrolPoints = {}
 
 -- Four rings out to 700 studs. Offset alternating rings so coverage overlaps.
 for ring = 1, 4 do
-    local radius = ring * 175
+    local radius = ring * (state.patrolRadius / 4)
 
     for point = 0, 7 do
         local offsetDegrees = (ring % 2 == 0) and 22.5 or 0
@@ -1388,6 +1489,13 @@ local function enableFarm()
         previousFarm.jumpHeight = humanoid.JumpHeight
         previousFarm.autoRotate = humanoid.AutoRotate
     end
+
+    G.SB99_FARM_RESTORE = {
+        walkSpeed = previousFarm.walkSpeed,
+        jumpPower = previousFarm.jumpPower,
+        jumpHeight = previousFarm.jumpHeight,
+        autoRotate = previousFarm.autoRotate,
+    }
 
     state.autoFarm = true
     state.autoChop = true
@@ -1449,6 +1557,8 @@ local function disableFarm()
     if character then
         character:PivotTo(CFrame.new(RETURN_POSITION))
     end
+
+    G.SB99_FARM_RESTORE = nil
 end
 
 -- Farm lock. Does not force a position because the Tween controls daytime movement.
@@ -1466,6 +1576,22 @@ track(RunService.Heartbeat:Connect(function()
     end
 
     lockFarmCharacter()
+end))
+
+-- Recover Auto Farm cleanly after a character respawn.
+track(player.CharacterAdded:Connect(function(character)
+    task.delay(0.2, function()
+        if not state.active or not state.autoFarm or not character.Parent then
+            return
+        end
+
+        cancelFarmTween()
+        createPlatform()
+        pcall(function()
+            character:PivotTo(CFrame.new(FARM_HOME))
+        end)
+        lockFarmCharacter()
+    end)
 end))
 
 -- Main Auto Farm controller.
@@ -1555,6 +1681,10 @@ frame.Parent = screen
 local frameCorner = Instance.new("UICorner")
 frameCorner.CornerRadius = UDim.new(0, 12)
 frameCorner.Parent = frame
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = 1
+uiScale.Parent = frame
 
 local stroke = Instance.new("UIStroke")
 stroke.Color = Color3.fromRGB(80, 80, 90)
@@ -1723,6 +1853,45 @@ local function clampToViewport(position, size)
     )
 end
 
+local lastViewport = Vector2.zero
+local function refreshResponsiveLayout()
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+
+    local viewport = camera.ViewportSize
+    if viewport == lastViewport then
+        return
+    end
+    lastViewport = viewport
+
+    local widthScale = math.max(0.72, (viewport.X - 16) / 250)
+    local heightScale = math.max(0.72, (viewport.Y - 16) / 320)
+    uiScale.Scale = math.clamp(math.min(1, widthScale, heightScale), 0.72, 1)
+
+    task.defer(function()
+        if not state.active then
+            return
+        end
+
+        if frame.Visible then
+            local position = clampToViewport(frame.AbsolutePosition, frame.AbsoluteSize)
+            frame.Position = UDim2.fromOffset(position.X, position.Y)
+        elseif ball.Visible then
+            local position = clampToViewport(ball.AbsolutePosition, ball.AbsoluteSize)
+            ball.Position = UDim2.fromOffset(position.X, position.Y)
+        end
+    end)
+end
+
+task.spawn(function()
+    while state.active do
+        refreshResponsiveLayout()
+        task.wait(0.5)
+    end
+end)
+
 local function minimizeUI()
     local position = clampToViewport(frame.AbsolutePosition, ball.AbsoluteSize)
     ball.Position = UDim2.fromOffset(position.X, position.Y)
@@ -1777,6 +1946,9 @@ track(UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
+        dragInput = nil
+        dragStart = nil
+        frameStart = nil
     end
 end))
 
@@ -1833,6 +2005,7 @@ track(UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
         ballDragging = false
+        ballInput = nil
 
         if not ballMoved and ball.Visible then
             restoreUI()
@@ -1844,9 +2017,9 @@ task.defer(function()
     if not state.active or not frame.Parent then
         return
     end
+    refreshResponsiveLayout()
     local position = clampToViewport(frame.AbsolutePosition, frame.AbsoluteSize)
     frame.Position = UDim2.fromOffset(position.X, position.Y)
 end)
 
 updateButtons()
-
