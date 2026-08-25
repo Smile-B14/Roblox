@@ -265,9 +265,10 @@ local function isLive(instance)
     return typeof(instance) == "Instance" and instance.Parent ~= nil
 end
 
--- Utility RemoteFunctions are isolated behind a timeout/busy guard. A server
--- that stops replying can no longer freeze Auto Eat, gear pickup, or cooking.
-local invokeBusy = setmetatable({}, { __mode = "k" })
+-- Utility RemoteFunctions are isolated behind a timeout guard. Each call owns
+-- a tokenized expiring lock: a hung InvokeServer cannot freeze Auto Eat, gear
+-- pickup, or cooking forever, and a late old response cannot unlock a newer call.
+local invokeLocks = setmetatable({}, { __mode = "k" })
 local function callUtilityRemote(remote, timeoutSeconds, ...)
     if not isLive(remote) then
         return false, nil
@@ -278,23 +279,39 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
         return ok, ok and true or nil
     end
 
-    if not remote:IsA("RemoteFunction") or invokeBusy[remote] then
+    if not remote:IsA("RemoteFunction") then
+        return false, nil
+    end
+
+    local timeout = math.max(0.25, tonumber(timeoutSeconds) or 2)
+    local now = os.clock()
+    local existing = invokeLocks[remote]
+    if existing and existing.expiresAt > now then
         return false, nil
     end
 
     local args = table.pack(...)
+    local token = {}
     local done = false
     local ok = false
     local result = nil
-    invokeBusy[remote] = true
+
+    invokeLocks[remote] = {
+        token = token,
+        expiresAt = now + timeout + 0.75,
+    }
 
     task.spawn(function()
         ok, result = pcall(remote.InvokeServer, remote, table.unpack(args, 1, args.n))
-        invokeBusy[remote] = nil
         done = true
+
+        local activeLock = invokeLocks[remote]
+        if activeLock and activeLock.token == token then
+  invokeLocks[remote] = nil
+        end
     end)
 
-    local deadline = os.clock() + (timeoutSeconds or 2)
+    local deadline = now + timeout
     while state.active and not done and os.clock() < deadline do
         task.wait()
     end
