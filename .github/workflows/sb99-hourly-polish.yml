@@ -1,0 +1,92 @@
+name: SB99 Hourly Polish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sb99-hourly-polish.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply guarded reliability and performance improvements
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("99 Nights Helper Godmode")
+          s = p.read_text(encoding="utf-8")
+
+          replacements = []
+
+          replacements.append((
+          '''local function isCookable(item)\n    if not item or isCooked(item) then\n        return false\n    end\n\n    if RAW_COOKABLE_NAMES[item.Name] then\n        return true\n    end\n\n    local value = item:GetAttribute("Cookable")\n    return value ~= nil and value ~= false\nend''',
+          '''local function isCookable(item)\n    if not item or isCooked(item) then\n        return false\n    end\n\n    if RAW_COOKABLE_NAMES[item.Name] then\n        return true\n    end\n\n    -- Attributes are not always strict booleans across game revisions.\n    -- Treat only explicit truthy representations as cookable so values such\n    -- as 0/"false" do not generate pointless cook requests.\n    local value = item:GetAttribute("Cookable")\n    if type(value) == "boolean" then\n        return value\n    elseif type(value) == "number" then\n        return value > 0\n    elseif type(value) == "string" then\n        local normalized = string.lower(value)\n        return normalized == "true" or normalized == "1" or normalized == "yes"\n    end\n\n    return false\nend'''))
+
+          replacements.append((
+          '''    local owner = item:GetAttribute("Owner")\n    if owner ~= nil then\n        local ownerText = tostring(owner)\n        local belongsToPlayer = owner == player\n            or tonumber(owner) == player.UserId\n            or ownerText == tostring(player.UserId)\n            or ownerText == player.Name\n\n        if not belongsToPlayer then\n            return false\n        end\n    end''',
+          '''    local owner = item:GetAttribute("Owner")\n    if owner ~= nil then\n        local ownerText = tostring(owner)\n        local ownerNumber = tonumber(owner)\n        local unowned = owner == false\n            or ownerText == ""\n            or ownerText == "nil"\n            or ownerNumber == 0\n        local belongsToPlayer = owner == player\n            or ownerNumber == player.UserId\n            or ownerText == tostring(player.UserId)\n            or ownerText == player.Name\n\n        if not unowned and not belongsToPlayer then\n            return false\n        end\n    end'''))
+
+          replacements.append((
+          '''task.spawn(function()\n    while state.active do\n        if state.autoBestGear then\n            local _, ownedAxeScore = findBestOwned(axeScore)\n            local _, ownedSackScore = findBestOwned(sackScore)\n            local worldAxe, worldAxeScore = findBestWorld(axeScore)\n            local worldSack, worldSackScore = findBestWorld(sackScore)\n\n            if worldAxe and worldAxeScore > ownedAxeScore then\n                grabUpgrade(worldAxe)\n            end\n\n            if worldSack and worldSackScore > ownedSackScore then\n                grabUpgrade(worldSack)\n            end\n        end\n\n        task.wait(0.4)\n    end\nend)''',
+          '''task.spawn(function()\n    while state.active do\n        if state.autoBestGear then\n            local _, ownedAxeScore = findBestOwned(axeScore)\n            local _, ownedSackScore = findBestOwned(sackScore)\n            local worldAxe, worldAxeScore = findBestWorld(axeScore)\n            local worldSack, worldSackScore = findBestWorld(sackScore)\n\n            if worldAxe and worldAxeScore > ownedAxeScore then\n                grabUpgrade(worldAxe)\n            end\n\n            if worldSack and worldSackScore > ownedSackScore then\n                grabUpgrade(worldSack)\n            end\n        end\n\n        -- Keep active gear acquisition responsive without burning cycles while off.\n        task.wait(state.autoBestGear and 0.4 or 1.2)\n    end\nend)'''))
+
+          replacements.append((
+          '''task.spawn(function()\n    while state.active do\n        bestAxe = select(1, findBestOwned(axeScore))\n        task.wait(0.2)\n    end\nend)''',
+          '''task.spawn(function()\n    while state.active do\n        if state.autoChop or state.killAura or state.autoBestGear then\n            bestAxe = select(1, findBestOwned(axeScore))\n            task.wait(0.2)\n        else\n            -- No combat/gear feature needs the value while idle.\n            task.wait(0.8)\n        end\n    end\nend)'''))
+
+          replacements.append((
+          '''task.spawn(function()\n    while state.active do\n        rebuildTrees()\n        task.wait(1)\n    end\nend)''',
+          '''task.spawn(function()\n    while state.active do\n        if state.autoChop then\n            rebuildTrees()\n            task.wait(1)\n        else\n            -- Retain a warm cache but avoid scanning the map every second when off.\n            task.wait(2.5)\n            if state.active and state.autoChop then\n                rebuildTrees()\n            end\n        end\n    end\nend)'''))
+
+          replacements.append((
+          '''        task.wait(state.workerDelay)\n    end\nend)\n\n--==============================================================\n-- NIGHT DETECTION''',
+          '''        -- Fast path only while combat is enabled. This keeps the UI and\n        -- low-end/mobile clients responsive when both combat toggles are off.\n        task.wait((state.killAura or state.autoChop) and state.workerDelay or 0.08)\n    end\nend)\n\n--==============================================================\n-- NIGHT DETECTION'''))
+
+          changed = 0
+          for old, new in replacements:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f"guard failed: expected exactly one match, got {count} for replacement starting: {old[:80]!r}")
+              s = s.replace(old, new, 1)
+              changed += 1
+
+          # Static structural sanity checks. These deliberately avoid pretending
+          # to be a full Luau parser, but catch common damaged-file failures.
+          if s.count("(") != s.count(")"):
+              raise SystemExit("parenthesis balance failed")
+          if s.count("{") != s.count("}"):
+              raise SystemExit("brace balance failed")
+          if s.count("[") != s.count("]"):
+              raise SystemExit("bracket balance failed")
+          if "WaitForChild(\"ToolDamageObject\")" in s:
+              raise SystemExit("unbounded combat startup wait reintroduced")
+          if "ApplyLocalDamage" in s and "do NOT call Client.EnemyHandler.ApplyLocalDamage" not in s:
+              raise SystemExit("unsafe ApplyLocalDamage path detected")
+          if not s.rstrip().endswith("updateButtons()"):
+              raise SystemExit("unexpected script tail")
+
+          p.write_text(s, encoding="utf-8")
+          print(f"Applied {changed} guarded improvements")
+
+      - name: Verify diff is scoped
+        run: |
+          git diff --check
+          git diff --stat
+          test -n "$(git diff -- '99 Nights Helper Godmode')"
+
+      - name: Commit helper update
+        run: |
+          git config user.name "Smile B Script Polish"
+          git config user.email "actions@users.noreply.github.com"
+          git add -- "99 Nights Helper Godmode"
+          git commit -m "Improve helper idle performance and food robustness"
+          git push origin main
