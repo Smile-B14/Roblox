@@ -502,8 +502,20 @@ local function isCookable(item)
         return true
     end
 
+    -- Attributes are not always strict booleans across game revisions.
+    -- Treat only explicit truthy representations as cookable so values such
+    -- as 0/"false" do not generate pointless cook requests.
     local value = item:GetAttribute("Cookable")
-    return value ~= nil and value ~= false
+    if type(value) == "boolean" then
+        return value
+    elseif type(value) == "number" then
+        return value > 0
+    elseif type(value) == "string" then
+        local normalized = string.lower(value)
+        return normalized == "true" or normalized == "1" or normalized == "yes"
+    end
+
+    return false
 end
 
 local function isFoodItem(item)
@@ -530,12 +542,17 @@ local function canConsume(item)
     local owner = item:GetAttribute("Owner")
     if owner ~= nil then
         local ownerText = tostring(owner)
+        local ownerNumber = tonumber(owner)
+        local unowned = owner == false
+            or ownerText == ""
+            or ownerText == "nil"
+            or ownerNumber == 0
         local belongsToPlayer = owner == player
-            or tonumber(owner) == player.UserId
+            or ownerNumber == player.UserId
             or ownerText == tostring(player.UserId)
             or ownerText == player.Name
 
-        if not belongsToPlayer then
+        if not unowned and not belongsToPlayer then
             return false
         end
     end
@@ -920,7 +937,8 @@ task.spawn(function()
             end
         end
 
-        task.wait(0.4)
+        -- Keep active gear acquisition responsive without burning cycles while off.
+        task.wait(state.autoBestGear and 0.4 or 1.2)
     end
 end)
 
@@ -932,8 +950,13 @@ local bestAxe = nil
 
 task.spawn(function()
     while state.active do
-        bestAxe = select(1, findBestOwned(axeScore))
-        task.wait(0.2)
+        if state.autoChop or state.killAura or state.autoBestGear then
+            bestAxe = select(1, findBestOwned(axeScore))
+            task.wait(0.2)
+        else
+            -- No combat/gear feature needs the value while idle.
+            task.wait(0.8)
+        end
     end
 end)
 
@@ -1097,8 +1120,16 @@ rebuildTrees()
 
 task.spawn(function()
     while state.active do
-        rebuildTrees()
-        task.wait(1)
+        if state.autoChop then
+            rebuildTrees()
+            task.wait(1)
+        else
+            -- Retain a warm cache but avoid scanning the map every second when off.
+            task.wait(2.5)
+            if state.active and state.autoChop then
+                rebuildTrees()
+            end
+        end
     end
 end)
 
@@ -1195,7 +1226,9 @@ task.spawn(function()
             cachedTrees = {}
         end
 
-        task.wait(state.workerDelay)
+        -- Fast path only while combat is enabled. This keeps the UI and
+        -- low-end/mobile clients responsive when both combat toggles are off.
+        task.wait((state.killAura or state.autoChop) and state.workerDelay or 0.08)
     end
 end)
 
