@@ -1,5 +1,5 @@
 --[[
-    Smile B - 99 Nights Helper TEST
+    Smile B - 99 Nights Helper
     Credits: Smile B
 
     Fresh Roblox session recommended if an older SB99 build was executed,
@@ -21,7 +21,10 @@ local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+if not playerGui then
+    return
+end
 
 -- Never block startup waiting for a combat remote. Some servers replicate
 -- RemoteEvents/RemoteFunctions a little later, and the game can move a remote
@@ -34,7 +37,6 @@ local StopDragging = nil
 local RequestHotbarItem = nil
 local RequestConsumeItem = nil
 local RequestCookItem = nil
-local TempStorage = nil
 
 local function findReplicated(name)
     if RemoteEvents then
@@ -58,7 +60,6 @@ local function refreshRemotes()
     RequestHotbarItem = findReplicated("RequestHotbarItem")
     RequestConsumeItem = findReplicated("RequestConsumeItem")
     RequestCookItem = findReplicated("RequestCookItem")
-    TempStorage = ReplicatedStorage:FindFirstChild("TempStorage", true)
 end
 
 refreshRemotes()
@@ -100,7 +101,9 @@ end
 G.SB99_CONNECTIONS = {}
 
 local function track(connection)
-    table.insert(G.SB99_CONNECTIONS, connection)
+    if connection then
+        table.insert(G.SB99_CONNECTIONS, connection)
+    end
     return connection
 end
 
@@ -125,8 +128,9 @@ local state = {
     range = 200,
     maxInflight = 72,
     inflight = 0,
-    targetCooldown = 0.03,
-    workerDelay = 0.01,
+    targetCooldown = 0.025,
+    workerDelay = 0.005,
+    combatScanInterval = 0.05,
     capturedTokens = {},
 
     maxHunger = 200,
@@ -163,9 +167,27 @@ G.SB99_STATE = state
 task.spawn(function()
     while state.active do
         refreshRemotes()
-        task.wait(0.5)
+        task.wait(1)
     end
 end)
+
+track(ReplicatedStorage.DescendantAdded:Connect(function(descendant)
+    if not state.active then
+        return
+    end
+
+    local name = descendant.Name
+    if name == "RemoteEvents"
+        or name == "ToolDamageObject"
+        or name == "EquipItemHandle"
+        or name == "RequestStartDraggingItem"
+        or name == "StopDraggingItem"
+        or name == "RequestHotbarItem"
+        or name == "RequestConsumeItem"
+        or name == "RequestCookItem" then
+        task.defer(refreshRemotes)
+    end
+end))
 
 local function getCharacter()
     return player.Character
@@ -202,19 +224,22 @@ end
 -- No Hunger spoof in the final build. The normal game Hunger bar stays visible
 -- and receives the real replicated Hunger value.
 local function getRealHunger()
-    local ok, attributes = pcall(function()
-        return player:GetAttributes()
-    end)
-
-    if ok and type(attributes) == "table" then
-        local hunger = tonumber(attributes.Hunger)
+    local ok, hunger = pcall(player.GetAttribute, player, "Hunger")
+    if ok then
+        hunger = tonumber(hunger)
         if hunger ~= nil then
             state.rawHunger = hunger
         end
     end
-
     return state.rawHunger
 end
+
+getRealHunger()
+track(player:GetAttributeChangedSignal("Hunger"):Connect(function()
+    if state.active then
+        getRealHunger()
+    end
+end))
 
 -- Damage-only hook. No Hunger hooks and no Roblox method calls inside the hook.
 if not G.SB99_FINAL_HOOK then
@@ -296,7 +321,7 @@ local function protectCharacter(character)
             return
         end
 
-        if health > 0 and health < humanoid.MaxHealth then
+        if health < humanoid.MaxHealth then
             pcall(function()
                 humanoid.Health = humanoid.MaxHealth
             end)
@@ -327,7 +352,7 @@ task.spawn(function()
             pcall(function()
                 humanoid.BreakJointsOnDeath = false
                 humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-                if humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
+                if humanoid.Health < humanoid.MaxHealth then
                     humanoid.Health = humanoid.MaxHealth
                 end
             end)
@@ -416,8 +441,16 @@ local function canConsume(item)
     end
 
     local owner = item:GetAttribute("Owner")
-    if owner ~= nil and owner ~= player.UserId then
-        return false
+    if owner ~= nil then
+        local ownerText = tostring(owner)
+        local belongsToPlayer = owner == player
+            or tonumber(owner) == player.UserId
+            or ownerText == tostring(player.UserId)
+            or ownerText == player.Name
+
+        if not belongsToPlayer then
+            return false
+        end
     end
 
     if player:GetAttribute("Class") == "Bunny" and item:GetAttribute("HasMeat") then
@@ -432,21 +465,29 @@ local function dragItemTo(item, destination)
         return false
     end
 
-    local ok = pcall(function()
+    local started = pcall(function()
         StartDragging:FireServer(item)
-        task.wait(0.025)
+    end)
+    if not started then
+        return false
+    end
 
+    task.wait(0.02)
+
+    local moved = pcall(function()
         if item:IsA("Model") then
             item:PivotTo(destination)
         elseif item:IsA("BasePart") then
             item.CFrame = destination
         end
-
-        task.wait(0.025)
-        StopDragging:FireServer(item)
     end)
 
-    return ok
+    task.wait(0.02)
+    pcall(function()
+        StopDragging:FireServer()
+    end)
+
+    return moved and item.Parent ~= nil
 end
 
 local function getFoodCandidates()
@@ -575,43 +616,57 @@ local function attemptAutoEat()
         return false
     end
 
-    local foods = getFoodCandidates()
-    if #foods == 0 then
-        requestEmergencyFoodRun()
-        return false
-    end
-
     state.eatBusy = true
     local success = false
 
-    -- Sorted list guarantees cooked food is tried before raw food.
-    for index = 1, math.min(8, #foods) do
-        local item = foods[index].item
-        if item and item.Parent and consumeFood(item) then
-            success = true
-            break
+    local ok = pcall(function()
+        local foods = getFoodCandidates()
+        if #foods == 0 then
+            return
         end
-    end
+
+        -- Sorted list guarantees cooked food is tried before raw food.
+        for index = 1, math.min(8, #foods) do
+            local item = foods[index].item
+            if item and item.Parent and consumeFood(item) then
+                success = true
+                break
+            end
+        end
+    end)
 
     state.eatBusy = false
 
-    if not success then
+    if not ok or not success then
         requestEmergencyFoodRun()
     end
 
     return success
 end
 
+local eatRequested = false
+track(player:GetAttributeChangedSignal("Hunger"):Connect(function()
+    if not state.active then
+        return
+    end
+
+    local hunger = getRealHunger()
+    if hunger ~= nil and hunger <= state.eatThreshold and not eatRequested then
+        eatRequested = true
+        task.defer(function()
+            attemptAutoEat()
+            eatRequested = false
+        end)
+    end
+end))
+
 task.spawn(function()
     while state.active do
         local hunger = getRealHunger()
-
         if hunger ~= nil and hunger <= state.eatThreshold then
             attemptAutoEat()
-            task.wait(hunger <= 40 and 0.1 or 0.3)
-        else
-            task.wait(0.6)
         end
+        task.wait(hunger ~= nil and hunger <= 40 and 0.15 or 0.5)
     end
 end)
 
@@ -696,8 +751,8 @@ local function findBestOwned(scoreFunction)
     for _, container in ipairs(ownedContainers()) do
         if container then
             for _, item in ipairs(container:GetChildren()) do
-                local score = scoreFunction(item)
-                if score > bestScore then
+                local ok, score = pcall(scoreFunction, item)
+                if ok and score > bestScore then
                     best = item
                     bestScore = score
                 end
@@ -718,8 +773,8 @@ local function findBestWorld(scoreFunction)
     local bestScore = -math.huge
 
     for _, item in ipairs(items:GetChildren()) do
-        local score = scoreFunction(item)
-        if score > bestScore then
+        local ok, score = pcall(scoreFunction, item)
+        if ok and score > bestScore then
             best = item
             bestScore = score
         end
@@ -845,7 +900,7 @@ local KNOWN_TOKENS = {
     ["Admin Axe"] = "116_7367831688",
 }
 
-local function makeHitId(target, damage, weapon)
+local function makeHitId(weapon)
     -- Captured token is preferred because it comes from the current game build.
     -- Fixed IDs are the fallback used by current public scripts.
     return state.capturedTokens[weapon.Name]
@@ -884,16 +939,7 @@ local function attackTarget(target, isTree)
     attackCooldown[target] = now
     ensureAxeArmed(weapon)
 
-    local damage
-    if isTree then
-        damage = tonumber(weapon:GetAttribute("WeaponResourceDamage"))
-            or tonumber(weapon:GetAttribute("WeaponDamage"))
-            or 10
-    else
-        damage = tonumber(weapon:GetAttribute("WeaponDamage")) or 10
-    end
-
-    local hitId = makeHitId(target, damage, weapon)
+    local hitId = makeHitId(weapon)
     if not hitId then
         return
     end
@@ -1009,13 +1055,24 @@ local function sortedTrees(root)
     return result
 end
 
+local cachedEntities = {}
+local cachedTrees = {}
+local lastCombatScan = 0
+
 task.spawn(function()
     while state.active do
         local root = getRoot()
 
-        if root then
+        if root and (state.killAura or state.autoChop) then
+            local now = os.clock()
+            if now - lastCombatScan >= state.combatScanInterval then
+                lastCombatScan = now
+                cachedEntities = state.killAura and sortedEntities(root) or {}
+                cachedTrees = state.autoChop and sortedTrees(root) or {}
+            end
+
             if state.killAura then
-                for _, info in ipairs(sortedEntities(root)) do
+                for _, info in ipairs(cachedEntities) do
                     if state.inflight >= state.maxInflight then
                         break
                     end
@@ -1024,13 +1081,16 @@ task.spawn(function()
             end
 
             if state.autoChop then
-                for _, info in ipairs(sortedTrees(root)) do
+                for _, info in ipairs(cachedTrees) do
                     if state.inflight >= state.maxInflight then
                         break
                     end
                     attackTarget(info.target, true)
                 end
             end
+        else
+            cachedEntities = {}
+            cachedTrees = {}
         end
 
         task.wait(state.workerDelay)
@@ -1112,20 +1172,32 @@ local function lockFarmCharacter()
     local root = getRoot()
 
     if humanoid then
-        humanoid.WalkSpeed = 0
-        humanoid.AutoRotate = false
+        if humanoid.WalkSpeed ~= 0 then
+            humanoid.WalkSpeed = 0
+        end
+        if humanoid.AutoRotate then
+            humanoid.AutoRotate = false
+        end
 
         if humanoid.UseJumpPower then
-            humanoid.JumpPower = 0
-        else
+            if humanoid.JumpPower ~= 0 then
+                humanoid.JumpPower = 0
+            end
+        elseif humanoid.JumpHeight ~= 0 then
             humanoid.JumpHeight = 0
         end
     end
 
     if root then
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.Anchored = true
+        if root.AssemblyLinearVelocity.Magnitude > 0.01 then
+            root.AssemblyLinearVelocity = Vector3.zero
+        end
+        if root.AssemblyAngularVelocity.Magnitude > 0.01 then
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+        if not root.Anchored then
+            root.Anchored = true
+        end
     end
 end
 
@@ -1214,6 +1286,7 @@ local function runFoodService()
     state.emergencyFoodRun = false
     cancelFarmTween()
 
+    local serviceOk = pcall(function()
     -- Always stay under center while servicing food.
     local character = getCharacter()
     if character then
@@ -1270,8 +1343,14 @@ local function runFoodService()
         end
     end
 
+    end)
+
     state.lastFoodService = os.clock()
     state.foodServiceRunning = false
+
+    if not serviceOk and state.autoFarm then
+        state.emergencyFoodRun = true
+    end
 end
 
 local patrolPoints = {}
@@ -1404,12 +1483,14 @@ task.spawn(function()
             if night then
                 if not wasNight then
                     cancelFarmTween()
-                    local character = getCharacter()
-                    if character then
-                        character:PivotTo(CFrame.new(FARM_HOME))
-                    end
-                    lockFarmCharacter()
                 end
+
+                local character = getCharacter()
+                local root = getRoot()
+                if character and (not root or (root.Position - FARM_HOME).Magnitude > 1.5) then
+                    character:PivotTo(CFrame.new(FARM_HOME))
+                end
+                lockFarmCharacter()
 
                 wasNight = true
 
@@ -1459,6 +1540,7 @@ screen.Name = "SB99_RedTeamUI"
 screen.ResetOnSpawn = false
 screen.DisplayOrder = 999999
 screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.IgnoreGuiInset = false
 screen.Parent = playerGui
 
 local frame = Instance.new("Frame")
@@ -1498,7 +1580,7 @@ title.Text = "Smile B - 99 Nights Helper"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Font = Enum.Font.GothamBold
-title.TextSize = 11
+title.TextSize = 12
 title.Parent = header
 
 local minimize = Instance.new("TextButton")
@@ -1630,15 +1712,26 @@ track(farmButton.MouseButton1Click:Connect(function()
     updateButtons()
 end))
 
+local function clampToViewport(position, size)
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+    local maxX = math.max(0, viewport.X - size.X)
+    local maxY = math.max(0, viewport.Y - size.Y)
+    return Vector2.new(
+        math.clamp(position.X, 0, maxX),
+        math.clamp(position.Y, 0, maxY)
+    )
+end
+
 local function minimizeUI()
-    local position = frame.AbsolutePosition
+    local position = clampToViewport(frame.AbsolutePosition, ball.AbsoluteSize)
     ball.Position = UDim2.fromOffset(position.X, position.Y)
     frame.Visible = false
     ball.Visible = true
 end
 
 local function restoreUI()
-    local position = ball.AbsolutePosition
+    local position = clampToViewport(ball.AbsolutePosition, frame.AbsoluteSize)
     frame.Position = UDim2.fromOffset(position.X, position.Y)
     ball.Visible = false
     frame.Visible = true
@@ -1671,12 +1764,12 @@ end))
 track(UserInputService.InputChanged:Connect(function(input)
     if dragging and input == dragInput and dragStart and frameStart then
         local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            frameStart.X.Scale,
-            frameStart.X.Offset + delta.X,
-            frameStart.Y.Scale,
-            frameStart.Y.Offset + delta.Y
+        local desired = Vector2.new(
+            frameStart.X.Offset + delta.X + frameStart.X.Scale * (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.X or 0),
+            frameStart.Y.Offset + delta.Y + frameStart.Y.Scale * (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 0)
         )
+        local clamped = clampToViewport(desired, frame.AbsoluteSize)
+        frame.Position = UDim2.fromOffset(clamped.X, clamped.Y)
     end
 end))
 
@@ -1722,12 +1815,14 @@ track(UserInputService.InputChanged:Connect(function(input)
         ballMoved = true
     end
 
-    ball.Position = UDim2.new(
-        ballPositionStart.X.Scale,
-        ballPositionStart.X.Offset + delta.X,
-        ballPositionStart.Y.Scale,
-        ballPositionStart.Y.Offset + delta.Y
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.zero
+    local desired = Vector2.new(
+        ballPositionStart.X.Offset + delta.X + ballPositionStart.X.Scale * viewport.X,
+        ballPositionStart.Y.Offset + delta.Y + ballPositionStart.Y.Scale * viewport.Y
     )
+    local clamped = clampToViewport(desired, ball.AbsoluteSize)
+    ball.Position = UDim2.fromOffset(clamped.X, clamped.Y)
 end))
 
 track(UserInputService.InputEnded:Connect(function(input)
@@ -1744,6 +1839,14 @@ track(UserInputService.InputEnded:Connect(function(input)
         end
     end
 end))
+
+task.defer(function()
+    if not state.active or not frame.Parent then
+        return
+    end
+    local position = clampToViewport(frame.AbsolutePosition, frame.AbsoluteSize)
+    frame.Position = UDim2.fromOffset(position.X, position.Y)
+end)
 
 updateButtons()
 
