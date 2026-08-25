@@ -267,9 +267,13 @@ local function isLive(instance)
 end
 
 -- Utility RemoteFunctions are isolated behind a timeout guard. Each call owns
--- a tokenized expiring lock: a hung InvokeServer cannot freeze Auto Eat, gear
--- pickup, or cooking forever, and a late old response cannot unlock a newer call.
+-- a tokenized expiring lock. A timed-out InvokeServer also enters a short
+-- circuit-breaker cooldown so a permanently hung server remote cannot leak a
+-- new waiting coroutine every couple of seconds. Late responses only clear
+-- the cooldown that belongs to their own token, so newer calls stay isolated.
 local invokeLocks = setmetatable({}, { __mode = "k" })
+local invokeCooldowns = setmetatable({}, { __mode = "k" })
+
 local function callUtilityRemote(remote, timeoutSeconds, ...)
     if not isLive(remote) then
         return false, nil
@@ -286,6 +290,15 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
 
     local timeout = math.max(0.25, tonumber(timeoutSeconds) or 2)
     local now = os.clock()
+
+    local cooldown = invokeCooldowns[remote]
+    if cooldown then
+        if cooldown.untilAt > now then
+            return false, nil
+        end
+        invokeCooldowns[remote] = nil
+    end
+
     local existing = invokeLocks[remote]
     if existing and existing.expiresAt > now then
         return false, nil
@@ -310,6 +323,11 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
         if activeLock and activeLock.token == token then
             invokeLocks[remote] = nil
         end
+
+        local activeCooldown = invokeCooldowns[remote]
+        if activeCooldown and activeCooldown.token == token then
+            invokeCooldowns[remote] = nil
+        end
     end)
 
     local deadline = now + timeout
@@ -318,6 +336,10 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
     end
 
     if not done then
+        invokeCooldowns[remote] = {
+            token = token,
+            untilAt = os.clock() + 8,
+        }
         return false, nil
     end
 
