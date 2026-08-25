@@ -82,7 +82,8 @@ local FOOD_AREA = Vector3.new(0, 20, 0)
 -- movement lock before replacing its state so re-executing never leaves the
 -- character anchored or stuck at zero movement speed.
 local previousState = G.SB99_STATE
-local previousWasFarming = type(previousState) == "table" and previousState.autoFarm == true
+local previousWasFarming = (type(previousState) == "table" and previousState.autoFarm == true)
+    or type(G.SB99_FARM_RESTORE) == "table"
 if type(previousState) == "table" then
     previousState.active = false
 end
@@ -307,7 +308,7 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
 
         local activeLock = invokeLocks[remote]
         if activeLock and activeLock.token == token then
-  invokeLocks[remote] = nil
+            invokeLocks[remote] = nil
         end
     end)
 
@@ -559,10 +560,12 @@ local function canConsume(item)
     local owner = item:GetAttribute("Owner")
     if owner ~= nil then
         local ownerText = tostring(owner)
+        local ownerNormalized = string.lower(ownerText)
         local ownerNumber = tonumber(owner)
         local unowned = owner == false
             or ownerText == ""
-            or ownerText == "nil"
+            or ownerNormalized == "nil"
+            or ownerNormalized == "none"
             or ownerNumber == 0
         local belongsToPlayer = owner == player
             or ownerNumber == player.UserId
@@ -616,11 +619,16 @@ local function getFoodCandidates()
     local root = getRoot()
     local now = os.clock()
 
-    local sources = {
-        player:FindFirstChild("Inventory"),
-        player:FindFirstChild("Backpack"),
-        workspace:FindFirstChild("Items"),
-    }
+    -- Build a compact list. ipairs stops at the first nil slot, so a
+    -- missing Inventory must not hide Backpack or world food.
+    local sources = {}
+    local inventory = player:FindFirstChild("Inventory")
+    local backpack = player:FindFirstChild("Backpack")
+    local worldItems = workspace:FindFirstChild("Items")
+
+    if inventory then table.insert(sources, inventory) end
+    if backpack then table.insert(sources, backpack) end
+    if worldItems then table.insert(sources, worldItems) end
 
     for sourceIndex, container in ipairs(sources) do
         if container then
@@ -851,11 +859,19 @@ local function sackScore(item)
 end
 
 local function ownedContainers()
-    return {
-        player:FindFirstChild("Inventory"),
-        player:FindFirstChild("Backpack"),
-        player.Character,
-    }
+    -- Keep this array compact because findBestOwned iterates it with ipairs.
+    -- Some executors/games do not expose Inventory, but Backpack/Character
+    -- still need to be searched for the best axe and sack.
+    local containers = {}
+    local inventory = player:FindFirstChild("Inventory")
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+
+    if inventory then table.insert(containers, inventory) end
+    if backpack then table.insert(containers, backpack) end
+    if character then table.insert(containers, character) end
+
+    return containers
 end
 
 local function findBestOwned(scoreFunction)
@@ -1112,10 +1128,13 @@ local function rebuildTrees()
         return
     end
 
-    local folders = {
-        map:FindFirstChild("Foliage"),
-        map:FindFirstChild("Landmarks"),
-    }
+    -- Build a compact folder list. If Foliage is absent, ipairs on a
+    -- sparse literal would otherwise skip Landmarks entirely.
+    local folders = {}
+    local foliage = map:FindFirstChild("Foliage")
+    local landmarks = map:FindFirstChild("Landmarks")
+    if foliage then table.insert(folders, foliage) end
+    if landmarks then table.insert(folders, landmarks) end
 
     local seen = {}
 
