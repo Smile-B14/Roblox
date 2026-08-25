@@ -1,0 +1,1749 @@
+--[[
+    Smile B - 99 Nights Helper TEST
+    Credits: Smile B
+
+    Fresh Roblox session recommended if an older SB99 build was executed,
+    because older builds hooked Hunger reads and hid the Hunger bar.
+]]
+
+local G = getgenv()
+
+-- Older SB99 versions can leave a Hunger-spoofing hook alive in the same
+-- Roblox process. This build no longer aborts when that is detected; however,
+-- a fresh Roblox session is still recommended if you want the stock Hunger bar
+-- to show the real replicated value.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Never block startup waiting for a combat remote. Some servers replicate
+-- RemoteEvents/RemoteFunctions a little later, and the game can move a remote
+-- between containers. The UI must still load immediately.
+local RemoteEvents = nil
+local ToolDamageObject = nil
+local EquipItemHandle = nil
+local StartDragging = nil
+local StopDragging = nil
+local RequestHotbarItem = nil
+local RequestConsumeItem = nil
+local RequestCookItem = nil
+local TempStorage = nil
+
+local function findReplicated(name)
+    if RemoteEvents then
+        local direct = RemoteEvents:FindFirstChild(name)
+        if direct then
+            return direct
+        end
+    end
+
+    return ReplicatedStorage:FindFirstChild(name, true)
+end
+
+local function refreshRemotes()
+    RemoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
+        or ReplicatedStorage:FindFirstChild("RemoteEvents", true)
+
+    ToolDamageObject = findReplicated("ToolDamageObject")
+    EquipItemHandle = findReplicated("EquipItemHandle")
+    StartDragging = findReplicated("RequestStartDraggingItem")
+    StopDragging = findReplicated("StopDraggingItem")
+    RequestHotbarItem = findReplicated("RequestHotbarItem")
+    RequestConsumeItem = findReplicated("RequestConsumeItem")
+    RequestCookItem = findReplicated("RequestCookItem")
+    TempStorage = ReplicatedStorage:FindFirstChild("TempStorage", true)
+end
+
+refreshRemotes()
+
+local function getMainFire()
+    local map = workspace:FindFirstChild("Map")
+    local campground = map and map:FindFirstChild("Campground")
+    return campground and campground:FindFirstChild("MainFire")
+end
+
+local FARM_HOME = Vector3.new(0, -50, 0)
+local RETURN_POSITION = Vector3.new(0, 50, 0)
+local FOOD_AREA = Vector3.new(0, 20, 0)
+
+-- Hit IDs use captured legitimate tool tokens / known game tokens.
+-- We intentionally do NOT call Client.EnemyHandler.ApplyLocalDamage here;
+-- calling it with an incomplete internal context caused EnemyHandler line 516 errors.
+
+-- Shut down previous final-script run.
+if G.SB99_STATE then
+    G.SB99_STATE.active = false
+end
+
+if G.SB99_ACTIVE_TWEEN then
+    pcall(function()
+        G.SB99_ACTIVE_TWEEN:Cancel()
+    end)
+    G.SB99_ACTIVE_TWEEN = nil
+end
+
+if type(G.SB99_CONNECTIONS) == "table" then
+    for _, connection in ipairs(G.SB99_CONNECTIONS) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+end
+
+G.SB99_CONNECTIONS = {}
+
+local function track(connection)
+    table.insert(G.SB99_CONNECTIONS, connection)
+    return connection
+end
+
+local oldUI = playerGui:FindFirstChild("SB99_RedTeamUI")
+if oldUI then
+    oldUI:Destroy()
+end
+
+local oldPlatform = workspace:FindFirstChild("SB99_FarmPlatform")
+if oldPlatform then
+    oldPlatform:Destroy()
+end
+
+local state = {
+    active = true,
+
+    autoChop = false,
+    killAura = false,
+    autoBestGear = false,
+    autoFarm = false,
+
+    range = 200,
+    maxInflight = 72,
+    inflight = 0,
+    targetCooldown = 0.03,
+    workerDelay = 0.01,
+    capturedTokens = {},
+
+    maxHunger = 200,
+    eatThreshold = 160,
+    rawHunger = nil,
+    eatBusy = false,
+
+    foodInterval = 60,
+    lastFoodService = 0,
+    emergencyFoodRun = false,
+    foodServiceRunning = false,
+
+    patrolRadius = 700,
+    patrolSpeed = 60,
+    patrolIndex = 1,
+
+    blockedRemotes = {
+        DamagePlayer = true,
+        NPCProjectileDamagePlayer = true,
+        CheckLightningDamage = true,
+        JungleSpikeTrapDamage = true,
+        RamChargePlayer = true,
+        OwlChasePlayer = true,
+        HitByBatScream = true,
+        ClientTriggerNPCAttack = true,
+        TriggerArrowTrap = true,
+    },
+}
+
+G.SB99_STATE = state
+
+-- Background dependency refresh. Missing remotes/modules disable only the
+-- related feature; they never prevent the UI from appearing.
+task.spawn(function()
+    while state.active do
+        refreshRemotes()
+        task.wait(0.5)
+    end
+end)
+
+local function getCharacter()
+    return player.Character
+end
+
+local function getHumanoid()
+    local character = player.Character
+    return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot()
+    local character = player.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getPart(object)
+    if not object then
+        return nil
+    end
+
+    if object:IsA("BasePart") then
+        return object
+    end
+
+    if object:IsA("Model") then
+        return object.PrimaryPart
+            or object:FindFirstChild("HumanoidRootPart")
+            or object:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    return nil
+end
+
+-- No Hunger spoof in the final build. The normal game Hunger bar stays visible
+-- and receives the real replicated Hunger value.
+local function getRealHunger()
+    local ok, attributes = pcall(function()
+        return player:GetAttributes()
+    end)
+
+    if ok and type(attributes) == "table" then
+        local hunger = tonumber(attributes.Hunger)
+        if hunger ~= nil then
+            state.rawHunger = hunger
+        end
+    end
+
+    return state.rawHunger
+end
+
+-- Damage-only hook. No Hunger hooks and no Roblox method calls inside the hook.
+if not G.SB99_FINAL_HOOK then
+    if type(hookmetamethod) == "function"
+        and type(getnamecallmethod) == "function"
+        and type(newcclosure) == "function" then
+
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local s = G.SB99_STATE
+            if not s or not s.active then
+                return oldNamecall(self, ...)
+            end
+
+            local method = getnamecallmethod()
+            local a1, a2, a3 = ...
+
+            if method == "FireServer" or method == "InvokeServer" then
+                local remoteName = self.Name
+
+                -- Capture the game's own ToolDamageObject token without calling
+                -- any Roblox methods from inside the metamethod hook.
+                if remoteName == "ToolDamageObject"
+                    and typeof(a2) == "Instance"
+                    and a3 ~= nil then
+                    local executorCall = false
+                    if type(checkcaller) == "function" then
+                        executorCall = checkcaller()
+                    end
+                    if not executorCall then
+                        s.capturedTokens[a2.Name] = a3
+                    end
+                end
+
+                if s.blockedRemotes[remoteName] then
+                    if method == "InvokeServer" then
+                        return false
+                    end
+                    return nil
+                end
+            end
+
+            return oldNamecall(self, ...)
+        end))
+
+        G.SB99_FINAL_HOOK = true
+    end
+end
+
+-- Entity-damage protection. Hunger itself is intentionally untouched so the
+-- real Hunger bar can be watched.
+local lastSafeCFrame = nil
+
+local function protectCharacter(character)
+    local humanoid = character:WaitForChild("Humanoid", 10)
+    local root = character:WaitForChild("HumanoidRootPart", 10)
+
+    if not humanoid or not root then
+        return
+    end
+
+    lastSafeCFrame = character:GetPivot()
+
+    pcall(function()
+        humanoid.BreakJointsOnDeath = false
+        humanoid.RequiresNeck = false
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+    end)
+
+    if not character:FindFirstChild("SB99_GodForceField") then
+        local forceField = Instance.new("ForceField")
+        forceField.Name = "SB99_GodForceField"
+        forceField.Visible = false
+        forceField.Parent = character
+    end
+
+    track(humanoid.HealthChanged:Connect(function(health)
+        if not state.active then
+            return
+        end
+
+        if health > 0 and health < humanoid.MaxHealth then
+            pcall(function()
+                humanoid.Health = humanoid.MaxHealth
+            end)
+        end
+    end))
+end
+
+track(player.CharacterAdded:Connect(function(character)
+    task.delay(0.1, function()
+        if state.active then
+            protectCharacter(character)
+        end
+    end)
+end))
+
+if player.Character then
+    task.spawn(protectCharacter, player.Character)
+end
+
+-- Anti-void while Auto Farm is OFF. Auto Farm intentionally works at Y=-50.
+task.spawn(function()
+    while state.active do
+        local character = getCharacter()
+        local humanoid = getHumanoid()
+        local root = getRoot()
+
+        if humanoid then
+            pcall(function()
+                humanoid.BreakJointsOnDeath = false
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+                if humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
+                    humanoid.Health = humanoid.MaxHealth
+                end
+            end)
+        end
+
+        if character and humanoid and root and not state.autoFarm then
+            local destroyY = workspace.FallenPartsDestroyHeight
+
+            if humanoid.FloorMaterial ~= Enum.Material.Air
+                and root.Position.Y > destroyY + 80 then
+                lastSafeCFrame = character:GetPivot()
+            end
+
+            if root.Position.Y <= destroyY + 35 then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+
+                if lastSafeCFrame then
+                    character:PivotTo(lastSafeCFrame + Vector3.new(0, 5, 0))
+                else
+                    character:PivotTo(CFrame.new(RETURN_POSITION))
+                end
+            end
+        end
+
+        task.wait(0.08)
+    end
+end)
+
+--==============================================================
+-- SILENT FOOD FALLBACK
+-- Cooked food is always preferred. Raw food is used only if no
+-- cooked food succeeds.
+--==============================================================
+
+local RAW_COOKABLE_NAMES = {
+    ["Morsel"] = true,
+    ["Steak"] = true,
+    ["Ribs"] = true,
+    ["Salmon"] = true,
+    ["Mackerel"] = true,
+    ["Clownfish"] = true,
+    ["Swordfish"] = true,
+    ["Jellyfish"] = true,
+    ["Char"] = true,
+    ["Eel"] = true,
+    ["Shark"] = true,
+}
+
+local function isCooked(item)
+    return string.sub(item.Name, 1, 7) == "Cooked "
+end
+
+local function isCookable(item)
+    if not item or isCooked(item) then
+        return false
+    end
+
+    if RAW_COOKABLE_NAMES[item.Name] then
+        return true
+    end
+
+    local value = item:GetAttribute("Cookable")
+    return value ~= nil and value ~= false
+end
+
+local function isFoodItem(item)
+    if not item then
+        return false
+    end
+
+    local restore = tonumber(item:GetAttribute("RestoreHunger"))
+    return (restore and restore > 0) or isCooked(item) or isCookable(item)
+end
+
+local failedFoodUntil = setmetatable({}, { __mode = "k" })
+
+local function canConsume(item)
+    if not item or not item.Parent then
+        return false
+    end
+
+    local restore = tonumber(item:GetAttribute("RestoreHunger"))
+    if not restore or restore <= 0 then
+        return false
+    end
+
+    local owner = item:GetAttribute("Owner")
+    if owner ~= nil and owner ~= player.UserId then
+        return false
+    end
+
+    if player:GetAttribute("Class") == "Bunny" and item:GetAttribute("HasMeat") then
+        return false
+    end
+
+    return true
+end
+
+local function dragItemTo(item, destination)
+    if not item or not item.Parent or not StartDragging or not StopDragging then
+        return false
+    end
+
+    local ok = pcall(function()
+        StartDragging:FireServer(item)
+        task.wait(0.025)
+
+        if item:IsA("Model") then
+            item:PivotTo(destination)
+        elseif item:IsA("BasePart") then
+            item.CFrame = destination
+        end
+
+        task.wait(0.025)
+        StopDragging:FireServer(item)
+    end)
+
+    return ok
+end
+
+local function getFoodCandidates()
+    local candidates = {}
+    local root = getRoot()
+    local now = os.clock()
+
+    local sources = {
+        player:FindFirstChild("Inventory"),
+        player:FindFirstChild("Backpack"),
+        workspace:FindFirstChild("Items"),
+    }
+
+    for sourceIndex, container in ipairs(sources) do
+        if container then
+            for _, item in ipairs(container:GetChildren()) do
+                if (not failedFoodUntil[item] or failedFoodUntil[item] <= now)
+                    and canConsume(item) then
+
+                    local restore = tonumber(item:GetAttribute("RestoreHunger")) or 0
+                    local distance = 0
+                    local part = getPart(item)
+
+                    if root and part then
+                        distance = (part.Position - root.Position).Magnitude
+                    end
+
+                    -- Priority: cooked food > ready-to-eat raw food > raw meat.
+                    -- This avoids the game's "cook meat before eating" warning
+                    -- whenever another valid food exists.
+                    local cookedBonus = isCooked(item) and 1000000000 or 0
+                    local rawMeatPenalty = (item:GetAttribute("HasMeat") and not isCooked(item)) and 500000000 or 0
+                    local sourceBonus = (4 - sourceIndex) * 1000000
+                    local score = cookedBonus + sourceBonus + restore * 10000 - distance - rawMeatPenalty
+
+                    table.insert(candidates, {
+                        item = item,
+                        score = score,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        return a.score > b.score
+    end)
+
+    return candidates
+end
+
+local function consumeFood(item)
+    if not item or not item.Parent or not RequestConsumeItem then
+        return false
+    end
+
+    local root = getRoot()
+    if not root then
+        return false
+    end
+
+    -- Bring world food into a normal server-valid range first.
+    if item:IsDescendantOf(workspace) then
+        local part = getPart(item)
+        if part and (part.Position - root.Position).Magnitude > 12 then
+            dragItemTo(item, root.CFrame * CFrame.new(0, 1, -3))
+            task.wait(0.06)
+        end
+    end
+
+    local before = getRealHunger()
+
+    -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
+    -- items that can produce Roblox's "trying to set locked parent!" warning.
+    -- The current server accepts nearby items through RequestConsumeItem directly.
+    local success, response = pcall(function()
+        if RequestConsumeItem:IsA("RemoteFunction") then
+            return RequestConsumeItem:InvokeServer(item)
+        else
+            RequestConsumeItem:FireServer(item)
+            return true
+        end
+    end)
+
+    task.wait(0.10)
+
+    local after = getRealHunger()
+    local accepted = success and (
+        response == true
+        or (type(response) == "table" and response.Success == true)
+        or (before ~= nil and after ~= nil and after > before)
+    )
+
+    if accepted then
+        return true
+    end
+
+    if item and item.Parent then
+        failedFoodUntil[item] = os.clock() + 2
+    end
+
+    return false
+end
+
+local function requestEmergencyFoodRun()
+    if not state.autoFarm then
+        return
+    end
+
+    state.emergencyFoodRun = true
+
+    if G.SB99_ACTIVE_TWEEN then
+        pcall(function()
+            G.SB99_ACTIVE_TWEEN:Cancel()
+        end)
+    end
+end
+
+local function attemptAutoEat()
+    if state.eatBusy then
+        return false
+    end
+
+    local hunger = getRealHunger()
+    if hunger == nil or hunger > state.eatThreshold then
+        return false
+    end
+
+    local foods = getFoodCandidates()
+    if #foods == 0 then
+        requestEmergencyFoodRun()
+        return false
+    end
+
+    state.eatBusy = true
+    local success = false
+
+    -- Sorted list guarantees cooked food is tried before raw food.
+    for index = 1, math.min(8, #foods) do
+        local item = foods[index].item
+        if item and item.Parent and consumeFood(item) then
+            success = true
+            break
+        end
+    end
+
+    state.eatBusy = false
+
+    if not success then
+        requestEmergencyFoodRun()
+    end
+
+    return success
+end
+
+task.spawn(function()
+    while state.active do
+        local hunger = getRealHunger()
+
+        if hunger ~= nil and hunger <= state.eatThreshold then
+            attemptAutoEat()
+            task.wait(hunger <= 40 and 0.1 or 0.3)
+        else
+            task.wait(0.6)
+        end
+    end
+end)
+
+--==============================================================
+-- AXE / SACK RANKING
+--==============================================================
+
+local AXE_FALLBACK = {
+    ["Old Axe"] = 10,
+    ["Good Axe"] = 20,
+    ["Strong Axe"] = 30,
+    ["Chainsaw"] = 40,
+    ["Ice Axe"] = 45,
+    ["Corrupted Axe"] = 50,
+    ["Brutal BattleAxe"] = 60,
+    ["Admin Axe"] = 100,
+}
+
+local SACK_FALLBACK = {
+    ["Old Sack"] = 10,
+    ["Good Sack"] = 20,
+    ["Giant Sack"] = 30,
+    ["Infernal Sack"] = 40,
+    ["Admin Sack"] = 100,
+}
+
+local function isAxe(item)
+    if not item then
+        return false
+    end
+
+    return AXE_FALLBACK[item.Name] ~= nil
+        or string.find(string.lower(item.Name), "axe", 1, true) ~= nil
+        or item.Name == "Chainsaw"
+end
+
+local function axeScore(item)
+    if not isAxe(item) then
+        return -math.huge
+    end
+
+    local priority = tonumber(item:GetAttribute("ToolPriority")) or 0
+    local resourceDamage = tonumber(item:GetAttribute("WeaponResourceDamage")) or 0
+    local entityDamage = tonumber(item:GetAttribute("WeaponDamage")) or 0
+
+    return priority * 1000000
+        + resourceDamage * 10000
+        + entityDamage * 100
+        + (AXE_FALLBACK[item.Name] or 1)
+end
+
+local function isSack(item)
+    if not item then
+        return false
+    end
+
+    return SACK_FALLBACK[item.Name] ~= nil
+        or string.find(string.lower(item.Name), "sack", 1, true) ~= nil
+end
+
+local function sackScore(item)
+    if not isSack(item) then
+        return -math.huge
+    end
+
+    local capacity = tonumber(item:GetAttribute("Capacity")) or 0
+    return capacity * 1000 + (SACK_FALLBACK[item.Name] or 1)
+end
+
+local function ownedContainers()
+    return {
+        player:FindFirstChild("Inventory"),
+        player:FindFirstChild("Backpack"),
+        player.Character,
+    }
+end
+
+local function findBestOwned(scoreFunction)
+    local best = nil
+    local bestScore = -math.huge
+
+    for _, container in ipairs(ownedContainers()) do
+        if container then
+            for _, item in ipairs(container:GetChildren()) do
+                local score = scoreFunction(item)
+                if score > bestScore then
+                    best = item
+                    bestScore = score
+                end
+            end
+        end
+    end
+
+    return best, bestScore
+end
+
+local function findBestWorld(scoreFunction)
+    local items = workspace:FindFirstChild("Items")
+    if not items then
+        return nil, -math.huge
+    end
+
+    local best = nil
+    local bestScore = -math.huge
+
+    for _, item in ipairs(items:GetChildren()) do
+        local score = scoreFunction(item)
+        if score > bestScore then
+            best = item
+            bestScore = score
+        end
+    end
+
+    return best, bestScore
+end
+
+local function requestHotbarPickup(item)
+    if not item or not item.Parent or not RequestHotbarItem then
+        return false
+    end
+
+    local success, response = pcall(function()
+        if RequestHotbarItem:IsA("RemoteFunction") then
+            return RequestHotbarItem:InvokeServer(item)
+        else
+            RequestHotbarItem:FireServer(item)
+            return true
+        end
+    end)
+
+    return success and (
+        response == true
+        or (type(response) == "table" and response.Success == true)
+    )
+end
+
+local gearCooldown = setmetatable({}, { __mode = "k" })
+
+local function grabUpgrade(item, scoreFunction)
+    if not item or not item.Parent then
+        return
+    end
+
+    local now = os.clock()
+    if gearCooldown[item] and gearCooldown[item] > now then
+        return
+    end
+
+    gearCooldown[item] = now + 3
+
+    local root = getRoot()
+    if not root then
+        return
+    end
+
+    task.spawn(function()
+        dragItemTo(item, root.CFrame * CFrame.new(0, 1, -3))
+        task.wait(0.08)
+        requestHotbarPickup(item)
+        task.wait(0.35)
+    end)
+end
+
+task.spawn(function()
+    while state.active do
+        if state.autoBestGear then
+            local _, ownedAxeScore = findBestOwned(axeScore)
+            local _, ownedSackScore = findBestOwned(sackScore)
+            local worldAxe, worldAxeScore = findBestWorld(axeScore)
+            local worldSack, worldSackScore = findBestWorld(sackScore)
+
+            if worldAxe and worldAxeScore > ownedAxeScore then
+                grabUpgrade(worldAxe, axeScore)
+            end
+
+            if worldSack and worldSackScore > ownedSackScore then
+                grabUpgrade(worldSack, sackScore)
+            end
+        end
+
+        task.wait(0.4)
+    end
+end)
+
+--==============================================================
+-- FAST NEAREST-FIRST CHOP / KILL AURA
+--==============================================================
+
+local bestAxe = nil
+
+task.spawn(function()
+    while state.active do
+        bestAxe = select(1, findBestOwned(axeScore))
+        task.wait(0.2)
+    end
+end)
+
+local lastArmed = nil
+local lastArmTime = 0
+
+local function ensureAxeArmed(weapon)
+    if not weapon or not EquipItemHandle then
+        return
+    end
+
+    local now = os.clock()
+    if weapon == lastArmed and now - lastArmTime < 1 then
+        return
+    end
+
+    local worked = pcall(function()
+        EquipItemHandle:FireServer("FireAllClients", weapon)
+    end)
+
+    if not worked then
+        pcall(function()
+            EquipItemHandle:FireServer(weapon)
+        end)
+    end
+
+    lastArmed = weapon
+    lastArmTime = now
+end
+
+local KNOWN_TOKENS = {
+    ["Old Axe"] = "3_7367831688",
+    ["Good Axe"] = "112_7367831688",
+    ["Strong Axe"] = "116_7367831688",
+    ["Chainsaw"] = "647_8992824875",
+    ["Ice Axe"] = "116_7367831688",
+    ["Admin Axe"] = "116_7367831688",
+}
+
+local function makeHitId(target, damage, weapon)
+    -- Captured token is preferred because it comes from the current game build.
+    -- Fixed IDs are the fallback used by current public scripts.
+    return state.capturedTokens[weapon.Name]
+        or KNOWN_TOKENS[weapon.Name]
+        or 999
+end
+
+local attackCooldown = setmetatable({}, { __mode = "k" })
+
+local function attackTarget(target, isTree)
+    if not ToolDamageObject then
+        refreshRemotes()
+        if not ToolDamageObject then
+            return
+        end
+    end
+
+    if not target or not target.Parent or state.inflight >= state.maxInflight then
+        return
+    end
+
+    local root = getRoot()
+    local weapon = bestAxe
+
+    if not root or not weapon then
+        return
+    end
+
+    local now = os.clock()
+    local previous = attackCooldown[target]
+
+    if previous and now - previous < state.targetCooldown then
+        return
+    end
+
+    attackCooldown[target] = now
+    ensureAxeArmed(weapon)
+
+    local damage
+    if isTree then
+        damage = tonumber(weapon:GetAttribute("WeaponResourceDamage"))
+            or tonumber(weapon:GetAttribute("WeaponDamage"))
+            or 10
+    else
+        damage = tonumber(weapon:GetAttribute("WeaponDamage")) or 10
+    end
+
+    local hitId = makeHitId(target, damage, weapon)
+    if not hitId then
+        return
+    end
+
+    local attackCFrame = root.CFrame
+    state.inflight = state.inflight + 1
+
+    task.spawn(function()
+        pcall(function()
+            if ToolDamageObject:IsA("RemoteFunction") then
+                ToolDamageObject:InvokeServer(target, weapon, hitId, attackCFrame)
+            else
+                ToolDamageObject:FireServer(target, weapon, hitId, attackCFrame)
+            end
+        end)
+
+        state.inflight = math.max(0, state.inflight - 1)
+    end)
+end
+
+local treeCache = {}
+
+local function rebuildTrees()
+    table.clear(treeCache)
+
+    local map = workspace:FindFirstChild("Map")
+    if not map then
+        return
+    end
+
+    local folders = {
+        map:FindFirstChild("Foliage"),
+        map:FindFirstChild("Landmarks"),
+    }
+
+    local seen = {}
+
+    for _, folder in ipairs(folders) do
+        if folder then
+            for _, object in ipairs(folder:GetChildren()) do
+                if object:IsA("Model")
+                    and string.find(string.lower(object.Name), "tree", 1, true)
+                    and not seen[object] then
+                    seen[object] = true
+                    table.insert(treeCache, object)
+                end
+            end
+        end
+    end
+end
+
+rebuildTrees()
+
+task.spawn(function()
+    while state.active do
+        rebuildTrees()
+        task.wait(1)
+    end
+end)
+
+local function sortedEntities(root)
+    local result = {}
+    local folder = workspace:FindFirstChild("Characters")
+
+    if not folder then
+        return result
+    end
+
+    for _, target in ipairs(folder:GetChildren()) do
+        if target:IsA("Model") and target ~= player.Character then
+            local part = getPart(target)
+            if part then
+                local distance = (part.Position - root.Position).Magnitude
+                if distance <= state.range then
+                    table.insert(result, {
+                        target = target,
+                        distance = distance,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(result, function(a, b)
+        return a.distance < b.distance
+    end)
+
+    return result
+end
+
+local function sortedTrees(root)
+    local result = {}
+
+    for _, tree in ipairs(treeCache) do
+        if tree.Parent then
+            local part = getPart(tree)
+            if part then
+                local distance = (part.Position - root.Position).Magnitude
+                if distance <= state.range then
+                    table.insert(result, {
+                        target = tree,
+                        distance = distance,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(result, function(a, b)
+        return a.distance < b.distance
+    end)
+
+    return result
+end
+
+task.spawn(function()
+    while state.active do
+        local root = getRoot()
+
+        if root then
+            if state.killAura then
+                for _, info in ipairs(sortedEntities(root)) do
+                    if state.inflight >= state.maxInflight then
+                        break
+                    end
+                    attackTarget(info.target, false)
+                end
+            end
+
+            if state.autoChop then
+                for _, info in ipairs(sortedTrees(root)) do
+                    if state.inflight >= state.maxInflight then
+                        break
+                    end
+                    attackTarget(info.target, true)
+                end
+            end
+        end
+
+        task.wait(state.workerDelay)
+    end
+end)
+
+--==============================================================
+-- NIGHT DETECTION
+-- Uses a replicated boolean attribute if the game exposes one;
+-- otherwise uses actual Lighting.ClockTime.
+--==============================================================
+
+local function isNight()
+    local objects = { workspace, Lighting }
+    local names = { "IsNight", "Night", "Nighttime" }
+
+    for _, object in ipairs(objects) do
+        for _, name in ipairs(names) do
+            local value = object:GetAttribute(name)
+            if type(value) == "boolean" then
+                return value
+            end
+        end
+    end
+
+    local clock = Lighting.ClockTime
+    return clock >= 18 or clock < 6
+end
+
+--==============================================================
+-- AUTO FARM MOVEMENT / FOOD SERVICE
+--==============================================================
+
+local farmPlatform = nil
+
+local function destroyPlatform()
+    if farmPlatform then
+        pcall(function()
+            farmPlatform:Destroy()
+        end)
+        farmPlatform = nil
+    end
+
+    local existing = workspace:FindFirstChild("SB99_FarmPlatform")
+    if existing then
+        existing:Destroy()
+    end
+end
+
+local function createPlatform()
+    destroyPlatform()
+
+    local platform = Instance.new("Part")
+    platform.Name = "SB99_FarmPlatform"
+    platform.Size = Vector3.new(20, 1, 20)
+    platform.CFrame = CFrame.new(0, -53, 0)
+    platform.Anchored = true
+    platform.CanCollide = true
+    platform.CanTouch = false
+    platform.CanQuery = false
+    platform.Transparency = 0.2
+    platform.Parent = workspace
+
+    farmPlatform = platform
+end
+
+local previousFarm = {
+    chop = false,
+    kill = false,
+    gear = false,
+    walkSpeed = 16,
+    jumpPower = 50,
+    jumpHeight = 7.2,
+    autoRotate = true,
+}
+
+local function lockFarmCharacter()
+    local humanoid = getHumanoid()
+    local root = getRoot()
+
+    if humanoid then
+        humanoid.WalkSpeed = 0
+        humanoid.AutoRotate = false
+
+        if humanoid.UseJumpPower then
+            humanoid.JumpPower = 0
+        else
+            humanoid.JumpHeight = 0
+        end
+    end
+
+    if root then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.Anchored = true
+    end
+end
+
+local function cancelFarmTween()
+    if G.SB99_ACTIVE_TWEEN then
+        pcall(function()
+            G.SB99_ACTIVE_TWEEN:Cancel()
+        end)
+        G.SB99_ACTIVE_TWEEN = nil
+    end
+end
+
+local function foodServiceDue()
+    return os.clock() - state.lastFoodService >= state.foodInterval
+end
+
+local function moveFarmTo(position, ignoreInterrupts)
+    if not state.autoFarm then
+        return false
+    end
+
+    local root = getRoot()
+    if not root then
+        return false
+    end
+
+    lockFarmCharacter()
+
+    local distance = (root.Position - position).Magnitude
+    local duration = math.max(0.15, distance / state.patrolSpeed)
+
+    local tween = TweenService:Create(
+        root,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear),
+        { CFrame = CFrame.new(position) }
+    )
+
+    G.SB99_ACTIVE_TWEEN = tween
+    tween:Play()
+
+    while state.active
+        and state.autoFarm
+        and tween.PlaybackState == Enum.PlaybackState.Playing do
+
+        if not ignoreInterrupts then
+            if state.emergencyFoodRun or foodServiceDue() or isNight() then
+                tween:Cancel()
+                break
+            end
+        end
+
+        task.wait(0.1)
+    end
+
+    if G.SB99_ACTIVE_TWEEN == tween then
+        G.SB99_ACTIVE_TWEEN = nil
+    end
+
+    return tween.PlaybackState == Enum.PlaybackState.Completed
+end
+
+local function cookItem(item)
+    local mainFire = getMainFire()
+
+    if not item or not item.Parent or not mainFire or not RequestCookItem then
+        return false
+    end
+
+    local ok = pcall(function()
+        if RequestCookItem:IsA("RemoteFunction") then
+            RequestCookItem:InvokeServer(mainFire, item)
+        else
+            RequestCookItem:FireServer(mainFire, item)
+        end
+    end)
+
+    return ok
+end
+
+local function runFoodService()
+    if not state.autoFarm or state.foodServiceRunning then
+        return
+    end
+
+    state.foodServiceRunning = true
+    state.emergencyFoodRun = false
+    cancelFarmTween()
+
+    -- Always stay under center while servicing food.
+    local character = getCharacter()
+    if character then
+        character:PivotTo(CFrame.new(FARM_HOME))
+    end
+    lockFarmCharacter()
+
+    local items = workspace:FindFirstChild("Items")
+
+    if items then
+        local foods = {}
+
+        -- Snapshot before requests can replace/remove raw food.
+        for _, item in ipairs(items:GetChildren()) do
+            if isFoodItem(item) then
+                table.insert(foods, item)
+            end
+        end
+
+        local index = 0
+
+        for _, item in ipairs(foods) do
+            if not state.autoFarm then
+                break
+            end
+
+            if item and item.Parent then
+                index = index + 1
+
+                local column = (index - 1) % 7
+                local row = math.floor((index - 1) / 7) % 5
+
+                local offset = Vector3.new(
+                    (column - 3) * 1.6,
+                    0,
+                    (row - 2) * 1.6
+                )
+
+                dragItemTo(item, CFrame.new(FOOD_AREA + offset))
+                task.wait(0.025)
+
+                if item.Parent and isCookable(item) then
+                    cookItem(item)
+                    task.wait(0.025)
+                end
+            end
+        end
+
+        -- Give cooked replacements time to appear.
+        task.wait(3)
+
+        if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
+            attemptAutoEat()
+        end
+    end
+
+    state.lastFoodService = os.clock()
+    state.foodServiceRunning = false
+end
+
+local patrolPoints = {}
+
+-- Four rings out to 700 studs. Offset alternating rings so coverage overlaps.
+for ring = 1, 4 do
+    local radius = ring * 175
+
+    for point = 0, 7 do
+        local offsetDegrees = (ring % 2 == 0) and 22.5 or 0
+        local angle = math.rad(point * 45 + offsetDegrees)
+
+        table.insert(patrolPoints, Vector3.new(
+            math.cos(angle) * radius,
+            -50,
+            math.sin(angle) * radius
+        ))
+    end
+end
+
+local function enableFarm()
+    if state.autoFarm then
+        return
+    end
+
+    local humanoid = getHumanoid()
+
+    previousFarm.chop = state.autoChop
+    previousFarm.kill = state.killAura
+    previousFarm.gear = state.autoBestGear
+
+    if humanoid then
+        previousFarm.walkSpeed = humanoid.WalkSpeed
+        previousFarm.jumpPower = humanoid.JumpPower
+        previousFarm.jumpHeight = humanoid.JumpHeight
+        previousFarm.autoRotate = humanoid.AutoRotate
+    end
+
+    state.autoFarm = true
+    state.autoChop = true
+    state.killAura = true
+    state.autoBestGear = true
+    state.patrolIndex = 1
+
+    -- Immediate first food sweep, then every minute.
+    state.lastFoodService = 0
+
+    createPlatform()
+
+    local character = getCharacter()
+    if character then
+        character:PivotTo(CFrame.new(FARM_HOME))
+    end
+
+    lockFarmCharacter()
+end
+
+local function disableFarm()
+    if not state.autoFarm then
+        return
+    end
+
+    state.autoFarm = false
+    state.emergencyFoodRun = false
+    state.foodServiceRunning = false
+
+    cancelFarmTween()
+
+    state.autoChop = previousFarm.chop
+    state.killAura = previousFarm.kill
+    state.autoBestGear = previousFarm.gear
+
+    local humanoid = getHumanoid()
+    local root = getRoot()
+    local character = getCharacter()
+
+    if root then
+        root.Anchored = false
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    if humanoid then
+        humanoid.WalkSpeed = previousFarm.walkSpeed
+        humanoid.AutoRotate = previousFarm.autoRotate
+
+        if humanoid.UseJumpPower then
+            humanoid.JumpPower = previousFarm.jumpPower
+        else
+            humanoid.JumpHeight = previousFarm.jumpHeight
+        end
+    end
+
+    destroyPlatform()
+
+    if character then
+        character:PivotTo(CFrame.new(RETURN_POSITION))
+    end
+end
+
+-- Farm lock. Does not force a position because the Tween controls daytime movement.
+track(RunService.Heartbeat:Connect(function()
+    if not state.active or not state.autoFarm then
+        return
+    end
+
+    state.autoChop = true
+    state.killAura = true
+    state.autoBestGear = true
+
+    if not farmPlatform or not farmPlatform.Parent then
+        createPlatform()
+    end
+
+    lockFarmCharacter()
+end))
+
+-- Main Auto Farm controller.
+task.spawn(function()
+    local wasNight = false
+
+    while state.active do
+        if not state.autoFarm then
+            wasNight = false
+            task.wait(0.4)
+        else
+            local night = isNight()
+
+            -- NIGHT: stay directly under center. No roaming.
+            if night then
+                if not wasNight then
+                    cancelFarmTween()
+                    local character = getCharacter()
+                    if character then
+                        character:PivotTo(CFrame.new(FARM_HOME))
+                    end
+                    lockFarmCharacter()
+                end
+
+                wasNight = true
+
+                -- Food is still brought/cooked every minute at night.
+                if state.emergencyFoodRun or foodServiceDue() then
+                    runFoodService()
+                end
+
+                task.wait(0.5)
+            else
+                wasNight = false
+
+                -- Food service has priority over roaming.
+                if state.emergencyFoodRun or foodServiceDue() then
+                    moveFarmTo(FARM_HOME, true)
+                    runFoodService()
+                    task.wait(0.2)
+                else
+                    local point = patrolPoints[state.patrolIndex]
+
+                    if moveFarmTo(point, false) then
+                        state.patrolIndex = state.patrolIndex + 1
+
+                        -- After a complete sweep, return home before starting again.
+                        if state.patrolIndex > #patrolPoints then
+                            state.patrolIndex = 1
+                            moveFarmTo(FARM_HOME, true)
+                            task.wait(1)
+                        else
+                            task.wait(0.3)
+                        end
+                    else
+                        task.wait(0.1)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+--==============================================================
+-- FINAL MINIMAL UI
+--==============================================================
+
+local screen = Instance.new("ScreenGui")
+screen.Name = "SB99_RedTeamUI"
+screen.ResetOnSpawn = false
+screen.DisplayOrder = 999999
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(250, 320)
+frame.Position = UDim2.new(0.5, -117, 0.16, 0)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = screen
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 12)
+frameCorner.Parent = frame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(80, 80, 90)
+stroke.Thickness = 1
+stroke.Parent = frame
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 38)
+header.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+header.BorderSizePixel = 0
+header.Active = true
+header.Parent = frame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = header
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -50, 1, 0)
+title.Position = UDim2.fromOffset(10, 0)
+title.BackgroundTransparency = 1
+title.Text = "Smile B - 99 Nights Helper"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.GothamBold
+title.TextSize = 11
+title.Parent = header
+
+local minimize = Instance.new("TextButton")
+minimize.Size = UDim2.fromOffset(30, 26)
+minimize.Position = UDim2.new(1, -36, 0, 6)
+minimize.BackgroundColor3 = Color3.fromRGB(48, 48, 55)
+minimize.BorderSizePixel = 0
+minimize.Text = "−"
+minimize.TextColor3 = Color3.new(1, 1, 1)
+minimize.Font = Enum.Font.GothamBold
+minimize.TextSize = 17
+minimize.Parent = header
+
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(0, 7)
+minimizeCorner.Parent = minimize
+
+local godmodeIndicator = Instance.new("TextLabel")
+godmodeIndicator.Size = UDim2.new(1, -16, 0, 22)
+godmodeIndicator.Position = UDim2.fromOffset(8, 43)
+godmodeIndicator.BackgroundTransparency = 1
+godmodeIndicator.Text = "● Godmode Active"
+godmodeIndicator.TextColor3 = Color3.fromRGB(80, 255, 120)
+godmodeIndicator.Font = Enum.Font.GothamBold
+godmodeIndicator.TextSize = 11
+godmodeIndicator.TextXAlignment = Enum.TextXAlignment.Left
+godmodeIndicator.Parent = frame
+
+local function makeButton(y, text)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -16, 0, 38)
+    button.Position = UDim2.fromOffset(8, y)
+    button.BackgroundColor3 = Color3.fromRGB(48, 48, 55)
+    button.BorderSizePixel = 0
+    button.Text = text
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 11
+    button.Parent = frame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = button
+
+    return button
+end
+
+local chopButton = makeButton(72, "Auto Chop")
+local killButton = makeButton(116, "Kill Aura")
+local gearButton = makeButton(160, "Auto Best Gear")
+local farmButton = makeButton(204, "Auto Farm")
+
+local credits = Instance.new("TextLabel")
+credits.Size = UDim2.new(1, -16, 0, 30)
+credits.Position = UDim2.fromOffset(8, 268)
+credits.BackgroundTransparency = 1
+credits.Text = "Credits: Smile B"
+credits.TextColor3 = Color3.fromRGB(145, 145, 155)
+credits.Font = Enum.Font.Gotham
+credits.TextSize = 10
+credits.Parent = frame
+
+local ball = Instance.new("TextButton")
+ball.Name = "SB_Ball"
+ball.Size = UDim2.fromOffset(58, 58)
+ball.Position = UDim2.new(0, 20, 0.5, -29)
+ball.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+ball.BorderSizePixel = 0
+ball.Text = "SB"
+ball.TextColor3 = Color3.new(1, 1, 1)
+ball.Font = Enum.Font.GothamBold
+ball.TextSize = 18
+ball.Visible = false
+ball.Active = true
+ball.Parent = screen
+
+local ballCorner = Instance.new("UICorner")
+ballCorner.CornerRadius = UDim.new(1, 0)
+ballCorner.Parent = ball
+
+local ballStroke = Instance.new("UIStroke")
+ballStroke.Thickness = 2
+ballStroke.Color = Color3.fromRGB(105, 105, 120)
+ballStroke.Parent = ball
+
+local function setButtonState(button, enabled)
+    button.BackgroundColor3 = enabled
+        and Color3.fromRGB(30, 125, 65)
+        or Color3.fromRGB(48, 48, 55)
+end
+
+local function updateButtons()
+    setButtonState(chopButton, state.autoChop)
+    setButtonState(killButton, state.killAura)
+    setButtonState(gearButton, state.autoBestGear)
+    setButtonState(farmButton, state.autoFarm)
+end
+
+track(chopButton.MouseButton1Click:Connect(function()
+    if state.autoFarm then
+        return
+    end
+    state.autoChop = not state.autoChop
+    updateButtons()
+end))
+
+track(killButton.MouseButton1Click:Connect(function()
+    if state.autoFarm then
+        return
+    end
+    state.killAura = not state.killAura
+    updateButtons()
+end))
+
+track(gearButton.MouseButton1Click:Connect(function()
+    if state.autoFarm then
+        return
+    end
+    state.autoBestGear = not state.autoBestGear
+    updateButtons()
+end))
+
+track(farmButton.MouseButton1Click:Connect(function()
+    if state.autoFarm then
+        disableFarm()
+    else
+        enableFarm()
+    end
+    updateButtons()
+end))
+
+local function minimizeUI()
+    local position = frame.AbsolutePosition
+    ball.Position = UDim2.fromOffset(position.X, position.Y)
+    frame.Visible = false
+    ball.Visible = true
+end
+
+local function restoreUI()
+    local position = ball.AbsolutePosition
+    frame.Position = UDim2.fromOffset(position.X, position.Y)
+    ball.Visible = false
+    frame.Visible = true
+end
+
+track(minimize.MouseButton1Click:Connect(minimizeUI))
+
+-- Main window dragging.
+local dragging = false
+local dragInput = nil
+local dragStart = nil
+local frameStart = nil
+
+track(header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        frameStart = frame.Position
+    end
+end))
+
+track(header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end))
+
+track(UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput and dragStart and frameStart then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            frameStart.X.Scale,
+            frameStart.X.Offset + delta.X,
+            frameStart.Y.Scale,
+            frameStart.Y.Offset + delta.Y
+        )
+    end
+end))
+
+track(UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end))
+
+-- SB ball drag + tap to reopen.
+local ballDragging = false
+local ballInput = nil
+local ballInputStart = nil
+local ballPositionStart = nil
+local ballMoved = false
+
+track(ball.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        ballDragging = true
+        ballMoved = false
+        ballInputStart = input.Position
+        ballPositionStart = ball.Position
+    end
+end))
+
+track(ball.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        ballInput = input
+    end
+end))
+
+track(UserInputService.InputChanged:Connect(function(input)
+    if not ballDragging or input ~= ballInput or not ballInputStart or not ballPositionStart then
+        return
+    end
+
+    local delta = input.Position - ballInputStart
+
+    if delta.Magnitude > 6 then
+        ballMoved = true
+    end
+
+    ball.Position = UDim2.new(
+        ballPositionStart.X.Scale,
+        ballPositionStart.X.Offset + delta.X,
+        ballPositionStart.Y.Scale,
+        ballPositionStart.Y.Offset + delta.Y
+    )
+end))
+
+track(UserInputService.InputEnded:Connect(function(input)
+    if not ballDragging then
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        ballDragging = false
+
+        if not ballMoved and ball.Visible then
+            restoreUI()
+        end
+    end
+end))
+
+updateButtons()
+
