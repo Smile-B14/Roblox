@@ -61,6 +61,7 @@ local RequestPlaceStructure = nil
 local RequestOpenItemChest = nil
 local RequestTakeDiamonds = nil
 local RequestBurnItem = nil
+local RequestScrapItem = nil
 
 local function findReplicated(name)
     if RemoteEvents then
@@ -92,6 +93,7 @@ local function refreshRemotes()
     RequestOpenItemChest = findReplicated("RequestOpenItemChest")
     RequestTakeDiamonds = findReplicated("RequestTakeDiamonds")
     RequestBurnItem = findReplicated("RequestBurnItem")
+    RequestScrapItem = findReplicated("RequestScrapItem")
 end
 
 refreshRemotes()
@@ -491,7 +493,8 @@ track(ReplicatedStorage.DescendantAdded:Connect(function(descendant)
         or name == "RequestPlaceStructure"
         or name == "RequestOpenItemChest"
         or name == "RequestTakeDiamonds"
-        or name == "RequestBurnItem" then
+        or name == "RequestBurnItem"
+        or name == "RequestScrapItem" then
         task.defer(refreshRemotes)
     end
 end))
@@ -1444,53 +1447,69 @@ end)
 local lastArmed = nil
 local lastArmTime = 0
 
+local function getGameClient()
+    if type(state.gameClient) == "table" then
+        return state.gameClient
+    end
+    local scripts = player:FindFirstChild("PlayerScripts")
+    local module = scripts and scripts:FindFirstChild("Client")
+    if module and module:IsA("ModuleScript") then
+        local ok, client = pcall(require, module)
+        if ok and type(client) == "table" then
+            state.gameClient = client
+            return client
+        end
+    end
+    return nil
+end
+
+local function getEnemyHandler()
+    local client = getGameClient()
+    local handler = client and client.EnemyHandler
+    return type(handler) == "table" and handler or nil
+end
+
 local function ensureAxeArmed(weapon)
     if not weapon or not weapon.Parent then
-        return
-    end
-
-    if not isLive(EquipItemHandle) then
-        refreshRemotes()
-        if not isLive(EquipItemHandle) then
-            return
-        end
+        return false
     end
 
     local now = os.clock()
-    if weapon == lastArmed and now - lastArmTime < 1 then
-        return
+    if weapon == lastArmed and now - lastArmTime < 0.75 then
+        return true
     end
 
-    local equipRemote = EquipItemHandle
-    local worked, response = callUtilityRemote(equipRemote, 0.75, "FireAllClients", weapon)
-    local armed = worked and response ~= false
-
-    if not armed then
-        worked, response = callUtilityRemote(equipRemote, 0.75, weapon)
-        armed = worked and response ~= false
+    local client = getGameClient()
+    local inventoryHandler = client and client.InventoryHandler
+    if type(inventoryHandler) == "table" then
+        local current = nil
+        if type(inventoryHandler.GetCurrentlyEquipped) == "function" then
+            local ok, value = pcall(inventoryHandler.GetCurrentlyEquipped)
+            if ok then current = value end
+        end
+        if current ~= weapon and type(inventoryHandler.RequestEquipItem) == "function" then
+            pcall(inventoryHandler.RequestEquipItem, weapon)
+            task.wait(0.03)
+        end
     end
 
-    -- Preserve the one-second throttle even if the remote rejects the
-    -- request, otherwise every target would immediately retry equip.
     lastArmed = weapon
     lastArmTime = now
+    return true
 end
 
-local KNOWN_TOKENS = {
-    ["Old Axe"] = "3_7367831688",
-    ["Good Axe"] = "112_7367831688",
-    ["Strong Axe"] = "116_7367831688",
-    ["Chainsaw"] = "647_8992824875",
-    ["Ice Axe"] = "116_7367831688",
-    ["Admin Axe"] = "116_7367831688",
-}
+local function makeLocalHit(target, damage)
+    local handler = getEnemyHandler()
+    if handler and type(handler.ApplyLocalDamage) == "function" then
+        local ok, hitId, undo = pcall(handler.ApplyLocalDamage, target, damage)
+        if ok and hitId ~= nil then
+            return hitId, undo, handler
+        end
+    end
 
-local function makeHitId(weapon)
-    -- Keep the known/captured IDs, but retain the universal fallback used by
-    -- the pre-Diamond build and current public 99 Nights aura implementations.
-    return state.capturedTokens[weapon.Name]
-        or KNOWN_TOKENS[weapon.Name]
-        or 999
+    -- Fallback exactly matches EnemyHandler.ApplyLocalDamage's live format.
+    state.hitSequence = (tonumber(state.hitSequence) or 0) + 1
+    return tostring(state.hitSequence) .. "_" .. tostring(math.abs(player.UserId)), nil, handler
 end
 
 local attackCooldown = setmetatable({}, { __mode = "k" })
@@ -1498,14 +1517,9 @@ local attackCooldown = setmetatable({}, { __mode = "k" })
 local function attackTarget(target, isTree)
     if not isLive(ToolDamageObject) then
         refreshRemotes()
-        if not isLive(ToolDamageObject) then
-            return false
-        end
+        if not isLive(ToolDamageObject) then return false end
     end
-
-    if not target or not target.Parent then
-        return false
-    end
+    if not target or not target.Parent then return false end
 
     local typeInflight = isTree and state.treeInflight or state.entityInflight
     local typeLimit = isTree and state.maxTreeInflight or state.maxEntityInflight
@@ -1514,9 +1528,11 @@ local function attackTarget(target, isTree)
     end
 
     if not isTree then
-        local humanoid = target:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health <= 0 then
-            return false
+        local humanoid = target:FindFirstChildOfClass("Humanoid") or target:FindFirstChild("NPC")
+        if humanoid then
+            local health = tonumber(humanoid.Health) or tonumber(humanoid:GetAttribute("Health"))
+            if health ~= nil and health <= 0 then return false end
+            if humanoid:GetAttribute("Dead") == true then return false end
         end
     end
 
@@ -1526,35 +1542,36 @@ local function attackTarget(target, isTree)
         weapon = select(1, findBestOwned(axeScore))
         bestAxe = weapon
     end
-    if not root or not root.Parent or not weapon or not weapon.Parent then
-        return false
-    end
+    if not root or not root.Parent or not weapon or not weapon.Parent then return false end
 
     local now = os.clock()
     local previous = attackCooldown[target]
-    if previous and now - previous < state.targetCooldown then
-        return false
+    if previous and now - previous < state.targetCooldown then return false end
+    attackCooldown[target] = now
+
+    ensureAxeArmed(weapon)
+    local damage = tonumber(weapon:GetAttribute(isTree and "WeaponResourceDamage" or "WeaponDamage")) or 10
+    local hitId, undoLocalDamage, enemyHandler = makeLocalHit(target, damage)
+    if hitId == nil then return false end
+
+    local finalStrike = false
+    if isTree and enemyHandler and type(enemyHandler.GetLocalHealthRegistered) == "function" then
+        local registers = target:FindFirstChild("HitRegisters")
+        local health = tonumber(target:GetAttribute("Health"))
+        if registers and health ~= nil then
+            local ok, registered = pcall(enemyHandler.GetLocalHealthRegistered, registers)
+            registered = ok and tonumber(registered) or nil
+            if registered ~= nil then
+                finalStrike = health - registered <= 0
+            end
+        end
     end
 
-    local hitId = makeHitId(weapon)
-    attackCooldown[target] = now
-    state.hitSequence = (tonumber(state.hitSequence) or 0) + 1
-    ensureAxeArmed(weapon)
-
-    -- The pre-Diamond helper and current working aura implementations use the
-    -- player's current root CFrame for ToolDamageObject. Do not synthesize a
-    -- lookAt CFrame here; some server builds reject that shape for tree hits.
-    local attackCFrame = root.CFrame
     local remote = ToolDamageObject
-
     local released = false
     local function reserveInflight()
-        state.inflight = state.inflight + 1
-        if isTree then
-            state.treeInflight = state.treeInflight + 1
-        else
-            state.entityInflight = state.entityInflight + 1
-        end
+        state.inflight += 1
+        if isTree then state.treeInflight += 1 else state.entityInflight += 1 end
     end
     local function releaseInflight()
         if released then return end
@@ -1566,41 +1583,39 @@ local function attackTarget(target, isTree)
             state.entityInflight = math.max(0, state.entityInflight - 1)
         end
     end
+    local function rejected()
+        state.lastAttackRejected = os.clock()
+        if type(undoLocalDamage) == "function" then pcall(undoLocalDamage) end
+    end
 
     if remote:IsA("RemoteEvent") then
         reserveInflight()
-        local ok = pcall(remote.FireServer, remote, target, weapon, hitId, attackCFrame)
-        if ok then
-            state.lastAttackAccepted = os.clock()
-        else
-            state.lastAttackRejected = os.clock()
-        end
+        local ok = pcall(remote.FireServer, remote, target, weapon, hitId, root.CFrame, finalStrike)
+        if ok then state.lastAttackAccepted = os.clock() else rejected() end
         releaseInflight()
         return ok
     end
-
     if not remote:IsA("RemoteFunction") then
+        if type(undoLocalDamage) == "function" then pcall(undoLocalDamage) end
         return false
     end
 
     reserveInflight()
-    local attackThread
-    attackThread = task.spawn(function()
-        local ok, response = pcall(remote.InvokeServer, remote, target, weapon, hitId, attackCFrame)
-        if ok and response ~= false then
+    local attackThread = task.spawn(function()
+        local ok, response = pcall(remote.InvokeServer, remote, target, weapon, hitId, root.CFrame, finalStrike)
+        local accepted = ok and (response == true or (type(response) == "table" and response.Success == true))
+        if accepted then
             state.lastAttackAccepted = os.clock()
         else
-            state.lastAttackRejected = os.clock()
+            rejected()
         end
         releaseInflight()
     end)
 
-    task.delay(1.25, function()
+    task.delay(1.5, function()
         if released then return end
-        if type(task.cancel) == "function" and attackThread then
-            pcall(task.cancel, attackThread)
-        end
-        state.lastAttackRejected = os.clock()
+        if type(task.cancel) == "function" then pcall(task.cancel, attackThread) end
+        rejected()
         releaseInflight()
     end)
     return true
@@ -1965,8 +1980,9 @@ local function lockFarmCharacter()
             if root.AssemblyAngularVelocity.Magnitude > 0.01 then
                 root.AssemblyAngularVelocity = Vector3.zero
             end
-            if not root.Anchored then
-                root.Anchored = true
+            local shouldAnchor = root.Position.Y < -20 and not state.strongholdControl
+            if root.Anchored ~= shouldAnchor then
+                root.Anchored = shouldAnchor
             end
         end)
     end
@@ -2253,7 +2269,8 @@ local function isFuelResource(item)
         return false
     end
     local name = lowerName(item)
-    if FUEL_NAMES[name] or isLogResource(item) then
+    local burnFuel = tonumber(item:GetAttribute("BurnFuel"))
+    if (burnFuel ~= nil and burnFuel > 0) or FUEL_NAMES[name] or isLogResource(item) then
         return true
     end
     -- Entity corpses are also legitimate campfire fuel in current builds.
@@ -2301,8 +2318,13 @@ local function isScrapResource(item)
         return false
     end
 
-    -- Current game marks generic craft/scrap objects directly.
-    if item:GetAttribute("Scrappable") == true then
+    -- Current game marks generic craft/scrap objects directly. Scrappable is
+    -- numeric in the live place, and Logs can use the CanBeGrinded tag.
+    local scrappable = tonumber(item:GetAttribute("Scrappable"))
+    if (scrappable ~= nil and scrappable > 0)
+        or item:HasTag("CanBeGrinded")
+        or item:HasTag("Gem")
+        or item:HasTag("GreenGem") then
         return true
     end
 
@@ -2422,45 +2444,115 @@ local function fastResourceDrop(item, destination)
     return ok and moved == true
 end
 
+local function getCraftingBenchReceiver()
+    local campground = workspace:FindFirstChild("Map")
+    campground = campground and campground:FindFirstChild("Campground")
+    local direct = campground and campground:FindFirstChild("CraftingBench")
+    if direct then return direct end
+    local service = game:GetService("CollectionService")
+    for _, bench in ipairs(service:GetTagged("CraftingBench")) do
+        if bench:IsDescendantOf(workspace) then return bench end
+    end
+    return nil
+end
+
+local function fireStateChanged(item, fire, beforeFuel, beforeTarget, beforeLevel)
+    if not item.Parent then return true end
+    if not fire or not fire.Parent then return false end
+    local fuel = tonumber(fire:GetAttribute("FuelRemaining"))
+    local target = tonumber(fire:GetAttribute("FuelTarget"))
+    local level = getCampfireLevel()
+    return (fuel ~= nil and beforeFuel ~= nil and fuel > beforeFuel + 0.001)
+        or (target ~= nil and beforeTarget ~= nil and math.abs(target - beforeTarget) > 0.001)
+        or (level ~= nil and beforeLevel ~= nil and level > beforeLevel)
+end
+
 local function burnItemIntoCampfire(item)
     if not item or not item.Parent then return false end
-    if not getMainFire() then return false end
+    local fire = getMainFire()
+    if not fire then return false end
+    if (tonumber(item:GetAttribute("Wet")) or 0) >= 1 then return false end
 
-    local dropCF = CFrame.new(CAMPFIRE_DROP)
-    local moved = fastResourceDrop(item, dropCF)
-    if not moved and item.Parent then
-        moved = dragItemTo(item, dropCF)
+    local owner = item:GetAttribute("Owner")
+    if owner ~= nil and tonumber(owner) ~= player.UserId and tostring(owner) ~= tostring(player.UserId) then
+        return false
     end
 
-    -- The game normally burns physical fuel when it is released in the fire.
-    -- RequestBurnItem is only a best-effort nudge AFTER the physical drop, so a
-    -- remote signature change cannot make Smart Resources depend on it.
-    if item.Parent and isLive(RequestBurnItem) then
-        local fire = getMainFire()
-        if fire then
-            if RequestBurnItem:IsA("RemoteEvent") then
-                pcall(RequestBurnItem.FireServer, RequestBurnItem, fire, item)
-            elseif RequestBurnItem:IsA("RemoteFunction") then
-                task.spawn(function()
-                    callUtilityRemote(RequestBurnItem, 0.75, fire, item)
-                end)
-            end
+    if not isLive(RequestBurnItem) then refreshRemotes() end
+    if not isLive(RequestBurnItem) then return false end
+
+    local beforeFuel = tonumber(fire:GetAttribute("FuelRemaining"))
+    local beforeTarget = tonumber(fire:GetAttribute("FuelTarget"))
+    local beforeLevel = getCampfireLevel()
+
+    local function send()
+        if RequestBurnItem:IsA("RemoteEvent") then
+            return pcall(RequestBurnItem.FireServer, RequestBurnItem, fire, item)
+        elseif RequestBurnItem:IsA("RemoteFunction") then
+            local ok, response = callUtilityRemote(RequestBurnItem, 1, fire, item)
+            return ok and response ~= false
         end
+        return false
     end
 
-    task.wait(0.10)
-    getCampfireLevel()
-    return moved or not item.Parent
+    send()
+    local deadline = os.clock() + 0.45
+    repeat
+        if fireStateChanged(item, fire, beforeFuel, beforeTarget, beforeLevel) then return true end
+        task.wait(0.05)
+    until not state.active or os.clock() >= deadline
+
+    if not item.Parent then return true end
+
+    -- If the server requires proximity, stage ABOVE the touch zone so the
+    -- game's local CheckInnerTouch cannot delete the item before confirmation.
+    local zone = fire:FindFirstChild("InnerTouchZone", true)
+    local stageCF
+    if zone and zone:IsA("BasePart") then
+        stageCF = zone.CFrame * CFrame.new(0, zone.Size.Y * 0.5 + 6, 0)
+    else
+        stageCF = fire:GetPivot() * CFrame.new(0, 10, 0)
+    end
+    fastResourceDrop(item, stageCF)
+    if not item.Parent then return true end
+    send()
+
+    deadline = os.clock() + 0.75
+    repeat
+        if fireStateChanged(item, fire, beforeFuel, beforeTarget, beforeLevel) then return true end
+        task.wait(0.05)
+    until not state.active or os.clock() >= deadline
+    return false
 end
 
 local function routeItemToScrapper(item)
     if not item or not item.Parent then return false end
-    local dropCF = CFrame.new(SCRAP_DROP)
-    local moved = fastResourceDrop(item, dropCF)
-    if not moved and item.Parent then
-        moved = dragItemTo(item, dropCF)
+    local bench = getCraftingBenchReceiver()
+    if not bench then return false end
+    if not isLive(RequestScrapItem) then refreshRemotes() end
+    if not isLive(RequestScrapItem) then return false end
+
+    local beforeWood, beforeScrap = getCampTotals()
+    local function accepted(response)
+        if response == true or (type(response) == "table" and response.Success == true) then return true end
+        if not item.Parent then return true end
+        local wood, scrap = getCampTotals()
+        return (beforeWood ~= nil and wood ~= nil and wood > beforeWood)
+            or (beforeScrap ~= nil and scrap ~= nil and scrap > beforeScrap)
     end
-    return moved or not item.Parent
+
+    local ok, response = callUtilityRemote(RequestScrapItem, 1.5, bench, item)
+    if ok and accepted(response) then return true end
+    if not item.Parent then return true end
+
+    local zone = bench:FindFirstChild("TouchZone", true)
+    if zone and zone:IsA("BasePart") then
+        fastResourceDrop(item, zone.CFrame * CFrame.new(0, zone.Size.Y * 0.5 + 5, 0))
+    end
+    if not item.Parent then return true end
+
+    ok, response = callUtilityRemote(RequestScrapItem, 1.5, bench, item)
+    return ok and accepted(response)
 end
 
 local function runResourceService()
@@ -3291,29 +3383,14 @@ local function getLostChildren()
 end
 
 local function childIsAtCamp(child)
-    if not child or not child.Parent then
-        return false
-    end
-
-    local lost = child:GetAttribute("Lost")
-    if lost == false or lost == 0 or lost == "false" then
-        return true
-    end
-
-    for _, name in ipairs({ "Rescued", "Saved", "AtCamp", "IsRescued" }) do
+    if not child or not child.Parent then return false end
+    local rescued = child:GetAttribute("Rescued")
+    if rescued == true or rescued == 1 or rescued == "true" then return true end
+    for _, name in ipairs({ "Saved", "AtCamp", "IsRescued" }) do
         local value = child:GetAttribute(name)
-        if value == true or value == 1 or value == "true" then
-            return true
-        end
+        if value == true or value == 1 or value == "true" then return true end
     end
-
-    local part = getPart(child)
-    if not part then
-        return false
-    end
-    local firePart = getPart(getMainFire())
-    local center = firePart and firePart.Position or CAMPFIRE_DROP
-    return (part.Position - center).Magnitude <= 120
+    return false
 end
 
 local function getUnrescuedChildren()
@@ -3343,49 +3420,47 @@ local function getItemBag()
 end
 
 local function getSackStoredCount(sack)
-    if not sack then
-        return 0
-    end
-
+    if not sack then return 0 end
     local count = tonumber(sack:GetAttribute("NumberItems"))
-    if count ~= nil then
-        return math.max(0, count)
-    end
-
-    return 0
+    if count ~= nil then return math.max(0, count) end
+    local itemBag = getItemBag()
+    return itemBag and #itemBag:GetChildren() or 0
 end
 
 local function isStorageBag(item)
-    if not item or not item.Parent then
-        return false
+    if not item or not item.Parent then return false end
+    local tagged = false
+    pcall(function() tagged = item:HasTag("ItemBag") end)
+    return tagged or isSack(item) or (tonumber(item:GetAttribute("Capacity")) or 0) > 0
+end
+
+local function getBagCapacity(item)
+    if not item then return 0 end
+    local client = getGameClient()
+    local utility = client and client.Utility
+    if utility and type(utility.GetItemBagSpace) == "function" then
+        local ok, value = pcall(utility.GetItemBagSpace, item, player)
+        value = ok and tonumber(value) or nil
+        if value then return math.max(0, value) end
     end
-    local capacity = tonumber(item:GetAttribute("Capacity"))
-    local count = tonumber(item:GetAttribute("NumberItems"))
-    -- Include full bags in discovery so children left in a previous/full bag
-    -- can still be dropped at camp. Pickup selection separately requires space.
-    return capacity ~= nil and capacity > 0 and count ~= nil and count >= 0
+    return math.max(0, tonumber(item:GetAttribute("Capacity")) or 0)
 end
 
 local function getRescueBags(requiredSlots)
-    local bags = {}
-    local seen = {}
-
-    -- Current game scripts store baggable objects through Inventory bags first.
+    local bags, seen = {}, {}
     local inventory = player:FindFirstChild("Inventory")
-    local orderedContainers = {}
-    if inventory then table.insert(orderedContainers, inventory) end
+    local containers = {}
+    if inventory then table.insert(containers, inventory) end
     for _, container in ipairs(ownedContainers()) do
-        if container and container ~= inventory then
-            table.insert(orderedContainers, container)
-        end
+        if container and container ~= inventory then table.insert(containers, container) end
     end
 
-    for _, container in ipairs(orderedContainers) do
+    for _, container in ipairs(containers) do
         for _, item in ipairs(container:GetChildren()) do
             if not seen[item] and isStorageBag(item) then
                 seen[item] = true
-                local capacity = tonumber(item:GetAttribute("Capacity")) or 0
-                local count = tonumber(item:GetAttribute("NumberItems")) or 0
+                local capacity = getBagCapacity(item)
+                local count = getSackStoredCount(item)
                 table.insert(bags, {
                     item = item,
                     free = math.max(0, capacity - count),
@@ -3396,46 +3471,29 @@ local function getRescueBags(requiredSlots)
     end
 
     table.sort(bags, function(a, b)
-        local aFits = a.free >= requiredSlots
-        local bFits = b.free >= requiredSlots
-        if aFits ~= bFits then
-            return aFits
-        end
-        if a.preferred ~= b.preferred then
-            return a.preferred > b.preferred
-        end
+        local af, bf = a.free >= requiredSlots, b.free >= requiredSlots
+        if af ~= bf then return af end
+        if a.preferred ~= b.preferred then return a.preferred > b.preferred end
         return a.free > b.free
     end)
-
     return bags
 end
 
 local function chooseRescueSack(requiredSlots)
-    local bags = getRescueBags(requiredSlots)
-    local first = bags[1]
-    if not first or first.free < requiredSlots then
-        return nil, 0
-    end
-    return first.item, first.free
+    local info = getRescueBags(requiredSlots)[1]
+    if not info or info.free < requiredSlots then return nil, 0 end
+    return info.item, info.free
 end
 
 local function equipOwnedItem(item)
-    if not item or not item.Parent then
-        return false
+    if not item or not item.Parent then return false end
+    local client = getGameClient()
+    local handler = client and client.InventoryHandler
+    if handler and type(handler.RequestEquipItem) == "function" then
+        local ok = pcall(handler.RequestEquipItem, item)
+        if ok then return true end
     end
-    if not isLive(EquipItemHandle) then
-        refreshRemotes()
-    end
-    if not isLive(EquipItemHandle) then
-        return false
-    end
-
-    local worked, response = callUtilityRemote(EquipItemHandle, 0.75, "FireAllClients", item)
-    if worked and response ~= false then
-        return true
-    end
-    worked, response = callUtilityRemote(EquipItemHandle, 0.75, item)
-    return worked and response ~= false
+    return false
 end
 
 local function focusCameraAt(position)
@@ -3452,54 +3510,34 @@ local function getMissingChildPositions()
     local map = workspace:FindFirstChild("Map")
     local missing = map and map:FindFirstChild("MissingKids")
     local result = {}
-    if not missing then
-        return result
-    end
-
+    if not missing then return result end
     for key, position in pairs(missing:GetAttributes()) do
         if typeof(position) == "Vector3" then
             table.insert(result, { key = tostring(key), position = position })
         end
     end
-    table.sort(result, function(a, b)
-        return a.key < b.key
-    end)
+    table.sort(result, function(a, b) return a.key < b.key end)
     return result
 end
 
 local function reacquireChild(childName)
     local characters = workspace:FindFirstChild("Characters")
-    if not characters then
-        return nil
-    end
-    local exact = characters:FindFirstChild(childName)
-    if exact and exact:IsA("Model") then
-        return exact
-    end
-    return nil
+    local exact = characters and characters:FindFirstChild(childName)
+    return exact and exact:IsA("Model") and exact or nil
 end
 
 local function childStoredInItemBag(childName)
     local itemBag = getItemBag()
-    if not itemBag then
-        return false
-    end
-    for _, object in ipairs(itemBag:GetDescendants()) do
-        if object.Name == childName and isLostChild(object) then
-            return true
-        end
+    if not itemBag then return false end
+    for _, object in ipairs(itemBag:GetChildren()) do
+        if object.Name == childName and isLostChild(object) then return true end
     end
     return false
 end
 
 local function storeChildInSack(sack, child)
-    if not state.autoFarm
-        or not state.autoChildRescue
-        or state.strongholdControl
-        or not sack
-        or not sack.Parent
-        or not child
-        or not child.Parent then
+    if not state.autoFarm or not state.autoChildRescue or state.strongholdControl
+        or not sack or not sack.Parent or not child or not child.Parent then
         return false
     end
 
@@ -3513,150 +3551,124 @@ local function storeChildInSack(sack, child)
         task.wait(2)
     end
 
-    -- Streaming can replace the model during the wait. Reacquire by name.
     child = reacquireChild(childName) or child
-    if not child or not child.Parent then
-        return false
+    if not child or not child.Parent then return childStoredInItemBag(childName) end
+    if child:GetAttribute("Rescued") == true then
+        state.childRescueVerified[childName] = true
+        return true
     end
 
-    equipOwnedItem(sack)
+    if not isLive(RequestBagStoreItem) then refreshRemotes() end
+    if not isLive(RequestBagStoreItem) then return false end
+
     local before = getSackStoredCount(sack)
+    equipOwnedItem(sack)
 
-    local function storedNow(currentChild)
-        local after = getSackStoredCount(sack)
-        if after > before or childStoredInItemBag(childName) then
-            state.childRescueObserved[childName] = true
-            return true
-        end
-        local characters = workspace:FindFirstChild("Characters")
-        if not currentChild or not currentChild.Parent
-            or (characters and not currentChild:IsDescendantOf(characters)) then
-            state.childRescueObserved[childName] = true
-            return true
-        end
-        return false
-    end
-
-    -- The live game rescue path is the child's ProximityInteraction. Fire that
-    -- first with the sack equipped, then verify the bag replicated.
-    local head = child:FindFirstChild("Head")
-    local attachment = head and head:FindFirstChild("ProximityAttachment")
-    local prompt = attachment and attachment:FindFirstChild("ProximityInteraction")
-    if not (prompt and prompt:IsA("ProximityPrompt")) then
-        prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)
-    end
-
-    if prompt then
-        for _ = 1, 2 do
-            firePromptNow(prompt)
-            task.wait(0.18)
-            child = reacquireChild(childName) or child
-            if storedNow(child) then
+    local client = getGameClient()
+    local interactionHandler = client and client.InteractionHandler
+    local interactions = interactionHandler and interactionHandler.Interactions
+    if interactions and type(interactions.CanBeBagged) == "function" then
+        pcall(interactions.CanBeBagged, child)
+        local interactionDeadline = os.clock() + 1
+        repeat
+            if childStoredInItemBag(childName) or getSackStoredCount(sack) > before then
+                state.childRescueObserved[childName] = true
                 return true
             end
-        end
-    end
-
-    if not isLive(RequestBagStoreItem) then
-        refreshRemotes()
-    end
-    if not isLive(RequestBagStoreItem) then
-        return storedNow(child)
-    end
-
-    for _ = 1, 3 do
-        if not state.autoFarm or state.strongholdControl then
-            return false
-        end
+            task.wait(0.06)
+        until not state.active or os.clock() >= interactionDeadline
         child = reacquireChild(childName) or child
-        if storedNow(child) then
-            return true
-        end
         if not child or not child.Parent then
-            return true
+            return childStoredInItemBag(childName)
         end
-
-        local ok, response = callUtilityRemote(RequestBagStoreItem, 1.5, sack, child)
-        if ok and response ~= false then
-            task.wait(0.2)
-        end
-        if storedNow(reacquireChild(childName) or child) then
-            return true
-        end
-        task.wait(0.2)
     end
 
-    return false
+    local ok, response = callUtilityRemote(RequestBagStoreItem, 2, sack, child)
+    local accepted = ok and (response == true or (type(response) == "table" and response.Success == true))
+    if not accepted then return false end
+
+    local deadline = os.clock() + 1.5
+    repeat
+        if childStoredInItemBag(childName) or getSackStoredCount(sack) > before then
+            state.childRescueObserved[childName] = true
+            return true
+        end
+        local live = reacquireChild(childName)
+        if live and live:GetAttribute("Rescued") == true then
+            state.childRescueVerified[childName] = true
+            return true
+        end
+        task.wait(0.08)
+    until not state.active or os.clock() >= deadline
+
+    return childStoredInItemBag(childName)
 end
 
 local function getBaggedChildren()
     local result = {}
     local itemBag = getItemBag()
-    if not itemBag then
-        return result
-    end
-    for _, object in ipairs(itemBag:GetDescendants()) do
-        if isLostChild(object) then
-            table.insert(result, object)
-        end
+    if not itemBag then return result end
+    for _, object in ipairs(itemBag:GetChildren()) do
+        if isLostChild(object) then table.insert(result, object) end
     end
     return result
 end
 
 local function dropChildrenAtCamp(usedBags)
     local character = getCharacter()
-    if character then
-        pcall(character.PivotTo, character, CFrame.new(CHILD_CAMP_DROP))
-    end
+    if character then pcall(character.PivotTo, character, CFrame.new(CHILD_CAMP_DROP)) end
     lockFarmCharacter()
     focusCameraAt(CHILD_CAMP_DROP)
-    task.wait(0.5)
+    task.wait(1)
 
-    if not isLive(RequestBagDropItem) then
-        refreshRemotes()
-    end
-    if not isLive(RequestBagDropItem) then
-        return false
-    end
+    if not isLive(RequestBagDropItem) then refreshRemotes() end
+    if not isLive(RequestBagDropItem) then return false end
 
     local bags = {}
     for bag in pairs(usedBags) do
-        if bag and bag.Parent then
-            table.insert(bags, bag)
-        end
+        if bag and bag.Parent then table.insert(bags, bag) end
     end
     for _, info in ipairs(getRescueBags(0)) do
         if info.item and info.item.Parent and not usedBags[info.item] then
             table.insert(bags, info.item)
         end
     end
+    if #bags == 0 then return false end
 
     local droppedAny = false
-    local bagged = getBaggedChildren()
-    for _, child in ipairs(bagged) do
-        if not state.autoFarm or state.strongholdControl then
-            break
-        end
+    for _, child in ipairs(getBaggedChildren()) do
+        if not state.autoFarm or state.strongholdControl then break end
         local childName = child.Name
-        for _, bag in ipairs(bags) do
-            if bag.Parent and child.Parent then
-                local before = getSackStoredCount(bag)
-                local oldParent = child.Parent
-                local ok, response = callUtilityRemote(RequestBagDropItem, 1.25, bag, child)
-                if ok and response ~= false then
-                    task.wait(0.18)
-                    local after = getSackStoredCount(bag)
-                    if not child.Parent or child.Parent ~= oldParent or after < before then
-                        state.childRescueVerified[childName] = true
-                        droppedAny = true
-                        break
-                    end
-                end
-            end
+        local bag = bags[1]
+        local remaining = #getBaggedChildren()
+
+        local sent = false
+        if RequestBagDropItem:IsA("RemoteEvent") then
+            sent = pcall(RequestBagDropItem.FireServer, RequestBagDropItem, bag, child, remaining <= 1)
+        elseif RequestBagDropItem:IsA("RemoteFunction") then
+            local ok, response = callUtilityRemote(RequestBagDropItem, 1.5, bag, child, remaining <= 1)
+            sent = ok and response ~= false
         end
+
+        if sent then
+            local deadline = os.clock() + 2.5
+            repeat
+                local live = reacquireChild(childName)
+                if live and childIsAtCamp(live) then
+                    state.childRescueVerified[childName] = true
+                    droppedAny = true
+                    break
+                end
+                if not childStoredInItemBag(childName) then
+                    droppedAny = true
+                end
+                task.wait(0.1)
+            until not state.active or os.clock() >= deadline
+        end
+        task.wait(0.15)
     end
 
-    task.wait(1)
+    task.wait(0.75)
     getUnrescuedChildren()
     return droppedAny
 end
@@ -3713,7 +3725,8 @@ local function runChildRescueAttempt()
             end
         end
 
-        -- Grab any already-streamed child first.
+        -- Grab any already-streamed child first. Children already stored by a
+        -- previous retry remain in ItemBag; never unload a partial rescue set.
         storeCurrentlyLoaded()
 
         -- Then visit each MissingKids position and immediately bag whatever
@@ -3722,11 +3735,7 @@ local function runChildRescueAttempt()
             if not state.autoFarm or state.strongholdControl then
                 break
             end
-            if verifiedChildCount() + (function()
-                local n = 0
-                for _ in pairs(storedNames) do n = n + 1 end
-                return n
-            end)() >= 4 then
+            if verifiedChildCount() + #getBaggedChildren() >= 4 then
                 break
             end
 
@@ -3740,13 +3749,25 @@ local function runChildRescueAttempt()
             end
         end
 
-        if next(usedBags) ~= nil or #getBaggedChildren() > 0 then
-            dropChildrenAtCamp(usedBags)
-        end
+        local alreadyVerified = verifiedChildCount()
+        local baggedCount = #getBaggedChildren()
+        local neededInBag = math.max(0, 4 - alreadyVerified)
 
-        task.wait(1)
-        getUnrescuedChildren()
-        success = verifiedChildCount() >= 4
+        -- Keep partial progress in the sack between attempts. Only return to
+        -- camp once every remaining child is actually stored.
+        if neededInBag == 0 then
+            success = true
+        elseif baggedCount >= neededInBag then
+            dropChildrenAtCamp(usedBags)
+            local verifyDeadline = os.clock() + 5
+            repeat
+                task.wait(0.2)
+                getUnrescuedChildren()
+                success = verifiedChildCount() >= 4
+            until success or not state.autoFarm or os.clock() >= verifyDeadline
+        else
+            success = false
+        end
     end)
 
     if camera then
