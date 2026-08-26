@@ -2,14 +2,14 @@ name: SB99 Polish 3
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   polish:
-    if: github.event.head_commit.message == 'chore: run sb99 polish 3'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           import subprocess
 
           path = Path('99 Nights Helper Godmode')
@@ -97,8 +98,6 @@ jobs:
               raise SystemExit('requestHotbarPickup patch anchor mismatch')
           text = text.replace(old_hotbar, new_hotbar, 1)
 
-          # Static/scope sanity checks. Timed WaitForChild calls are allowed;
-          # unbounded startup waits are not.
           required = [
               'Smile B - 99 Nights Helper',
               'local function consumeFood(item)',
@@ -115,13 +114,10 @@ jobs:
               if marker not in text:
                   raise SystemExit(f'missing required marker: {marker}')
 
-          import re
           for match in re.finditer(r'WaitForChild\(([^\n]*)\)', text):
-              args = match.group(1)
-              if ',' not in args:
+              if ',' not in match.group(1):
                   raise SystemExit(f'unbounded WaitForChild detected: {match.group(0)}')
 
-          # Basic delimiter sanity after stripping comments/strings conservatively.
           if text.count('(') != text.count(')'):
               raise SystemExit('parenthesis count mismatch')
           if text.count('{') != text.count('}'):
