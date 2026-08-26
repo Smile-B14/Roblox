@@ -1,0 +1,174 @@
+name: SB99 final runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sb99-final-runner.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply reviewed patch and validate
+        shell: bash
+        env:
+          EXPECTED_BLOB: fad489d80b4297ae9d4fb0065360cc6391507d45
+          TARGET: 99 Nights Helper Godmode
+          SPEC: .github/workflows/sb99-final-guarded.yml
+          RUNNER: .github/workflows/sb99-final-runner.yml
+        run: |
+          set -euo pipefail
+
+          current_blob="$(git hash-object "$TARGET")"
+          if [[ "$current_blob" != "$EXPECTED_BLOB" ]]; then
+            echo "Target changed before validation: $current_blob"
+            exit 42
+          fi
+
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          target = Path("99 Nights Helper Godmode")
+          spec_path = Path(".github/workflows/sb99-final-guarded.yml")
+          spec = spec_path.read_text(encoding="utf-8")
+
+          marker = "          python3 <<'PY'\n"
+          start = spec.index(marker) + len(marker)
+          end = spec.index("\n          PY", start)
+          patch_source = textwrap.dedent(spec[start:end])
+
+          # The first guard run exposed one indentation-only defect in this exact
+          # patch anchor. Remove only that rep() from the extracted specification;
+          # the equivalent source edit is applied explicitly below.
+          bad_start = patch_source.index("rep('''                        local executorCall = false")
+          bad_end = patch_source.index("rep('''local function ensureAxeArmed", bad_start)
+          patch_source = patch_source[:bad_start] + patch_source[bad_end:]
+
+          exec(compile(patch_source, "<sb99-reviewed-patch>", "exec"), {})
+
+          text = target.read_text(encoding="utf-8")
+          old = '''                        local executorCall = false
+                          if type(checkcaller) == "function" then
+                              executorCall = checkcaller()
+                          end'''
+          # Try the actual source indentation first. The second form is retained
+          # only as a defensive fallback if YAML indentation normalization differs.
+          actual = '''                        local executorCall = false
+                        if type(checkcaller) == "function" then
+                            executorCall = checkcaller()
+                        end'''
+          new = '''                        local executorCall = false
+                        if type(checkcaller) == "function" then
+                            local callerOk, callerResult = pcall(checkcaller)
+                            executorCall = callerOk and callerResult == true
+                        end'''
+
+          if actual in text:
+              text = text.replace(actual, new, 1)
+          elif old in text:
+              text = text.replace(old, new, 1)
+          else:
+              raise SystemExit("checkcaller source anchor missing after reviewed patch")
+
+          target.write_text(text, encoding="utf-8")
+          PY
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("99 Nights Helper Godmode")
+          s = p.read_text(encoding="utf-8")
+
+          if re.search(r'WaitForChild\([^,\n\)]*\)', s):
+              raise SystemExit("unbounded WaitForChild found")
+
+          required = (
+              "local function callUtilityRemote",
+              "pcall(task.cancel, invokeThread)",
+              "local dragBusy = false",
+              "local function consumeFood",
+              "local verifyDeadline = os.clock() + (remoteIsEvent and 0.5 or 0.2)",
+              "local function requestHotbarPickup",
+              "local wrapClosure = type(newcclosure) == \"function\"",
+              "pcall(checkcaller)",
+              "pcall(task.cancel, attackThread)",
+              "local function lockFarmCharacter",
+              "local deadline = os.clock() + duration + 2",
+              "local dragTouch = nil",
+              "local ballTouch = nil",
+              "local function runFoodService",
+              "local function enableFarm",
+              "local function disableFarm",
+              "local function minimizeUI",
+              "updateButtons()",
+          )
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(f"required hardened path missing: {needle}")
+
+          forbidden = (
+              'local G = (type(getgenv) == "function" and getgenv()) or _G',
+              'and type(newcclosure) == "function" then',
+              'executorCall = checkcaller()',
+          )
+          for needle in forbidden:
+              if needle in s:
+                  raise SystemExit(f"legacy fragile path still present: {needle}")
+          PY
+
+          git diff --check -- "$TARGET"
+
+          curl -fsSL https://api.github.com/repos/luau-lang/luau/releases/latest -o /tmp/luau-release.json
+          luau_url="$(jq -r '.assets[] | select(.name == "luau-ubuntu.zip") | .browser_download_url' /tmp/luau-release.json | head -n1)"
+          test -n "$luau_url"
+          curl -fsSL "$luau_url" -o /tmp/luau.zip
+          rm -rf /tmp/luau
+          mkdir -p /tmp/luau
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+
+          # Refetch main immediately before creating the GitHub write. If the
+          # target changed at all, abort instead of overwriting it.
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          if [[ "$remote_blob" != "$EXPECTED_BLOB" ]]; then
+            echo "Target changed before commit: $remote_blob"
+            exit 43
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$TARGET"
+          git rm -- "$SPEC" "$RUNNER"
+          git commit -m "fix: harden final executor runtime"
+
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          if [[ "$remote_blob" != "$EXPECTED_BLOB" ]]; then
+            echo "Target changed during final validation: $remote_blob"
+            exit 44
+          fi
+
+          git rebase origin/main
+
+          # One last target refetch directly before the push. A concurrent branch
+          # update after this point still makes the non-force push fail safely.
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          if [[ "$remote_blob" != "$EXPECTED_BLOB" ]]; then
+            echo "Target changed immediately before push: $remote_blob"
+            exit 45
+          fi
+
+          git push origin HEAD:main
