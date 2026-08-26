@@ -256,14 +256,16 @@ local state = {
     strongholdLastGain = 0,
     strongholdRetryAt = 0,
     strongholdManualKillRestore = nil,
+    strongholdAttemptActive = false,
 
     range = 200,
     maxInflight = 72,
     inflight = 0,
-    targetCooldown = 0.025,
-    workerDelay = 0.005,
+    targetCooldown = 0.06,
+    workerDelay = 0.008,
     combatScanInterval = 0.05,
     capturedTokens = {},
+    hitSequence = 0,
 
     maxHunger = 200,
     eatThreshold = 160,
@@ -296,6 +298,7 @@ local state = {
     campfireTargetLevel = 6,
     campfireMaintainThreshold = 0.80,
     resourcePassLimit = 64,
+    resourcePickupRange = 320,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
     childRescueMaxAttempts = 5,
@@ -778,8 +781,6 @@ local function dragItemTo(item, destination)
         return false
     end
 
-    -- Drag remotes may be replaced during round transitions. Refresh
-    -- stale references immediately instead of waiting for the poller.
     if not isLive(StartDragging) or not isLive(StopDragging) then
         refreshRemotes()
         if not isLive(StartDragging) or not isLive(StopDragging) then
@@ -787,33 +788,59 @@ local function dragItemTo(item, destination)
         end
     end
 
-    if not acquireDragLock(0.6) then
+    if not acquireDragLock(0.75) then
         return false
     end
 
     local startRemote = StartDragging
     local stopRemote = StopDragging
-    local startedOk, startedResponse = callUtilityRemote(startRemote, 1, item)
-    if not startedOk or startedResponse == false then
-        dragBusy = false
-        return false
+    local stopSent = false
+
+    local function finishDrag()
+        if stopSent then
+            return
+        end
+        stopSent = true
+        if isLive(stopRemote) and item and item.Parent then
+            callUtilityRemote(stopRemote, 1, item)
+        end
     end
 
-    task.wait(0.02)
-
-    local moved = pcall(function()
-        if item.Parent and item:IsA("Model") then
-            item:PivotTo(destination)
-        elseif item.Parent and item:IsA("BasePart") then
-            item.CFrame = destination
+    local ok, moved = pcall(function()
+        local startedOk, startedResponse = callUtilityRemote(startRemote, 1, item)
+        if not startedOk or startedResponse == false then
+            return false
         end
+
+        -- Let the server grant drag ownership before changing the item CFrame.
+        task.wait(0.08)
+        if not item.Parent then
+            return false
+        end
+
+        local moveOk = pcall(function()
+            if item:IsA("Model") then
+                item:PivotTo(destination)
+            elseif item:IsA("BasePart") then
+                item.CFrame = destination
+            else
+                error("unsupported draggable instance")
+            end
+        end)
+        if not moveOk then
+            return false
+        end
+
+        -- Current public game implementations leave a replication window and
+        -- send the dragged item back to StopDraggingItem explicitly.
+        task.wait(0.12)
+        finishDrag()
+        return item.Parent ~= nil
     end)
 
-    task.wait(0.02)
-    callUtilityRemote(stopRemote, 1)
+    finishDrag()
     dragBusy = false
-
-    return moved and item.Parent ~= nil
+    return ok and moved == true
 end
 
 local function getFoodCandidates()
@@ -1282,12 +1309,22 @@ local KNOWN_TOKENS = {
     ["Admin Axe"] = "116_7367831688",
 }
 
-local function makeHitId(weapon)
-    -- Captured token is preferred because it comes from the current game build.
-    -- Fixed IDs are the fallback used by current public scripts.
-    return state.capturedTokens[weapon.Name]
-        or KNOWN_TOKENS[weapon.Name]
-        or 999
+local function makeHitId(weapon, isTree)
+    local token = state.capturedTokens[weapon.Name] or KNOWN_TOKENS[weapon.Name]
+    if not isTree then
+        return token or ("1_" .. tostring(weapon:GetAttribute("Owner") or player.UserId))
+    end
+
+    state.hitSequence = (tonumber(state.hitSequence) or 0) + 1
+    if state.hitSequence > 1000000000 then
+        state.hitSequence = 1
+    end
+
+    local suffix = type(token) == "string" and string.match(token, "^[^_]+_(.+)$") or nil
+    if suffix == nil or suffix == "" then
+        suffix = tostring(weapon:GetAttribute("Owner") or player.UserId)
+    end
+    return tostring(state.hitSequence) .. "_" .. suffix
 end
 
 local attackCooldown = setmetatable({}, { __mode = "k" })
@@ -1313,6 +1350,10 @@ local function attackTarget(target, isTree)
 
     local root = getRoot()
     local weapon = bestAxe
+    if not weapon or not weapon.Parent then
+        weapon = select(1, findBestOwned(axeScore))
+        bestAxe = weapon
+    end
     if not root or not root.Parent or not weapon or not weapon.Parent then
         return
     end
@@ -1323,7 +1364,7 @@ local function attackTarget(target, isTree)
         return
     end
 
-    local hitId = makeHitId(weapon)
+    local hitId = makeHitId(weapon, isTree)
     if not hitId then
         return
     end
@@ -1332,7 +1373,15 @@ local function attackTarget(target, isTree)
     ensureAxeArmed(weapon)
 
     local remote = ToolDamageObject
-    local attackCFrame = root.CFrame
+    local targetPart = nil
+    if isTree then
+        local trunk = target:FindFirstChild("Trunk", true)
+        if trunk and trunk:IsA("BasePart") then
+            targetPart = trunk
+        end
+    end
+    targetPart = targetPart or getPart(target)
+    local attackCFrame = targetPart and targetPart.CFrame or root.CFrame
 
     -- RemoteEvents do not yield, so avoid spawning thousands of tiny tasks.
     if remote:IsA("RemoteEvent") then
@@ -1956,7 +2005,7 @@ local function runResourceService()
     end
 
     state.resourceServiceRunning = true
-    pcall(function()
+    local serviceOk = pcall(function()
         local level = getCampfireLevel()
         local campfireMaxed = level ~= nil and level >= state.campfireTargetLevel
         local fuelRatio = getCampfireFuelRatio()
@@ -1977,44 +2026,72 @@ local function runResourceService()
             return
         end
 
+        local root = getRoot()
+        local candidates = {}
+        for _, item in ipairs(items:GetChildren()) do
+            if item.Parent == items and (not resourceCooldown[item] or resourceCooldown[item] <= now) then
+                local target = resourceTarget(item, campfireMaxed, fuelRatio)
+                if target then
+                    local part = getPart(item)
+                    local distance = math.huge
+                    if root and part then
+                        distance = (part.Position - root.Position).Magnitude
+                    end
+                    table.insert(candidates, {
+                        item = item,
+                        target = target,
+                        distance = distance,
+                        firePriority = target == CAMPFIRE_DROP,
+                    })
+                end
+            end
+        end
+
+        table.sort(candidates, function(a, b)
+            if a.firePriority ~= b.firePriority then
+                return a.firePriority
+            end
+            return a.distance < b.distance
+        end)
+
         local processed = 0
-        local snapshot = items:GetChildren()
-        for _, item in ipairs(snapshot) do
+        for _, candidate in ipairs(candidates) do
             if not state.active or not state.smartResources or state.strongholdControl then
                 break
             end
 
-            local cooldown = resourceCooldown[item]
-            if item.Parent == items and (not cooldown or cooldown <= now) then
-                local target = resourceTarget(item, campfireMaxed, fuelRatio)
-                if target then
-                    resourceCooldown[item] = now + 1.1
-                    local handled = false
+            local item = candidate.item
+            local target = candidate.target
+            if item and item.Parent == items then
+                -- Remote burning does not require dragging the object through
+                -- the map. Scrap/log routing is proximity-aware so nearby drops
+                -- from the current patrol tree cannot be starved by far items.
+                if target ~= CAMPFIRE_DROP and candidate.distance > state.resourcePickupRange then
+                    continue
+                end
 
-                    if target == CAMPFIRE_DROP then
-                        -- RequestBurnItem is the authoritative fire path. Falling
-                        -- back to dragging keeps compatibility if a server build
-                        -- temporarily moves or replaces the remote.
-                        handled = burnItemIntoCampfire(item)
-                        if not handled and item.Parent == items then
-                            handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
-                        end
-                    else
-                        handled = dragItemTo(item, CFrame.new(target))
+                resourceCooldown[item] = os.clock() + 0.8
+                local handled = false
+                if target == CAMPFIRE_DROP then
+                    handled = burnItemIntoCampfire(item)
+                    if not handled and item.Parent == items and candidate.distance <= state.resourcePickupRange then
+                        handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
                     end
+                else
+                    handled = dragItemTo(item, CFrame.new(target))
+                end
 
-                    if handled then
-                        processed = processed + 1
-                        task.wait(0.02)
-
-                        if target == CAMPFIRE_DROP then
-                            task.wait(0.03)
-                            local updatedLevel = getCampfireLevel()
-                            if updatedLevel ~= nil and updatedLevel >= state.campfireTargetLevel then
-                                campfireMaxed = true
-                            end
-                            fuelRatio = getCampfireFuelRatio()
+                if handled then
+                    processed = processed + 1
+                    if target == CAMPFIRE_DROP then
+                        task.wait(0.08)
+                        local updatedLevel = getCampfireLevel()
+                        if updatedLevel ~= nil and updatedLevel >= state.campfireTargetLevel then
+                            campfireMaxed = true
                         end
+                        fuelRatio = getCampfireFuelRatio()
+                    else
+                        task.wait(0.03)
                     end
                 end
             end
@@ -2024,7 +2101,12 @@ local function runResourceService()
             end
         end
     end)
+
     state.resourceServiceRunning = false
+    if not serviceOk then
+        -- Retry quickly after a transient streamed-instance race.
+        task.wait(0.05)
+    end
 end
 
 local promptOriginals = G.SB99_PROMPT_ORIGINALS
@@ -2353,13 +2435,13 @@ end
 local function strongholdReady()
     local countdown = getStrongholdCountdownText()
     local normalized = string.lower(string.gsub(countdown, "%s+", ""))
-
-    -- Real ready signals only. An enabled entry ProximityPrompt can exist while
-    -- the Stronghold is still counting down and must not hijack Auto Farm.
     if normalized == "00s" or normalized == "0s" or normalized == "ready" then
         return true
     end
-    return strongholdDoorOpen() or strongholdGateOpen()
+
+    -- EntryDoors.DoorOpen is a live run/start signal. FinalGate is only used
+    -- later to detect completion and must never start Diamond Farm by itself.
+    return strongholdDoorOpen()
 end
 
 local function releaseFarmForStronghold()
@@ -2546,6 +2628,7 @@ local function finishStrongholdControl(success)
     state.strongholdRunning = false
     if success then
         state.strongholdControl = false
+        state.strongholdAttemptActive = false
         state.strongholdCycleComplete = true
         state.strongholdRetryAt = 0
         if not state.autoFarm and state.strongholdManualKillRestore ~= nil then
@@ -2553,9 +2636,10 @@ local function finishStrongholdControl(success)
         end
         state.strongholdManualKillRestore = nil
     else
-        -- Never release Auto Farm to its under-map/night controller until a
-        -- real diamond-count increase has been observed.
-        state.strongholdControl = state.diamondFarm
+        -- Once a real Stronghold run began, retain movement ownership until
+        -- the diamond count is verified. Waiting/preflight states never set
+        -- strongholdAttemptActive and therefore cannot freeze normal Auto Farm.
+        state.strongholdControl = state.diamondFarm and state.strongholdAttemptActive
         state.strongholdRetryAt = os.clock() + 3
     end
 end
@@ -2578,7 +2662,8 @@ local function runStrongholdCycle()
     local baseline = state.strongholdBaseline or currentCount
     if baseline == nil then
         state.strongholdStatus = "Waiting for diamond count"
-        state.strongholdControl = true
+        state.strongholdControl = false
+        state.strongholdAttemptActive = false
         state.strongholdRetryAt = os.clock() + 2
         return false
     end
@@ -2590,6 +2675,7 @@ local function runStrongholdCycle()
     if state.strongholdBaseline == nil then
         state.strongholdBaseline = baseline
     end
+    state.strongholdAttemptActive = true
     state.strongholdControl = true
     state.strongholdRunning = true
     state.strongholdStatus = "Entering stronghold"
@@ -2697,6 +2783,7 @@ task.spawn(function()
             if normalized ~= "00s" and normalized ~= "0s" and normalized ~= "ready" then
                 state.strongholdCycleComplete = false
                 state.strongholdBaseline = nil
+                state.strongholdAttemptActive = false
             end
         end
 
@@ -2705,6 +2792,7 @@ task.spawn(function()
                 state.strongholdControl = false
                 state.strongholdRunning = false
                 state.strongholdBaseline = nil
+                state.strongholdAttemptActive = false
                 state.strongholdStatus = "Off"
                 if not state.autoFarm and state.strongholdManualKillRestore ~= nil then
                     state.killAura = state.strongholdManualKillRestore
@@ -2714,7 +2802,10 @@ task.spawn(function()
                 state.strongholdStatus = "Off"
             end
             task.wait(0.5)
-        elseif state.strongholdControl and not state.strongholdRunning and os.clock() >= state.strongholdRetryAt then
+        elseif state.strongholdAttemptActive
+            and state.strongholdControl
+            and not state.strongholdRunning
+            and os.clock() >= state.strongholdRetryAt then
             runStrongholdCycle()
             task.wait(0.25)
         elseif not state.strongholdCycleComplete
@@ -4436,6 +4527,7 @@ makeToggle(strongholdSection, "Diamond Farm", function() return state.diamondFar
     state.strongholdControl = false
     state.strongholdRunning = false
     state.strongholdBaseline = nil
+    state.strongholdAttemptActive = false
     state.strongholdRetryAt = 0
     state.strongholdCycleComplete = false
     state.strongholdStatus = v and "Waiting" or "Off"
@@ -4600,10 +4692,13 @@ task.spawn(function()
         local fireLevel = getCampfireLevel()
         local diamonds = state.readDiamondCount and state.readDiamondCount() or nil
         local radius = currentFarmRadius()
+        local axeName = bestAxe and bestAxe.Parent and bestAxe.Name or "none"
         status.Text = string.format(
-            "Fire %s/6  |  Farm %dst  |  %s\nDiamonds %s",
+            "Fire %s/6 | Axe %s | Trees %d\nSmart %s | SH %s | Diamonds %s",
             fireLevel and tostring(fireLevel) or "?",
-            radius,
+            axeName,
+            #treeCache,
+            state.smartResources and "ON" or "OFF",
             tostring(state.strongholdStatus or "Off"),
             diamonds and tostring(diamonds) or "--"
         )
