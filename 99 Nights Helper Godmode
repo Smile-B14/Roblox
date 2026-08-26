@@ -259,6 +259,8 @@ local state = {
     autoChildRescue = false,
     diamondFarm = false,
     fullbright = true,
+    nanHealthGodmode = true,
+    nightCampLock = false,
 
     strongholdControl = false,
     strongholdRunning = false,
@@ -296,7 +298,8 @@ local state = {
     rawHunger = nil,
     eatBusy = false,
 
-    foodInterval = 60,
+    foodInterval = 20,
+    foodBatchLimit = 64,
     lastFoodService = 0,
     emergencyFoodRun = false,
     foodServiceRunning = false,
@@ -700,8 +703,27 @@ if not G.SB99_FINAL_HOOK then
 end
 
 -- Entity-damage protection. Hunger itself is intentionally untouched so the
--- real Hunger bar can be watched.
+-- real Hunger bar can be watched. The separate trace of the reference godmode
+-- showed its durable state is Humanoid.Health = NaN, not a Hunger spoof.
 local lastSafeCFrame = nil
+
+state.healthIsNaN = function(value)
+    return type(value) == "number" and value ~= value
+end
+
+state.applyNaNHealthGodmode = function(humanoid)
+    if not state.active or not state.nanHealthGodmode or not humanoid or not humanoid.Parent then
+        return false
+    end
+    local current = humanoid.Health
+    if not state.healthIsNaN(current) then
+        pcall(function()
+            humanoid.Health = 0 / 0
+        end)
+    end
+    return state.healthIsNaN(humanoid.Health)
+end
+
 
 local function protectCharacter(character)
     local humanoid = character:WaitForChild("Humanoid", 10)
@@ -721,6 +743,7 @@ local function protectCharacter(character)
         humanoid.RequiresNeck = false
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
     end)
+    state.applyNaNHealthGodmode(humanoid)
 
     if not character:FindFirstChild("SB99_GodForceField") then
         local forceField = Instance.new("ForceField")
@@ -734,7 +757,11 @@ local function protectCharacter(character)
             return
         end
 
-        if health < humanoid.MaxHealth then
+        if state.nanHealthGodmode then
+            if not state.healthIsNaN(health) then
+                task.defer(applyNaNHealthGodmode, humanoid)
+            end
+        elseif health < humanoid.MaxHealth then
             pcall(function()
                 humanoid.Health = humanoid.MaxHealth
             end)
@@ -765,7 +792,9 @@ task.spawn(function()
             pcall(function()
                 humanoid.BreakJointsOnDeath = false
                 humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-                if humanoid.Health < humanoid.MaxHealth then
+                if state.nanHealthGodmode then
+                    state.applyNaNHealthGodmode(humanoid)
+                elseif humanoid.Health < humanoid.MaxHealth then
                     humanoid.Health = humanoid.MaxHealth
                 end
             end)
@@ -1861,6 +1890,20 @@ local function isNight()
     return false
 end
 
+state.getNightCampCFrame = function()
+    local fire = getMainFire()
+    if fire then
+        local center = fire:FindFirstChild("Center", true)
+            or fire:FindFirstChild("InnerTouchZone", true)
+            or getPart(fire)
+        if center and center:IsA("BasePart") then
+            local standY = center.Position.Y + math.max(2.8, center.Size.Y * 0.5 + 2.5)
+            return CFrame.new(center.Position.X, standY, center.Position.Z)
+        end
+    end
+    return CFrame.new(CAMPFIRE_DROP + Vector3.new(0, 3, 0))
+end
+
 --==============================================================
 -- AUTO FARM MOVEMENT / FOOD SERVICE
 --==============================================================
@@ -1980,7 +2023,8 @@ local function lockFarmCharacter()
             if root.AssemblyAngularVelocity.Magnitude > 0.01 then
                 root.AssemblyAngularVelocity = Vector3.zero
             end
-            local shouldAnchor = root.Position.Y < -20 and not state.strongholdControl
+            local shouldAnchor = (state.nightCampLock == true and not state.strongholdControl)
+                or (root.Position.Y < -20 and not state.strongholdControl)
             if root.Anchored ~= shouldAnchor then
                 root.Anchored = shouldAnchor
             end
@@ -3888,72 +3932,98 @@ local function cookItem(item)
     return response ~= false
 end
 
+state.fastFoodTransport = function(item, destination)
+    if not item or not item.Parent then return false end
+    if not isLive(StartDragging) or not isLive(StopDragging) then refreshRemotes() end
+    if not isLive(StartDragging) or not isLive(StopDragging) then return false end
+    if not acquireDragLock(0.45) then return false end
+
+    local ok = pcall(function()
+        if StartDragging:IsA("RemoteEvent") then
+            StartDragging:FireServer(item)
+        else
+            callUtilityRemote(StartDragging, 0.4, item)
+        end
+        task.wait(0.025)
+        if not item.Parent then return end
+        if item:IsA("Model") then
+            item:PivotTo(destination)
+        elseif item:IsA("BasePart") then
+            item.CFrame = destination
+        end
+        task.wait(0.035)
+        if item.Parent then
+            if StopDragging:IsA("RemoteEvent") then
+                StopDragging:FireServer(item)
+            else
+                callUtilityRemote(StopDragging, 0.4, item)
+            end
+        end
+    end)
+    dragBusy = false
+    return ok
+end
+
 local function runFoodService()
     if not state.autoFarm or state.foodServiceRunning or state.strongholdControl then
+        return
+    end
+    if isNight() then
+        if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
+            attemptAutoEat()
+        end
+        state.lastFoodService = os.clock()
         return
     end
 
     state.foodServiceRunning = true
     state.emergencyFoodRun = false
-    cancelFarmTween()
 
     local serviceOk = pcall(function()
-        local character = getCharacter()
-        local servicePosition = isNight() and FARM_HOME or CHILD_CAMP_DROP
-        if character then
-            pcall(character.PivotTo, character, CFrame.new(servicePosition))
-        end
-        lockFarmCharacter()
-
         local items = workspace:FindFirstChild("Items")
-        if items then
-            local foods = {}
+        if not items then return end
 
-            -- Snapshot before requests can replace/remove raw food.
-            for _, item in ipairs(items:GetChildren()) do
-                if isFoodItem(item) then
-                    table.insert(foods, item)
-                end
+        local foods = {}
+        for _, item in ipairs(items:GetChildren()) do
+            if isFoodItem(item) then
+                table.insert(foods, item)
             end
+        end
+        table.sort(foods, function(a, b)
+            local ac = isCooked(a) and 1 or 0
+            local bc = isCooked(b) and 1 or 0
+            if ac ~= bc then return ac > bc end
+            return (tonumber(a:GetAttribute("RestoreHunger")) or 0) > (tonumber(b:GetAttribute("RestoreHunger")) or 0)
+        end)
 
-            local index = 0
-            for _, item in ipairs(foods) do
-                if not state.autoFarm then
-                    break
+        local limit = math.min(#foods, tonumber(state.foodBatchLimit) or 64)
+        for index = 1, limit do
+            if not state.autoFarm or state.strongholdControl or isNight() then break end
+            local item = foods[index]
+            if item and item.Parent then
+                local column = (index - 1) % 8
+                local row = math.floor((index - 1) / 8) % 6
+                local offset = Vector3.new((column - 3.5) * 1.25, 0, (row - 2.5) * 1.25)
+                local destination = CFrame.new(FOOD_AREA + offset)
+                if not state.fastFoodTransport(item, destination) then
+                    dragItemTo(item, destination)
                 end
-
-                if item and item.Parent then
-                    index = index + 1
-                    local column = (index - 1) % 7
-                    local row = math.floor((index - 1) / 7) % 5
-                    local offset = Vector3.new(
-                        (column - 3) * 1.6,
-                        0,
-                        (row - 2) * 1.6
-                    )
-
-                    dragItemTo(item, CFrame.new(FOOD_AREA + offset))
-                    task.wait(0.025)
-
-                    if item.Parent and isCookable(item) then
-                        cookItem(item)
-                        task.wait(0.025)
-                    end
+                if item.Parent and isCookable(item) then
+                    cookItem(item)
                 end
+                task.wait(0.012)
             end
+        end
 
-            -- Give cooked replacements time to appear.
-            task.wait(3)
-
-            if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
-                attemptAutoEat()
-            end
+        -- Cooked replacements appear quickly; do not stall patrol for 3 seconds.
+        task.wait(0.65)
+        if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
+            attemptAutoEat()
         end
     end)
 
     state.lastFoodService = os.clock()
     state.foodServiceRunning = false
-
     if not serviceOk and state.autoFarm then
         state.emergencyFoodRun = true
     end
@@ -4100,63 +4170,89 @@ local function placeCampStructure(item, offset)
     if not isLive(RequestPlaceStructure) then refreshRemotes() end
     if not isLive(RequestPlaceStructure) then return false end
 
-    local placePos, center = getGroundPositionAroundCamp(offset)
-    local placeCF = CFrame.lookAt(
-        placePos,
-        Vector3.new(center.X, placePos.Y, center.Z)
-    )
-    local placement = {
-        Valid = true,
-        CFrame = placeCF,
-        Position = placePos,
+    equipOwnedItem(item)
+    local base = offset or Vector3.new(35, 0, 0)
+    local attempts = {
+        base,
+        base + Vector3.new(5, 0, 0),
+        base + Vector3.new(-5, 0, 0),
+        base + Vector3.new(0, 0, 5),
+        base + Vector3.new(0, 0, -5),
+        Vector3.new(-base.Z, 0, base.X),
+        Vector3.new(base.Z, 0, -base.X),
     }
-    local ok, response = callUtilityRemote(
-        RequestPlaceStructure,
-        2,
-        item,
-        placement,
-        placeCF
-    )
-    return ok and response ~= false
+
+    for _, tryOffset in ipairs(attempts) do
+        if not item.Parent then return true end
+        local placePos, center = getGroundPositionAroundCamp(tryOffset)
+        placePos += Vector3.new(0, 0.15, 0)
+        local placeCF = CFrame.lookAt(placePos, Vector3.new(center.X, placePos.Y, center.Z))
+        local placement = { Valid = true, CFrame = placeCF, Position = placePos }
+        local ok, response = callUtilityRemote(RequestPlaceStructure, 1.5, item, placement, placeCF)
+        local accepted = ok and response ~= false
+            and not (type(response) == "table" and response.Success == false)
+        if accepted then
+            local deadline = os.clock() + 1.25
+            repeat
+                if not item.Parent or worldHasCampStructure(item.Name) then return true end
+                task.wait(0.08)
+            until os.clock() >= deadline
+        end
+        task.wait(0.08)
+    end
+    return worldHasCampStructure(item.Name)
 end
 
--- Camp progression. Known bed order is preserved, then newer bench tiers
--- and any additional bed blueprints are discovered from CraftingDatabase.
-local BASE_CAMP_BUILD_QUEUE = {
-    { kind = "bench", name = "Crafting Bench 2", benchLevel = 2 },
-    { kind = "bed", name = "Old Bed", offset = Vector3.new(-22, 0, 15) },
-    { kind = "bed", name = "Regular Bed", offset = Vector3.new(-30, 0, 0) },
-    { kind = "bench", name = "Crafting Bench 3", benchLevel = 3 },
-    { kind = "bed", name = "Good Bed", offset = Vector3.new(-22, 0, -15) },
-    { kind = "bench", name = "Crafting Bench 4", benchLevel = 4 },
-    { kind = "bed", name = "Giant Bed", offset = Vector3.new(0, 0, 32) },
+-- Place-backed camp progression. The game exposes blueprint tiers through
+-- CraftingDatabase and the CraftingTable TierN UI. Do not invent Bench 6-8 if
+-- the current place only contains fewer tiers.
+state.KNOWN_BED_TIERS = {
+    ["Old Bed"] = 2,
+    ["Regular Bed"] = 3,
+    ["Good Bed"] = 4,
+    ["Giant Bed"] = 5,
 }
 
-local function getCampBuildQueue()
-    local queue = {}
-    local seen = {}
-    local maxBench = 8 -- current live progression; database can extend this.
+state.KNOWN_BED_OFFSETS = {
+    ["Old Bed"] = Vector3.new(-24, 0, 18),
+    ["Regular Bed"] = Vector3.new(-34, 0, 4),
+    ["Good Bed"] = Vector3.new(-27, 0, -18),
+    ["Giant Bed"] = Vector3.new(2, 0, 36),
+}
 
-    for _, spec in ipairs(BASE_CAMP_BUILD_QUEUE) do
-        table.insert(queue, spec)
-        seen[spec.name] = true
+state.blueprintTierFromGroup = function(groupKey, blueprint)
+    for _, field in ipairs({ "Tier", "RequiredTier", "CraftingTier", "BenchLevel", "RequiredBenchLevel" }) do
+        local value = type(blueprint) == "table" and tonumber(blueprint[field]) or nil
+        if value then return math.max(1, math.floor(value)) end
     end
+    local text = tostring(groupKey or "")
+    return tonumber(string.match(text, "[Tt]ier%s*(%d+)"))
+        or tonumber(string.match(text, "(%d+)"))
+end
 
+state.discoverCampBuildQueue = function()
+    local maxBench = 1
+    local beds = {}
+    local seenBeds = {}
     local database = getCraftingDatabase()
     local blueprints = database and database.PossibleBlueprints
-    local extraBeds = {}
+
     if type(blueprints) == "table" then
-        for _, group in pairs(blueprints) do
+        for groupKey, group in pairs(blueprints) do
             if type(group) == "table" then
                 for _, blueprint in pairs(group) do
                     if type(blueprint) == "table" and type(blueprint.Name) == "string" then
-                        local benchLevel = tonumber(string.match(blueprint.Name, "^Crafting Bench (%d+)$"))
-                        if benchLevel then
-                            maxBench = math.max(maxBench, benchLevel)
-                        elseif string.find(string.lower(blueprint.Name), "bed", 1, true)
-                            and not seen[blueprint.Name] then
-                            table.insert(extraBeds, blueprint.Name)
-                            seen[blueprint.Name] = true
+                        local name = blueprint.Name
+                        local bench = tonumber(string.match(name, "^Crafting Bench (%d+)$"))
+                        local tier = state.blueprintTierFromGroup(groupKey, blueprint)
+                        if bench then
+                            maxBench = math.max(maxBench, bench)
+                        elseif string.find(string.lower(name), "bed", 1, true) then
+                            local required = tier or state.KNOWN_BED_TIERS[name] or 1
+                            if not seenBeds[name] then
+                                seenBeds[name] = true
+                                table.insert(beds, { name = name, tier = required })
+                            end
                         end
                     end
                 end
@@ -4164,33 +4260,65 @@ local function getCampBuildQueue()
         end
     end
 
-    for level = 5, maxBench do
-        local name = "Crafting Bench " .. tostring(level)
-        if not seen[name] then
-            table.insert(queue, { kind = "bench", name = name, benchLevel = level })
-            seen[name] = true
+    local interface = playerGui:FindFirstChild("Interface")
+    local crafting = interface and interface:FindFirstChild("CraftingTable")
+    local scrolling = crafting and crafting:FindFirstChild("ScrollingFrame")
+    if scrolling then
+        for _, tierFrame in ipairs(scrolling:GetChildren()) do
+            local tier = tonumber(string.match(tierFrame.Name, "^Tier(%d+)$"))
+            if tier then
+                maxBench = math.max(maxBench, tier)
+                for _, entry in ipairs(tierFrame:GetChildren()) do
+                    if string.find(string.lower(entry.Name), "bed", 1, true) and not seenBeds[entry.Name] then
+                        seenBeds[entry.Name] = true
+                        table.insert(beds, { name = entry.Name, tier = tier })
+                    end
+                end
+            end
         end
     end
 
-    table.sort(extraBeds, function(a, b)
-        local aw, as = getCraftCost(a)
-        local bw, bs = getCraftCost(b)
-        local ac = (aw or 0) + (as or 0)
-        local bc = (bw or 0) + (bs or 0)
-        if ac == bc then return a < b end
-        return ac < bc
-    end)
-
-    for index, name in ipairs(extraBeds) do
-        local angle = ((index - 1) / math.max(1, #extraBeds)) * math.pi * 2
-        table.insert(queue, {
-            kind = "bed",
-            name = name,
-            offset = Vector3.new(math.cos(angle) * 40, 0, math.sin(angle) * 40),
-        })
+    -- Current place has a finite progression. If replication has not exposed
+    -- the database/UI yet, fall back only to the known five-tier bed tree.
+    if maxBench <= 1 then maxBench = 5 end
+    for name, tier in pairs(state.KNOWN_BED_TIERS) do
+        if not seenBeds[name] then
+            seenBeds[name] = true
+            table.insert(beds, { name = name, tier = tier })
+        end
     end
 
-    return queue
+    table.sort(beds, function(a, b)
+        if a.tier ~= b.tier then return a.tier < b.tier end
+        local aw, as = getCraftCost(a.name)
+        local bw, bs = getCraftCost(b.name)
+        local ac = (aw or 0) + (as or 0)
+        local bc = (bw or 0) + (bs or 0)
+        if ac ~= bc then return ac < bc end
+        return a.name < b.name
+    end)
+
+    local queue = {}
+    local bedIndex = 0
+    for tier = 2, maxBench do
+        local benchName = "Crafting Bench " .. tostring(tier)
+        local wood, scrap = getCraftCost(benchName)
+        if wood ~= nil and scrap ~= nil then
+            table.insert(queue, { kind = "bench", name = benchName, benchLevel = tier })
+        end
+        for _, bed in ipairs(beds) do
+            if bed.tier == tier then
+                bedIndex += 1
+                local offset = state.KNOWN_BED_OFFSETS[bed.name]
+                if not offset then
+                    local angle = ((bedIndex - 1) / math.max(1, #beds)) * math.pi * 2
+                    offset = Vector3.new(math.cos(angle) * 42, 0, math.sin(angle) * 42)
+                end
+                table.insert(queue, { kind = "bed", name = bed.name, tier = tier, offset = offset })
+            end
+        end
+    end
+    return queue, maxBench
 end
 
 local function markCampBuildDone(itemName)
@@ -4214,6 +4342,23 @@ local function campBuildIsDone(spec)
     return false
 end
 
+state.campCraftAccepted = function(response)
+    if response == false then return false end
+    if type(response) == "table" and response.Success == false then return false end
+    return true
+end
+
+state.craftCampBlueprint = function(name)
+    if not isLive(CraftItem) then refreshRemotes() end
+    if not isLive(CraftItem) then return false end
+    for _ = 1, 2 do
+        local ok, response = callUtilityRemote(CraftItem, 1.75, name)
+        if ok and state.campCraftAccepted(response) then return true end
+        task.wait(0.12)
+    end
+    return false
+end
+
 local function runCampBuildService()
     if not state.active
         or not state.autoFarm
@@ -4230,7 +4375,6 @@ local function runCampBuildService()
 
     local fireLevel = getCampfireLevel()
     if fireLevel == nil or fireLevel < state.campfireTargetLevel then return end
-
     local now = os.clock()
     if now - state.lastCampBuild < state.campBuildInterval then return end
     state.lastCampBuild = now
@@ -4239,82 +4383,57 @@ local function runCampBuildService()
     local serviceOk = pcall(function()
         local campground = getCampground()
         if not campground then return end
-
+        local queue, maxBench = state.discoverCampBuildQueue()
+        currentCraftingBenchLevel()
         local completed = 0
-        for _, spec in ipairs(getCampBuildQueue()) do
-            if not state.active or not state.autoFarm or state.strongholdControl then
-                break
+
+        for _, spec in ipairs(queue) do
+            if not state.active or not state.autoFarm or state.strongholdControl or isNight() then break end
+            if campBuildIsDone(spec) then continue end
+
+            local woodCost, scrapCost = getCraftCost(spec.name)
+            if woodCost == nil or scrapCost == nil then
+                -- A UI-only entry that is not a craftable blueprint must not
+                -- block later real tiers/beds.
+                continue
+            end
+            local totalWood = tonumber(campground:GetAttribute("TotalWood")) or 0
+            local totalScrap = tonumber(campground:GetAttribute("TotalScrap")) or 0
+            if totalWood < woodCost or totalScrap < scrapCost then
+                -- Keep scanning: a later zero-cost/owned structure may still be placeable.
+                continue
             end
 
-            if not campBuildIsDone(spec) then
-                local item = spec.kind == "bed" and findOwnedNamedItem(spec.name) or nil
-
-                if not item then
-                    local woodCost, scrapCost = getCraftCost(spec.name)
-                    if woodCost == nil or scrapCost == nil then return end
-
-                    local totalWood = tonumber(campground:GetAttribute("TotalWood")) or 0
-                    local totalScrap = tonumber(campground:GetAttribute("TotalScrap")) or 0
-                    if totalWood < woodCost or totalScrap < scrapCost then
-                        return
-                    end
-
-                    if not isLive(CraftItem) then refreshRemotes() end
-                    if not isLive(CraftItem) then return end
-
-                    local crafted, response = callUtilityRemote(CraftItem, 2, spec.name)
-                    if not crafted or response == false then
-                        return
-                    end
-
-                    if spec.kind == "bench" then
-                        state.campBenchLevel = math.max(
-                            tonumber(state.campBenchLevel) or 1,
-                            tonumber(spec.benchLevel) or 1
-                        )
-                        markCampBuildDone(spec.name)
-                        completed = completed + 1
-                        task.wait(0.18)
-                    else
-                        local deadline = os.clock() + 3
-                        repeat
-                            task.wait(0.1)
-                            item = findOwnedNamedItem(spec.name)
-                        until item or not state.autoFarm or state.strongholdControl or os.clock() >= deadline
-                        if not item then return end
-                    end
-                end
-
-                if spec.kind == "bed" and item and item.Parent then
-                    cancelFarmTween()
-                    local character = getCharacter()
-                    if character then
-                        pcall(character.PivotTo, character, CFrame.new(CHILD_CAMP_DROP))
-                    end
-                    lockFarmCharacter()
-                    task.wait(0.2)
-
-                    if not placeCampStructure(item, spec.offset or Vector3.new(35, 0, 0)) then
-                        return
-                    end
+            if spec.kind == "bench" then
+                if state.craftCampBlueprint(spec.name) then
+                    state.campBenchLevel = math.max(tonumber(state.campBenchLevel) or 1, spec.benchLevel or 1)
                     markCampBuildDone(spec.name)
-                    completed = completed + 1
-                    task.wait(0.2)
+                    completed += 1
+                    task.wait(0.28)
+                end
+            else
+                local item = findOwnedNamedItem(spec.name)
+                if not item and state.craftCampBlueprint(spec.name) then
+                    local deadline = os.clock() + 2.25
+                    repeat
+                        task.wait(0.06)
+                        item = findOwnedNamedItem(spec.name)
+                    until item or not state.autoFarm or state.strongholdControl or os.clock() >= deadline
                 end
 
-                -- Keep one pass responsive, but do more than the old single
-                -- step so upgrades cannot appear to stop after Bench 2.
-                if completed >= 4 then
-                    return
+                if item and item.Parent and placeCampStructure(item, spec.offset) then
+                    markCampBuildDone(spec.name)
+                    completed += 1
+                    task.wait(0.12)
                 end
             end
+
+            if completed >= math.max(8, maxBench + 2) then break end
         end
     end)
 
     state.campBuildRunning = false
-    if not serviceOk then
-        state.lastCampBuild = 0
-    end
+    if not serviceOk then state.lastCampBuild = 0 end
 end
 
 local function plantAvailableSaplings()
@@ -4535,6 +4654,7 @@ local function enableFarm()
     }
 
     state.autoFarm = true
+    state.nightCampLock = false
     state.autoChop = true
     state.killAura = true
     state.autoBestGear = true
@@ -4571,7 +4691,8 @@ local function enableFarm()
     local root = getRoot()
     if character then
         if isNight() then
-            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+            state.nightCampLock = true
+            pcall(character.PivotTo, character, state.getNightCampCFrame())
         elseif root then
             pcall(character.PivotTo, character, CFrame.new(root.Position.X, FARM_PATROL_Y, root.Position.Z))
         else
@@ -4588,6 +4709,7 @@ local function disableFarm()
     end
 
     state.autoFarm = false
+    state.nightCampLock = false
     state.focusTree = nil
     state.emergencyFoodRun = false
     state.foodServiceRunning = false
@@ -4665,6 +4787,7 @@ track(RunService.Heartbeat:Connect(function()
     end
 
     if state.strongholdControl then
+        state.nightCampLock = false
         state.releaseFarmForStronghold()
     else
         lockFarmCharacter()
@@ -4681,12 +4804,15 @@ track(player.CharacterAdded:Connect(function(character)
         cancelFarmTween()
         createPlatform()
         if state.strongholdControl then
+            state.nightCampLock = false
             state.releaseFarmForStronghold()
         else
             local root = character:FindFirstChild("HumanoidRootPart")
             if isNight() then
-                pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+                state.nightCampLock = true
+                pcall(character.PivotTo, character, state.getNightCampCFrame())
             elseif root then
+                state.nightCampLock = false
                 pcall(character.PivotTo, character, CFrame.new(root.Position.X, FARM_PATROL_Y, root.Position.Z))
             else
                 pcall(character.PivotTo, character, CFrame.new(getFarmCenter()))
@@ -4704,6 +4830,7 @@ task.spawn(function()
     while state.active do
         local iterationOk, iterationErr = pcall(function()
             if not state.autoFarm then
+                state.nightCampLock = false
                 state.focusTree = nil
                 wasNight = false
                 task.wait(0.4)
@@ -4711,6 +4838,7 @@ task.spawn(function()
             end
 
             if state.strongholdControl then
+                state.nightCampLock = false
                 state.focusTree = nil
                 state.releaseFarmForStronghold()
                 wasNight = false
@@ -4721,19 +4849,26 @@ task.spawn(function()
             local night = isNight()
             if night then
                 state.focusTree = nil
-                if not wasNight then cancelFarmTween() end
+                state.nightCampLock = true
+                cancelFarmTween()
                 local character = getCharacter()
                 local root = getRoot()
-                if character and (not root or (root.Position - FARM_HOME).Magnitude > 1.5) then
-                    pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+                local campCF = state.getNightCampCFrame()
+                if character and (not root or (root.Position - campCF.Position).Magnitude > 1.0) then
+                    pcall(character.PivotTo, character, campCF)
                 end
                 lockFarmCharacter()
                 wasNight = true
-                if state.emergencyFoodRun or foodServiceDue() then runFoodService() end
-                task.wait(0.5)
+                -- Never launch the gathering service at night because that service
+                -- moves items/camera and used to pull the player away from camp.
+                if (getRealHunger() or state.maxHunger) <= state.eatThreshold then
+                    attemptAutoEat()
+                end
+                task.wait(0.35)
                 return
             end
 
+            state.nightCampLock = false
             wasNight = false
             if state.childRescuePending and not state.childRescueRunning then
                 state.focusTree = nil
@@ -5009,6 +5144,17 @@ makeToggle(farmSection, "Fullbright + No Fog", function() return state.fullbrigh
         state.restoreFullbright()
     end
 end, false)
+makeToggle(farmSection, "NaN Health Godmode", function() return state.nanHealthGodmode end, function(v)
+    state.nanHealthGodmode = v
+    local humanoid = getHumanoid()
+    if humanoid then
+        if v then
+            state.applyNaNHealthGodmode(humanoid)
+        elseif state.healthIsNaN(humanoid.Health) then
+            pcall(function() humanoid.Health = humanoid.MaxHealth end)
+        end
+    end
+end, false)
 makeToggle(farmSection, "Auto Chop", function() return state.autoChop end, function(v)
     state.autoChop = v
     if v then table.clear(attackCooldown); table.clear(treeVisitCooldown) end
@@ -5065,6 +5211,22 @@ makeToggle(strongholdSection, "Diamond Farm", function() return state.diamondFar
     state.strongholdCycleComplete = false
     state.strongholdStatus = v and "Waiting" or "Off"
 end, true)
+
+local strongholdCounter = Instance.new("TextLabel")
+strongholdCounter.Size = UDim2.new(1, 0, 0, 34)
+strongholdCounter.BackgroundColor3 = Color3.fromRGB(31, 31, 38)
+strongholdCounter.BorderSizePixel = 0
+strongholdCounter.TextColor3 = Color3.fromRGB(235, 235, 242)
+strongholdCounter.Font = Enum.Font.GothamBold
+strongholdCounter.TextSize = 10
+strongholdCounter.TextXAlignment = Enum.TextXAlignment.Left
+strongholdCounter.LayoutOrder = #strongholdSection:GetChildren() + 1
+strongholdCounter.Parent = strongholdSection
+rounded(strongholdCounter, 7)
+table.insert(refreshers, function()
+    strongholdCounter.Text = "   Countdown: " .. tostring(state.strongholdCountdown or "--")
+        .. "   |   " .. tostring(state.strongholdStatus or "Waiting")
+end)
 
 local ball = Instance.new("TextButton")
 ball.Name = "SB_Ball"
@@ -5227,14 +5389,14 @@ task.spawn(function()
         local radius = currentFarmRadius()
         local axeName = bestAxe and bestAxe.Parent and bestAxe.Name or "none"
         status.Text = string.format(
-            "Fire %s/6 | Axe %s | Trees %d | Hit T%d/E%d\nSmart %s | Light %s | Diamonds %s",
+            "Fire %s/6 | Axe %s | Trees %d | Hit T%d/E%d\nSmart %s | SH %s | Diamonds %s",
             fireLevel and tostring(fireLevel) or "?",
             axeName,
             #treeCache,
             state.treeInflight,
             state.entityInflight,
             state.smartResources and "ON" or "OFF",
-            state.fullbright and "ON" or "OFF",
+            tostring(state.strongholdCountdown or "--"),
             diamonds and tostring(diamonds) or "--"
         )
         refreshAll()
