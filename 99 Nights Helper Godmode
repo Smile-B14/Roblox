@@ -2837,7 +2837,9 @@ local function isStorageBag(item)
     end
     local capacity = tonumber(item:GetAttribute("Capacity"))
     local count = tonumber(item:GetAttribute("NumberItems"))
-    return capacity ~= nil and count ~= nil and capacity > count
+    -- Include full bags in discovery so children left in a previous/full bag
+    -- can still be dropped at camp. Pickup selection separately requires space.
+    return capacity ~= nil and capacity > 0 and count ~= nil and count >= 0
 end
 
 local function getRescueBags(requiredSlots)
@@ -2887,7 +2889,10 @@ end
 local function chooseRescueSack(requiredSlots)
     local bags = getRescueBags(requiredSlots)
     local first = bags[1]
-    return first and first.item or nil, first and first.free or 0
+    if not first or first.free < requiredSlots then
+        return nil, 0
+    end
+    return first.item, first.free
 end
 
 local function equipOwnedItem(item)
