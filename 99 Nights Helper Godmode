@@ -47,6 +47,7 @@ local RequestHotbarItem = nil
 local RequestConsumeItem = nil
 local RequestCookItem = nil
 local RequestBagStoreItem = nil
+local RequestBagDropItem = nil
 
 local function findReplicated(name)
     if RemoteEvents then
@@ -71,6 +72,7 @@ local function refreshRemotes()
     RequestConsumeItem = findReplicated("RequestConsumeItem")
     RequestCookItem = findReplicated("RequestCookItem")
     RequestBagStoreItem = findReplicated("RequestBagStoreItem")
+    RequestBagDropItem = findReplicated("RequestBagDropItem")
 end
 
 refreshRemotes()
@@ -280,7 +282,8 @@ track(ReplicatedStorage.DescendantAdded:Connect(function(descendant)
         or name == "RequestHotbarItem"
         or name == "RequestConsumeItem"
         or name == "RequestCookItem"
-        or name == "RequestBagStoreItem" then
+        or name == "RequestBagStoreItem"
+        or name == "RequestBagDropItem" then
         task.defer(refreshRemotes)
     end
 end))
@@ -1622,6 +1625,13 @@ local function readNumberValue(object, names)
 end
 
 local function getCampfireLevel()
+    -- Current game path: workspace.Progress is the campfire progression
+    -- and reaches 6 at the maximum campfire level.
+    local progress = tonumber(workspace:GetAttribute("Progress"))
+    if progress ~= nil then
+        return math.max(0, math.floor(progress + 0.001))
+    end
+
     local fire = getMainFire()
     if not fire then
         return nil
@@ -1651,6 +1661,13 @@ local function getCampfireFuelRatio()
     local fire = getMainFire()
     if not fire then
         return nil
+    end
+
+    -- Current game path used by the campfire itself.
+    local fuelRemaining = tonumber(fire:GetAttribute("FuelRemaining"))
+    local fuelTarget = tonumber(fire:GetAttribute("FuelTarget"))
+    if fuelRemaining ~= nil and fuelTarget ~= nil and fuelTarget > 0 then
+        return math.clamp(fuelRemaining / fuelTarget, 0, 1)
     end
 
     local percent = readNumberValue(fire, {
@@ -1689,6 +1706,7 @@ local FUEL_NAMES = {
     ["fuel canister"] = true,
     ["oil barrel"] = true,
     ["biofuel"] = true,
+    ["chair"] = true,
 }
 
 local SCRAP_NAMES = {
@@ -1766,6 +1784,11 @@ local function isScrapResource(item)
         return false
     end
 
+    -- Current game marks generic craft/scrap objects directly.
+    if item:GetAttribute("Scrappable") == true then
+        return true
+    end
+
     local name = lowerName(item)
     if SCRAP_NAMES[name] then
         return true
@@ -1796,23 +1819,22 @@ local function isScrapResource(item)
 local resourceCooldown = setmetatable({}, { __mode = "k" })
 
 local function resourceTarget(item, campfireMaxed, fuelRatio)
-    if isFuelResource(item) then
-        if not campfireMaxed then
-            return CAMPFIRE_DROP
-        end
-
-        if isLogResource(item) then
-            return SCRAP_DROP
-        end
-
-        if fuelRatio ~= nil and fuelRatio < state.campfireMaintainThreshold then
-            return CAMPFIRE_DROP
-        end
-        return nil
+    -- Before Level 6, every usable fuel source is reserved for the fire.
+    if not campfireMaxed then
+        return isFuelResource(item) and CAMPFIRE_DROP or nil
     end
 
-    if campfireMaxed and isScrapResource(item) then
+    -- At Level 6, logs and scrappable/furniture/metal become crafting
+    -- resources even if the game also considers some furniture fuel.
+    if isLogResource(item) or isScrapResource(item) then
         return SCRAP_DROP
+    end
+
+    -- Coal/canisters/oil/biofuel are kept for maintenance only.
+    if isFuelResource(item)
+        and fuelRatio ~= nil
+        and fuelRatio < state.campfireMaintainThreshold then
+        return CAMPFIRE_DROP
     end
     return nil
 end
@@ -2088,6 +2110,11 @@ local function childIsAtCamp(child)
         return false
     end
 
+    local lost = child:GetAttribute("Lost")
+    if lost == false or lost == 0 or lost == "false" then
+        return true
+    end
+
     for _, name in ipairs({ "Rescued", "Saved", "AtCamp", "IsRescued" }) do
         local value = child:GetAttribute(name)
         if value == true or value == 1 or value == "true" then
@@ -2114,6 +2141,27 @@ local function getUnrescuedChildren()
     return children
 end
 
+local function getItemBag()
+    return player:FindFirstChild("ItemBag")
+end
+
+local function getSackStoredCount(sack)
+    if not sack then
+        return 0
+    end
+
+    local count = tonumber(sack:GetAttribute("NumberItems"))
+    if count ~= nil then
+        return math.max(0, count)
+    end
+
+    local itemBag = getItemBag()
+    if itemBag then
+        return #itemBag:GetChildren()
+    end
+    return #sack:GetChildren()
+end
+
 local function chooseRescueSack(requiredSlots)
     local best = nil
     local bestFits = false
@@ -2123,7 +2171,7 @@ local function chooseRescueSack(requiredSlots)
     for _, container in ipairs(ownedContainers()) do
         for _, item in ipairs(container:GetChildren()) do
             if isSack(item) then
-                local count = tonumber(item:GetAttribute("NumberItems")) or 0
+                local count = getSackStoredCount(item)
                 local capacity = tonumber(item:GetAttribute("Capacity")) or 0
                 local free = math.max(0, capacity - count)
                 local fits = free >= requiredSlots
@@ -2172,6 +2220,27 @@ local function focusCameraAt(position)
     end
 end
 
+local function discoverMissingChildren()
+    local map = workspace:FindFirstChild("Map")
+    local missing = map and map:FindFirstChild("MissingKids")
+    local character = getCharacter()
+    if not missing or not character then
+        return
+    end
+
+    for _, position in pairs(missing:GetAttributes()) do
+        if not state.autoFarm then
+            break
+        end
+        if typeof(position) == "Vector3" then
+            pcall(character.PivotTo, character, CFrame.new(position))
+            lockFarmCharacter()
+            focusCameraAt(position)
+            task.wait(0.18)
+        end
+    end
+end
+
 local function storeChildInSack(sack, child)
     if not state.autoFarm or not sack or not sack.Parent or not child or not child.Parent then
         return false
@@ -2193,7 +2262,7 @@ local function storeChildInSack(sack, child)
         task.wait(0.05)
     end
 
-    local before = tonumber(sack:GetAttribute("NumberItems"))
+    local before = getSackStoredCount(sack)
     if not isLive(RequestBagStoreItem) then
         refreshRemotes()
     end
@@ -2205,11 +2274,13 @@ local function storeChildInSack(sack, child)
     local deadline = os.clock() + 0.8
     repeat
         task.wait(0.05)
-        local after = tonumber(sack:GetAttribute("NumberItems"))
+        local after = getSackStoredCount(sack)
         local characters = workspace:FindFirstChild("Characters")
+        local itemBag = getItemBag()
+        local storedInBag = itemBag and child:IsDescendantOf(itemBag)
         local leftWorld = not child.Parent or (characters and not child:IsDescendantOf(characters))
-        local countIncreased = before ~= nil and after ~= nil and after > before
-        if leftWorld or countIncreased then
+        local countIncreased = after > before
+        if storedInBag or leftWorld or countIncreased then
             return true
         end
     until not state.autoFarm or os.clock() >= deadline
@@ -2222,7 +2293,9 @@ local function findBagUnstoreRemote()
         if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
             local name = string.lower(remote.Name)
             if string.find(name, "bag", 1, true)
-                and (string.find(name, "unstore", 1, true) or string.find(name, "removeitem", 1, true)) then
+                and (string.find(name, "unstore", 1, true)
+                    or string.find(name, "removeitem", 1, true)
+                    or string.find(name, "dropitem", 1, true)) then
                 return remote
             end
         end
@@ -2292,33 +2365,62 @@ local function unstoreSackAtCamp(sack)
     equipOwnedItem(sack)
     focusCameraAt(CAMPFIRE_DROP)
 
-    local before = tonumber(sack:GetAttribute("NumberItems"))
-    local remote = findBagUnstoreRemote()
-    if remote and (before == nil or before > 0) then
-        for _ = 1, math.min(before or 8, 12) do
-            callUtilityRemote(remote, 0.75, sack)
-            task.wait(0.04)
+    local before = getSackStoredCount(sack)
+    local droppedAny = false
+    local itemBag = getItemBag()
+
+    -- Current game path: bag contents are mirrored under LocalPlayer.ItemBag
+    -- and RequestBagDropItem(sack, item) drops one exact object.
+    if not isLive(RequestBagDropItem) then
+        refreshRemotes()
+    end
+    if isLive(RequestBagDropItem) and itemBag then
+        local bagged = itemBag:GetChildren()
+        for _, item in ipairs(bagged) do
+            if not state.autoFarm then
+                break
+            end
+            if isLostChild(item) then
+                local wasParent = item.Parent
+                local ok = callUtilityRemote(RequestBagDropItem, 0.75, sack, item)
+                if ok then
+                    task.wait(0.08)
+                    droppedAny = droppedAny or item.Parent ~= wasParent or childIsAtCamp(item)
+                end
+            end
         end
         task.wait(0.35)
     end
 
-    local afterRemote = tonumber(sack:GetAttribute("NumberItems"))
-    if before == nil or afterRemote == nil or afterRemote >= before then
+    local afterExact = getSackStoredCount(sack)
+    if not droppedAny and afterExact >= before then
+        local remote = findBagUnstoreRemote()
+        if remote and remote ~= RequestBagDropItem and before > 0 then
+            for _ = 1, math.min(before, 12) do
+                callUtilityRemote(remote, 0.75, sack)
+                task.wait(0.04)
+            end
+            task.wait(0.25)
+        end
+    end
+
+    local afterRemote = getSackStoredCount(sack)
+    if not droppedAny and afterRemote >= before then
         for _ = 1, 8 do
             activateUnstoreGui()
             task.wait(0.04)
         end
-        task.wait(0.25)
+        task.wait(0.2)
     end
 
-    local afterGui = tonumber(sack:GetAttribute("NumberItems"))
-    if before == nil or afterGui == nil or afterGui >= before then
+    local afterGui = getSackStoredCount(sack)
+    if not droppedAny and afterGui >= before then
         simulateUnstoreKey()
     end
 
     task.wait(0.8)
-    local after = tonumber(sack:GetAttribute("NumberItems"))
-    return before == nil or after == nil or after < before
+    local after = getSackStoredCount(sack)
+    return droppedAny or after < before
 end
 
 local function runChildRescueAttempt()
@@ -2333,6 +2435,11 @@ local function runChildRescueAttempt()
     if level == nil or level < state.campfireTargetLevel then
         return false
     end
+
+    -- MissingKids stores the map positions used to reveal children
+    -- that are not currently replicated in workspace.Characters.
+    discoverMissingChildren()
+    task.wait(0.25)
 
     local children = getUnrescuedChildren()
     if #children == 0 then
@@ -2378,12 +2485,11 @@ local function runChildRescueAttempt()
             return
         end
 
-        local beforeDrop = tonumber(sack:GetAttribute("NumberItems"))
+        local beforeDrop = getSackStoredCount(sack)
         local dropped = unstoreSackAtCamp(sack)
         task.wait(2)
-        local afterDrop = tonumber(sack:GetAttribute("NumberItems"))
-        local sackVerified = dropped
-            and (beforeDrop == nil or afterDrop == nil or afterDrop < beforeDrop)
+        local afterDrop = getSackStoredCount(sack)
+        local sackVerified = dropped and afterDrop < beforeDrop
         local remaining = getUnrescuedChildren()
         success = sackVerified and #remaining == 0
     end)
@@ -2653,7 +2759,6 @@ local function enableFarm()
     state.killAura = true
     state.autoBestGear = true
     state.smartResources = true
-    state.smartResources = true
     state.patrolIndex = 1
     state.childRescueAttempts = 0
     state.childRescueRunning = false
@@ -2737,6 +2842,7 @@ track(RunService.Heartbeat:Connect(function()
     state.autoChop = true
     state.killAura = true
     state.autoBestGear = true
+    state.smartResources = true
 
     if not farmPlatform or not farmPlatform.Parent then
         createPlatform()
