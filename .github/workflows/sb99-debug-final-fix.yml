@@ -1,0 +1,62 @@
+name: SB99 debug-verified final fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-debug-final-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          EXPECTED='1646c79905d9f083577e7a3aaecd05be444e9a54'
+
+          test "$(git hash-object "$TARGET")" = "$EXPECTED"
+          python3 .sb99_debug_final_fix.py
+          git diff --check
+
+          grep -q 'maxInflight = 8' "$TARGET"
+          grep -q 'targetCooldown = 0.12' "$TARGET"
+          grep -q 'local function makeHitId(weapon)' "$TARGET"
+          grep -q 'getPhysicalFireDrop' "$TARGET"
+          grep -q 'getPhysicalScrapDrop' "$TARGET"
+          grep -q 'resourcePauseUntil' "$TARGET"
+          grep -q 'Unknown phase is treated as daytime' "$TARGET"
+          grep -q 'treePart.Position.Y + 4' "$TARGET"
+          grep -q 'Inflight %d' "$TARGET"
+
+          if grep -Eq 'WaitForChild\([^,)]*\)' "$TARGET"; then
+            echo 'Unbounded WaitForChild detected'
+            exit 1
+          fi
+
+          git clone --depth 1 https://github.com/luau-lang/luau.git /tmp/luau >/dev/null 2>&1
+          cmake -S /tmp/luau -B /tmp/luau/build -DCMAKE_BUILD_TYPE=Release >/dev/null
+          cmake --build /tmp/luau/build --target Luau.Compile.CLI -j2 >/dev/null
+          /tmp/luau/build/luau-compile "$TARGET" >/dev/null
+
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          REMOTE_BLOB="$(git show origin/main:"$TARGET" | git hash-object --stdin)"
+          test "$REMOTE_BLOB" = "$EXPECTED"
+
+          rm -f .sb99_debug_final_fix.py .github/workflows/sb99-debug-final-fix.yml
+          git add -A "$TARGET" .sb99_debug_final_fix.py .github/workflows/sb99-debug-final-fix.yml
+          git diff --cached --check
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: stabilize farm chop and item routing'
+          git push origin HEAD:main
