@@ -60,6 +60,7 @@ local CraftItem = nil
 local RequestPlaceStructure = nil
 local RequestOpenItemChest = nil
 local RequestTakeDiamonds = nil
+local RequestBurnItem = nil
 
 local function findReplicated(name)
     if RemoteEvents then
@@ -90,6 +91,7 @@ local function refreshRemotes()
     RequestPlaceStructure = findReplicated("RequestPlaceStructure")
     RequestOpenItemChest = findReplicated("RequestOpenItemChest")
     RequestTakeDiamonds = findReplicated("RequestTakeDiamonds")
+    RequestBurnItem = findReplicated("RequestBurnItem")
 end
 
 refreshRemotes()
@@ -101,7 +103,7 @@ local function getMainFire()
 end
 
 local FARM_HOME = Vector3.new(0, -50, 0)
-local FARM_PATROL_Y = 60
+local FARM_PATROL_Y = 30
 local FARM_PLATFORM_Y = -54
 local RETURN_POSITION = Vector3.new(0, 50, 0)
 local CAMPFIRE_DROP = Vector3.new(0, 13, 0)
@@ -273,14 +275,17 @@ local state = {
     emergencyFoodRun = false,
     foodServiceRunning = false,
 
-    patrolRadius = 700,
-    patrolSpeed = 60,
-    strongAxePatrolSpeed = 80,
+    patrolRadius = 300,
+    patrolMinRadius = 300,
+    patrolMaxRadius = 800,
+    patrolSpeed = 38,
+    strongAxePatrolSpeed = 52,
     patrolIndex = 1,
+    patrolExploreIndex = 0,
 
     saplingInterval = 10,
     lastSaplingPlant = 0,
-    saplingRotation = 0,
+    saplingSlot = tonumber(G.SB99_SAPLING_SLOT) or 0,
     saplingServiceRunning = false,
     campBuildInterval = 2,
     lastCampBuild = 0,
@@ -289,7 +294,7 @@ local state = {
 
     campfireTargetLevel = 6,
     campfireMaintainThreshold = 0.80,
-    resourcePassLimit = 18,
+    resourcePassLimit = 64,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
     childRescueMaxAttempts = 5,
@@ -316,6 +321,7 @@ local state = {
 
 G.SB99_STATE = state
 G.SB99_CAMP_BUILD_DONE = state.campBuildDone
+G.SB99_SAPLING_SLOT = state.saplingSlot
 
 -- Background dependency refresh. Missing remotes/modules disable only the
 -- related feature; they never prevent the UI from appearing.
@@ -346,7 +352,8 @@ track(ReplicatedStorage.DescendantAdded:Connect(function(descendant)
         or name == "CraftItem"
         or name == "RequestPlaceStructure"
         or name == "RequestOpenItemChest"
-        or name == "RequestTakeDiamonds" then
+        or name == "RequestTakeDiamonds"
+        or name == "RequestBurnItem" then
         task.defer(refreshRemotes)
     end
 end))
@@ -1907,12 +1914,43 @@ local function resourceTarget(item, campfireMaxed, fuelRatio)
     return nil
 end
 
+local function burnItemIntoCampfire(item)
+    if not item or not item.Parent then
+        return false
+    end
+
+    local mainFire = getMainFire()
+    if not mainFire then
+        return false
+    end
+
+    if not isLive(RequestBurnItem) then
+        refreshRemotes()
+    end
+    if not isLive(RequestBurnItem) then
+        return false
+    end
+
+    if RequestBurnItem:IsA("RemoteEvent") then
+        local ok = pcall(RequestBurnItem.FireServer, RequestBurnItem, mainFire, item)
+        return ok
+    end
+
+    if RequestBurnItem:IsA("RemoteFunction") then
+        local ok, response = callUtilityRemote(RequestBurnItem, 1.5, mainFire, item)
+        return ok and response ~= false
+    end
+
+    return false
+end
+
 local function runResourceService()
     if not state.active
         or not state.smartResources
         or state.resourceServiceRunning
         or state.foodServiceRunning
-        or state.childRescueRunning then
+        or state.childRescueRunning
+        or state.strongholdControl then
         return
     end
 
@@ -1926,7 +1964,6 @@ local function runResourceService()
         if campfireMaxed
             and state.autoFarm
             and state.autoChildRescue
-            and not state.strongholdControl
             and not state.childRescueCompleted
             and state.childRescueAttempts < state.childRescueMaxAttempts
             and now >= state.nextChildRescueAt then
@@ -1940,28 +1977,42 @@ local function runResourceService()
         end
 
         local processed = 0
-        for _, item in ipairs(items:GetChildren()) do
-            if not state.active or not state.smartResources then
+        local snapshot = items:GetChildren()
+        for _, item in ipairs(snapshot) do
+            if not state.active or not state.smartResources or state.strongholdControl then
                 break
             end
 
             local cooldown = resourceCooldown[item]
-            if item.Parent and (not cooldown or cooldown <= now) then
+            if item.Parent == items and (not cooldown or cooldown <= now) then
                 local target = resourceTarget(item, campfireMaxed, fuelRatio)
                 if target then
-                    resourceCooldown[item] = now + 1.5
-                    if dragItemTo(item, CFrame.new(target)) then
+                    resourceCooldown[item] = now + 1.1
+                    local handled = false
+
+                    if target == CAMPFIRE_DROP then
+                        -- RequestBurnItem is the authoritative fire path. Falling
+                        -- back to dragging keeps compatibility if a server build
+                        -- temporarily moves or replaces the remote.
+                        handled = burnItemIntoCampfire(item)
+                        if not handled and item.Parent == items then
+                            handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
+                        end
+                    else
+                        handled = dragItemTo(item, CFrame.new(target))
+                    end
+
+                    if handled then
                         processed = processed + 1
-                        task.wait(0.015)
+                        task.wait(0.02)
 
                         if target == CAMPFIRE_DROP then
+                            task.wait(0.03)
                             local updatedLevel = getCampfireLevel()
                             if updatedLevel ~= nil and updatedLevel >= state.campfireTargetLevel then
                                 campfireMaxed = true
-                                fuelRatio = getCampfireFuelRatio()
-                            elseif campfireMaxed then
-                                fuelRatio = getCampfireFuelRatio()
                             end
+                            fuelRatio = getCampfireFuelRatio()
                         end
                     end
                 end
@@ -2777,45 +2828,66 @@ local function getSackStoredCount(sack)
         return math.max(0, count)
     end
 
-    local itemBag = getItemBag()
-    if itemBag then
-        for _, item in ipairs(itemBag:GetChildren()) do
-            if isLostChild(item) then
-                state.childRescueObserved[item.Name] = true
+    return 0
+end
+
+local function isStorageBag(item)
+    if not item or not item.Parent then
+        return false
+    end
+    local capacity = tonumber(item:GetAttribute("Capacity"))
+    local count = tonumber(item:GetAttribute("NumberItems"))
+    return capacity ~= nil and count ~= nil and capacity > count
+end
+
+local function getRescueBags(requiredSlots)
+    local bags = {}
+    local seen = {}
+
+    -- Current game scripts store baggable objects through Inventory bags first.
+    local inventory = player:FindFirstChild("Inventory")
+    local orderedContainers = {}
+    if inventory then table.insert(orderedContainers, inventory) end
+    for _, container in ipairs(ownedContainers()) do
+        if container and container ~= inventory then
+            table.insert(orderedContainers, container)
+        end
+    end
+
+    for _, container in ipairs(orderedContainers) do
+        for _, item in ipairs(container:GetChildren()) do
+            if not seen[item] and isStorageBag(item) then
+                seen[item] = true
+                local capacity = tonumber(item:GetAttribute("Capacity")) or 0
+                local count = tonumber(item:GetAttribute("NumberItems")) or 0
+                table.insert(bags, {
+                    item = item,
+                    free = math.max(0, capacity - count),
+                    preferred = isSack(item),
+                })
             end
         end
-        return #itemBag:GetChildren()
     end
-    return #sack:GetChildren()
+
+    table.sort(bags, function(a, b)
+        local aFits = a.free >= requiredSlots
+        local bFits = b.free >= requiredSlots
+        if aFits ~= bFits then
+            return aFits
+        end
+        if a.preferred ~= b.preferred then
+            return a.preferred
+        end
+        return a.free > b.free
+    end)
+
+    return bags
 end
 
 local function chooseRescueSack(requiredSlots)
-    local best = nil
-    local bestFits = false
-    local bestCount = math.huge
-    local bestFree = -1
-
-    for _, container in ipairs(ownedContainers()) do
-        for _, item in ipairs(container:GetChildren()) do
-            if isSack(item) then
-                local count = getSackStoredCount(item)
-                local capacity = tonumber(item:GetAttribute("Capacity")) or 0
-                local free = math.max(0, capacity - count)
-                local fits = free >= requiredSlots
-
-                if (fits and not bestFits)
-                    or (fits == bestFits and fits and (count < bestCount or (count == bestCount and free > bestFree)))
-                    or (not fits and not bestFits and free > bestFree) then
-                    best = item
-                    bestFits = fits
-                    bestCount = count
-                    bestFree = free
-                end
-            end
-        end
-    end
-
-    return best, bestFree
+    local bags = getRescueBags(requiredSlots)
+    local first = bags[1]
+    return first and first.item or nil, first and first.free or 0
 end
 
 local function equipOwnedItem(item)
@@ -2847,220 +2919,199 @@ local function focusCameraAt(position)
     end
 end
 
-local function discoverMissingChildren()
+local function getMissingChildPositions()
     local map = workspace:FindFirstChild("Map")
     local missing = map and map:FindFirstChild("MissingKids")
-    local character = getCharacter()
-    if not missing or not character then
-        return
+    local result = {}
+    if not missing then
+        return result
     end
 
-    for _, position in pairs(missing:GetAttributes()) do
-        if not state.autoFarm or state.strongholdControl then
-            break
-        end
+    for key, position in pairs(missing:GetAttributes()) do
         if typeof(position) == "Vector3" then
-            pcall(character.PivotTo, character, CFrame.new(position))
-            lockFarmCharacter()
-            focusCameraAt(position)
-            task.wait(2)
+            table.insert(result, { key = tostring(key), position = position })
         end
     end
+    table.sort(result, function(a, b)
+        return a.key < b.key
+    end)
+    return result
+end
+
+local function reacquireChild(childName)
+    local characters = workspace:FindFirstChild("Characters")
+    if not characters then
+        return nil
+    end
+    local exact = characters:FindFirstChild(childName)
+    if exact and exact:IsA("Model") then
+        return exact
+    end
+    return nil
+end
+
+local function childStoredInItemBag(childName)
+    local itemBag = getItemBag()
+    if not itemBag then
+        return false
+    end
+    for _, object in ipairs(itemBag:GetDescendants()) do
+        if object.Name == childName and isLostChild(object) then
+            return true
+        end
+    end
+    return false
 end
 
 local function storeChildInSack(sack, child)
-    if not state.autoFarm or state.strongholdControl or not sack or not sack.Parent or not child or not child.Parent then
+    if not state.autoFarm
+        or not state.autoChildRescue
+        or state.strongholdControl
+        or not sack
+        or not sack.Parent
+        or not child
+        or not child.Parent then
         return false
     end
 
+    local childName = child.Name
     local part = getPart(child)
     local character = getCharacter()
     if part and character then
         pcall(character.PivotTo, character, part.CFrame * CFrame.new(0, 0, 3))
         lockFarmCharacter()
         focusCameraAt(part.Position)
-        -- Long-distance teleports can stream the child region in after the
-        -- character arrives. Give it two full seconds before interaction.
         task.wait(2)
     end
 
-    equipOwnedItem(sack)
-
-    local prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        firePromptNow(prompt)
-        task.wait(0.05)
-    end
-
-    local before = getSackStoredCount(sack)
-    if not isLive(RequestBagStoreItem) then
-        refreshRemotes()
-    end
-
-    if isLive(RequestBagStoreItem) and child.Parent then
-        callUtilityRemote(RequestBagStoreItem, 1.5, sack, child)
-    end
-
-    local deadline = os.clock() + 0.8
-    repeat
-        task.wait(0.05)
-        local after = getSackStoredCount(sack)
-        local characters = workspace:FindFirstChild("Characters")
-        local itemBag = getItemBag()
-        local storedInBag = itemBag and child:IsDescendantOf(itemBag)
-        local leftWorld = not child.Parent or (characters and not child:IsDescendantOf(characters))
-        local countIncreased = after > before
-        if storedInBag or leftWorld or countIncreased then
-            return true
-        end
-    until not state.autoFarm or os.clock() >= deadline
-
-    return false
-end
-
-local function findBagUnstoreRemote()
-    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-        if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
-            local name = string.lower(remote.Name)
-            if string.find(name, "bag", 1, true)
-                and (string.find(name, "unstore", 1, true)
-                    or string.find(name, "removeitem", 1, true)
-                    or string.find(name, "dropitem", 1, true)) then
-                return remote
-            end
-        end
-    end
-    return nil
-end
-
-local function activateUnstoreGui()
-    local fireSignal = rawget(G, "firesignal")
-    if type(fireSignal) ~= "function" and type(firesignal) == "function" then
-        fireSignal = firesignal
-    end
-
-    local activated = false
-    for _, object in ipairs(playerGui:GetDescendants()) do
-        if object:IsA("GuiButton") and object.Visible then
-            local ok, text = pcall(function()
-                return string.lower(object.Text or "")
-            end)
-            if ok and string.find(text, "unstore", 1, true) then
-                if type(fireSignal) == "function" then
-                    activated = pcall(fireSignal, object.Activated) or activated
-                end
-                pcall(function()
-                    object:Activate()
-                end)
-            end
-        end
-    end
-    return activated
-end
-
-local function simulateUnstoreKey()
-    local vimOk, vim = pcall(game.GetService, game, "VirtualInputManager")
-    if vimOk and vim then
-        local pressed = pcall(vim.SendKeyEvent, vim, true, Enum.KeyCode.F, false, game)
-        if pressed then
-            task.wait(2.35)
-            pcall(vim.SendKeyEvent, vim, false, Enum.KeyCode.F, false, game)
-            return true
-        end
-    end
-
-    local press = rawget(G, "keypress")
-    local release = rawget(G, "keyrelease")
-    if type(press) == "function" and type(release) == "function" then
-        local ok = pcall(press, 0x46)
-        if ok then
-            task.wait(2.35)
-            pcall(release, 0x46)
-            return true
-        end
-    end
-    return false
-end
-
-local function unstoreSackAtCamp(sack)
-    if not sack or not sack.Parent then
+    -- Streaming can replace the model instance during the two-second wait.
+    -- Always reacquire by the stable child name before invoking the server.
+    child = reacquireChild(childName) or child
+    if not child or not child.Parent then
         return false
     end
 
+    if not isLive(RequestBagStoreItem) then
+        refreshRemotes()
+    end
+    if not isLive(RequestBagStoreItem) then
+        return false
+    end
+
+    local before = getSackStoredCount(sack)
+    for attempt = 1, 3 do
+        if not state.autoFarm or state.strongholdControl then
+            return false
+        end
+
+        child = reacquireChild(childName) or child
+        if not child or not child.Parent then
+            return true
+        end
+
+        local ok, response = callUtilityRemote(RequestBagStoreItem, 1.5, sack, child)
+        if ok and response ~= false then
+            task.wait(0.15)
+        end
+
+        local after = getSackStoredCount(sack)
+        local characters = workspace:FindFirstChild("Characters")
+        local leftWorld = not child.Parent or (characters and not child:IsDescendantOf(characters))
+        if after > before or leftWorld or childStoredInItemBag(childName) then
+            state.childRescueObserved[childName] = true
+            return true
+        end
+
+        -- Some executors/game builds require the child's prompt to be activated
+        -- before the same authoritative bag remote accepts it.
+        if attempt == 1 then
+            local prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                firePromptNow(prompt)
+                task.wait(0.15)
+            end
+        end
+        task.wait(0.2)
+    end
+
+    return false
+end
+
+local function getBaggedChildren()
+    local result = {}
+    local itemBag = getItemBag()
+    if not itemBag then
+        return result
+    end
+    for _, object in ipairs(itemBag:GetDescendants()) do
+        if isLostChild(object) then
+            table.insert(result, object)
+        end
+    end
+    return result
+end
+
+local function dropChildrenAtCamp(usedBags)
     local character = getCharacter()
     if character then
         pcall(character.PivotTo, character, CFrame.new(CHILD_CAMP_DROP))
     end
     lockFarmCharacter()
-    equipOwnedItem(sack)
     focusCameraAt(CHILD_CAMP_DROP)
+    task.wait(0.5)
 
-    local before = getSackStoredCount(sack)
-    local droppedAny = false
-    local itemBag = getItemBag()
-
-    -- Current game path: bag contents are mirrored under LocalPlayer.ItemBag
-    -- and RequestBagDropItem(sack, item) drops one exact object.
     if not isLive(RequestBagDropItem) then
         refreshRemotes()
     end
-    if isLive(RequestBagDropItem) and itemBag then
-        local bagged = itemBag:GetChildren()
-        for _, item in ipairs(bagged) do
-            if not state.autoFarm then
-                break
-            end
-            if isLostChild(item) then
-                state.childRescueObserved[item.Name] = true
-                local wasParent = item.Parent
-                local ok = callUtilityRemote(RequestBagDropItem, 0.75, sack, item)
-                if ok then
-                    task.wait(0.12)
-                    local movedOutOfBag = item.Parent ~= wasParent
-                    local rescuedAtCamp = childIsAtCamp(item)
-                    if movedOutOfBag or rescuedAtCamp then
-                        state.childRescueVerified[item.Name] = true
+    if not isLive(RequestBagDropItem) then
+        return false
+    end
+
+    local bags = {}
+    for bag in pairs(usedBags) do
+        if bag and bag.Parent then
+            table.insert(bags, bag)
+        end
+    end
+    for _, info in ipairs(getRescueBags(0)) do
+        if info.item and info.item.Parent and not usedBags[info.item] then
+            table.insert(bags, info.item)
+        end
+    end
+
+    local droppedAny = false
+    local bagged = getBaggedChildren()
+    for _, child in ipairs(bagged) do
+        if not state.autoFarm or state.strongholdControl then
+            break
+        end
+        local childName = child.Name
+        for _, bag in ipairs(bags) do
+            if bag.Parent and child.Parent then
+                local before = getSackStoredCount(bag)
+                local oldParent = child.Parent
+                local ok, response = callUtilityRemote(RequestBagDropItem, 1.25, bag, child)
+                if ok and response ~= false then
+                    task.wait(0.18)
+                    local after = getSackStoredCount(bag)
+                    if not child.Parent or child.Parent ~= oldParent or after < before then
+                        state.childRescueVerified[childName] = true
                         droppedAny = true
+                        break
                     end
                 end
             end
         end
-        task.wait(0.35)
     end
 
-    local afterExact = getSackStoredCount(sack)
-    if not droppedAny and afterExact >= before then
-        local remote = findBagUnstoreRemote()
-        if remote and remote ~= RequestBagDropItem and before > 0 then
-            for _ = 1, math.min(before, 12) do
-                callUtilityRemote(remote, 0.75, sack)
-                task.wait(0.04)
-            end
-            task.wait(0.25)
-        end
-    end
-
-    local afterRemote = getSackStoredCount(sack)
-    if not droppedAny and afterRemote >= before then
-        for _ = 1, 8 do
-            activateUnstoreGui()
-            task.wait(0.04)
-        end
-        task.wait(0.2)
-    end
-
-    local afterGui = getSackStoredCount(sack)
-    if not droppedAny and afterGui >= before then
-        simulateUnstoreKey()
-    end
-
-    task.wait(0.8)
-    local after = getSackStoredCount(sack)
-    return droppedAny or after < before
+    task.wait(1)
+    getUnrescuedChildren()
+    return droppedAny
 end
 
 local function runChildRescueAttempt()
     if not state.autoFarm
+        or not state.autoChildRescue
         or state.strongholdControl
         or state.childRescueRunning
         or state.childRescueCompleted
@@ -3070,23 +3121,6 @@ local function runChildRescueAttempt()
 
     local level = getCampfireLevel()
     if level == nil or level < state.campfireTargetLevel then
-        return false
-    end
-
-    -- MissingKids stores the map positions used to reveal children
-    -- that are not currently replicated in workspace.Characters.
-    discoverMissingChildren()
-    task.wait(0.25)
-
-    local children = getUnrescuedChildren()
-    if verifiedChildCount() >= 4 then
-        state.childRescueCompleted = true
-        state.childRescuePending = false
-        return true
-    end
-    -- Never treat an empty replication snapshot as success. If fewer
-    -- than four children have been verified, retry discovery later.
-    if #children == 0 then
         return false
     end
 
@@ -3105,70 +3139,83 @@ local function runChildRescueAttempt()
         end)
     end
 
+    local usedBags = {}
+    local storedNames = {}
     local success = false
+
     pcall(function()
-        local sack, freeSlots = chooseRescueSack(#children)
-        if not sack or freeSlots <= 0 then
-            return
+        local function storeCurrentlyLoaded()
+            local loaded = getUnrescuedChildren()
+            for _, child in ipairs(loaded) do
+                if not state.autoFarm or state.strongholdControl then
+                    break
+                end
+                if not storedNames[child.Name] and not state.childRescueVerified[child.Name] then
+                    local bag = chooseRescueSack(1)
+                    if bag and storeChildInSack(bag, child) then
+                        usedBags[bag] = true
+                        storedNames[child.Name] = true
+                        task.wait(1)
+                    end
+                end
+            end
         end
 
-        local stored = 0
-        for _, child in ipairs(children) do
-            if not state.autoFarm then
+        -- Grab any already-streamed child first.
+        storeCurrentlyLoaded()
+
+        -- Then visit each MissingKids position and immediately bag whatever
+        -- child streams in there. This avoids stale references across regions.
+        for _, entry in ipairs(getMissingChildPositions()) do
+            if not state.autoFarm or state.strongholdControl then
                 break
             end
-            if storeChildInSack(sack, child) then
-                stored = stored + 1
+            if verifiedChildCount() + (function()
+                local n = 0
+                for _ in pairs(storedNames) do n = n + 1 end
+                return n
+            end)() >= 4 then
+                break
             end
-            -- Let the sack replicate before teleporting to the next child.
-            task.wait(1)
+
+            local character = getCharacter()
+            if character then
+                pcall(character.PivotTo, character, CFrame.new(entry.position + Vector3.new(0, 3, 0)))
+                lockFarmCharacter()
+                focusCameraAt(entry.position)
+                task.wait(2)
+                storeCurrentlyLoaded()
+            end
         end
 
-        if stored <= 0 then
-            return
+        if next(usedBags) ~= nil then
+            dropChildrenAtCamp(usedBags)
         end
 
-        local beforeDrop = getSackStoredCount(sack)
-        local dropped = unstoreSackAtCamp(sack)
-        task.wait(2)
-        local afterDrop = getSackStoredCount(sack)
-        local sackVerified = dropped and afterDrop < beforeDrop
-        getUnrescuedChildren() -- refresh Lost/rescue attributes after the drop
-        success = sackVerified and verifiedChildCount() >= 4
+        task.wait(1)
+        getUnrescuedChildren()
+        success = verifiedChildCount() >= 4
     end)
 
     if camera then
         pcall(function()
-            if oldCameraCFrame then
-                camera.CFrame = oldCameraCFrame
-            end
-            if oldCameraSubject then
-                camera.CameraSubject = oldCameraSubject
-            end
-            if oldCameraType then
-                camera.CameraType = oldCameraType
-            else
-                camera.CameraType = Enum.CameraType.Custom
-            end
+            if oldCameraCFrame then camera.CFrame = oldCameraCFrame end
+            if oldCameraSubject then camera.CameraSubject = oldCameraSubject end
+            camera.CameraType = oldCameraType or Enum.CameraType.Custom
         end)
     end
 
-    if state.autoFarm then
-        local character = getCharacter()
-        if character then
-            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
-        end
-        lockFarmCharacter()
-    end
-
     state.childRescueRunning = false
+    state.childRescuePending = false
     if success then
         state.childRescueCompleted = true
-        state.childRescuePending = false
+        state.nextChildRescueAt = 0
     else
         state.nextChildRescueAt = os.clock() + 5
-        state.childRescuePending = false
     end
+
+    -- Stay at the camp after dropping children. The daytime patrol controller
+    -- will take over from here; do not unnecessarily send the player under map.
     return success
 end
 
@@ -3595,13 +3642,16 @@ local function plantAvailableSaplings()
     end
 
     local now = os.clock()
-    if now - state.lastSaplingPlant < state.saplingInterval then return end
+    if now - state.lastSaplingPlant < state.saplingInterval then
+        return
+    end
     state.lastSaplingPlant = now
     state.saplingServiceRunning = true
 
     pcall(function()
         if not isLive(RequestPlantItem) then refreshRemotes() end
         if not isLive(RequestPlantItem) then return end
+
         local items = workspace:FindFirstChild("Items")
         if not items then return end
 
@@ -3615,17 +3665,20 @@ local function plantAvailableSaplings()
 
         local firePart = getPart(getMainFire())
         local center = firePart and firePart.Position or Vector3.new(0, 10, 0)
-        state.saplingRotation = (state.saplingRotation + math.rad(23)) % (math.pi * 2)
+        local radius = 82
+        local slots = 48
 
-        for index, sapling in ipairs(saplings) do
-            if not state.autoFarm then break end
-            if sapling and sapling.Parent then
-                -- Four staggered rings, all strictly inside the requested
-                -- 100-stud campfire radius. The center is MainFire, never player.
-                local radius = 40 + ((index - 1) % 4) * 18
-                local angle = state.saplingRotation + (index - 1) * 2.399963229728653
+        -- A real geometric ring: every slot has the same radius. Persist the
+        -- last successful slot so later batches continue instead of starting
+        -- over and stacking saplings on the same positions.
+        for _, sapling in ipairs(saplings) do
+            if not state.autoFarm or state.strongholdControl then break end
+            if sapling and sapling.Parent == items then
+                local slot = (state.saplingSlot % slots) + 1
+                local angle = ((slot - 1) / slots) * math.pi * 2
                 local x = center.X + math.cos(angle) * radius
                 local z = center.Z + math.sin(angle) * radius
+
                 local params = RaycastParams.new()
                 params.FilterType = Enum.RaycastFilterType.Exclude
                 local character = getCharacter()
@@ -3636,14 +3689,20 @@ local function plantAvailableSaplings()
                     params
                 )
                 local position = Vector3.new(x, hit and hit.Position.Y or center.Y, z)
-                callUtilityRemote(RequestPlantItem, 1.25, sapling, position)
-                task.wait(0.05)
+
+                local ok, response = callUtilityRemote(RequestPlantItem, 1.25, sapling, position)
+                if ok and response ~= false then
+                    state.saplingSlot = slot
+                    G.SB99_SAPLING_SLOT = slot
+                end
+                task.wait(0.045)
             end
         end
     end)
 
     state.saplingServiceRunning = false
 end
+
 
 task.spawn(function()
     while state.active do
@@ -3657,22 +3716,100 @@ task.spawn(function()
     end
 end)
 
-local patrolPoints = {}
+local treeVisitCooldown = setmetatable({}, { __mode = "k" })
 
--- Four rings out to 700 studs. Offset alternating rings so coverage overlaps.
-for ring = 1, 4 do
-    local radius = ring * (state.patrolRadius / 4)
+local function getFarmCenter()
+    local firePart = getPart(getMainFire())
+    local center = firePart and firePart.Position or Vector3.new(0, 10, 0)
+    return Vector3.new(center.X, FARM_PATROL_Y, center.Z)
+end
 
-    for point = 0, 7 do
-        local offsetDegrees = (ring % 2 == 0) and 22.5 or 0
-        local angle = math.rad(point * 45 + offsetDegrees)
-
-        table.insert(patrolPoints, Vector3.new(
-            math.cos(angle) * radius,
-            FARM_PATROL_Y,
-            math.sin(angle) * radius
-        ))
+local function currentFarmRadius()
+    local level = math.clamp(tonumber(getCampfireLevel()) or 1, 1, state.campfireTargetLevel)
+    if state.campfireTargetLevel <= 1 then
+        return state.patrolMaxRadius
     end
+    local alpha = (level - 1) / (state.campfireTargetLevel - 1)
+    return math.floor(state.patrolMinRadius + (state.patrolMaxRadius - state.patrolMinRadius) * alpha + 0.5)
+end
+
+local function smallTreeAvailable(tree)
+    if not tree or not tree.Parent or tree.Name ~= "Small Tree" then
+        return false
+    end
+    local health = tonumber(tree:GetAttribute("Health"))
+    return health == nil or health > 0
+end
+
+local function chooseSmallTreeTarget()
+    local root = getRoot()
+    if not root then return nil, nil end
+
+    local center = getFarmCenter()
+    local radius = currentFarmRadius()
+    local now = os.clock()
+    local bestTree = nil
+    local bestDistance = math.huge
+
+    for _, tree in ipairs(treeCache) do
+        if smallTreeAvailable(tree) then
+            local part = getPart(tree)
+            if part then
+                local dxCenter = part.Position.X - center.X
+                local dzCenter = part.Position.Z - center.Z
+                local fromCenter = math.sqrt(dxCenter * dxCenter + dzCenter * dzCenter)
+                local cooldown = treeVisitCooldown[tree]
+                if fromCenter <= radius and (not cooldown or cooldown <= now) then
+                    local dx = part.Position.X - root.Position.X
+                    local dz = part.Position.Z - root.Position.Z
+                    local distance = math.sqrt(dx * dx + dz * dz)
+                    if distance < bestDistance then
+                        bestTree = tree
+                        bestDistance = distance
+                    end
+                end
+            end
+        end
+    end
+
+    if bestTree then
+        local part = getPart(bestTree)
+        treeVisitCooldown[bestTree] = now + 4
+        return Vector3.new(part.Position.X, FARM_PATROL_Y, part.Position.Z), bestTree
+    end
+    return nil, nil
+end
+
+local function nextExploreTarget()
+    local center = getFarmCenter()
+    local radius = currentFarmRadius()
+    state.patrolExploreIndex = state.patrolExploreIndex + 1
+
+    -- Two interleaved deterministic rings provide full-map coverage without
+    -- random wandering. As the campfire upgrades, the same pattern expands
+    -- smoothly from 300 to 800 studs.
+    local index = state.patrolExploreIndex - 1
+    local pointsPerRing = 16
+    local ring = math.floor(index / pointsPerRing) % 2
+    local point = index % pointsPerRing
+    local ringScale = ring == 0 and 0.62 or 0.95
+    local offset = ring == 0 and 0 or (math.pi / pointsPerRing)
+    local angle = (point / pointsPerRing) * math.pi * 2 + offset
+    local r = radius * ringScale
+
+    return Vector3.new(
+        center.X + math.cos(angle) * r,
+        FARM_PATROL_Y,
+        center.Z + math.sin(angle) * r
+    )
+end
+
+local function nextDayFarmTarget()
+    local treePoint, tree = chooseSmallTreeTarget()
+    if treePoint then
+        return treePoint, tree
+    end
+    return nextExploreTarget(), nil
 end
 
 local function enableFarm()
@@ -3717,6 +3854,8 @@ local function enableFarm()
     state.autoChildRescue = true
     state.diamondFarm = true
     state.patrolIndex = 1
+    state.patrolExploreIndex = 0
+    table.clear(treeVisitCooldown)
     state.childRescueAttempts = 0
     state.childRescueRunning = false
     state.childRescuePending = false
@@ -3899,19 +4038,11 @@ task.spawn(function()
                     runFoodService()
                     task.wait(0.2)
                 else
-                    local point = patrolPoints[state.patrolIndex]
-
-                    if moveFarmTo(point, false) then
-                        state.patrolIndex = state.patrolIndex + 1
-
-                        -- After a complete sweep, return home before starting again.
-                        if state.patrolIndex > #patrolPoints then
-                            state.patrolIndex = 1
-                            moveFarmTo(FARM_HOME, true)
-                            task.wait(1)
-                        else
-                            task.wait(0.3)
-                        end
+                    local point, tree = nextDayFarmTarget()
+                    if point and moveFarmTo(point, false) then
+                        -- Brief dwell gives Auto Chop/Kill Aura/chest prompting
+                        -- time to act while keeping daytime traversal continuous.
+                        task.wait(tree and 0.55 or 0.25)
                     else
                         task.wait(0.1)
                     end
@@ -3923,7 +4054,7 @@ end)
 
 task.defer(function()
 --==============================================================
--- RESPONSIVE COLLAPSIBLE UI
+-- PHONE-FIRST COLLAPSIBLE UI
 --==============================================================
 
 local screen = Instance.new("ScreenGui")
@@ -3936,285 +4067,248 @@ screen.Parent = playerGui
 
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(310, 510)
-frame.Position = UDim2.new(0.5, -155, 0.08, 0)
+frame.Size = UDim2.fromOffset(286, 430)
+frame.Position = UDim2.new(0.5, -143, 0, 6)
 frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 frame.BorderSizePixel = 0
 frame.Active = true
 frame.Parent = screen
-
-local frameCorner = Instance.new("UICorner")
-frameCorner.CornerRadius = UDim.new(0, 12)
-frameCorner.Parent = frame
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(75, 75, 88)
-stroke.Thickness = 1
-stroke.Parent = frame
-
-local uiScale = Instance.new("UIScale")
-uiScale.Parent = frame
-
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 42)
-header.BackgroundColor3 = Color3.fromRGB(29, 29, 35)
-header.BorderSizePixel = 0
-header.Active = true
-header.Parent = frame
-
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 12)
-headerCorner.Parent = header
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -52, 1, 0)
-title.Position = UDim2.fromOffset(12, 0)
-title.BackgroundTransparency = 1
-title.Text = "Smile B • 99 Nights Helper"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Font = Enum.Font.GothamBold
-title.TextSize = 13
-title.Parent = header
-
-local minimize = Instance.new("TextButton")
-minimize.Size = UDim2.fromOffset(30, 28)
-minimize.Position = UDim2.new(1, -37, 0, 7)
-minimize.BackgroundColor3 = Color3.fromRGB(48, 48, 57)
-minimize.BorderSizePixel = 0
-minimize.Text = "−"
-minimize.TextColor3 = Color3.new(1, 1, 1)
-minimize.Font = Enum.Font.GothamBold
-minimize.TextSize = 18
-minimize.Parent = header
-local minimizeCorner = Instance.new("UICorner")
-minimizeCorner.CornerRadius = UDim.new(0, 7)
-minimizeCorner.Parent = minimize
-
-local scroll = Instance.new("ScrollingFrame")
-scroll.Name = "Sections"
-scroll.Size = UDim2.new(1, -12, 1, -52)
-scroll.Position = UDim2.fromOffset(6, 47)
-scroll.BackgroundTransparency = 1
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 4
-scroll.ScrollBarImageColor3 = Color3.fromRGB(95, 95, 110)
-scroll.CanvasSize = UDim2.new()
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-scroll.Parent = frame
-
-local rootLayout = Instance.new("UIListLayout")
-rootLayout.Padding = UDim.new(0, 6)
-rootLayout.SortOrder = Enum.SortOrder.LayoutOrder
-rootLayout.Parent = scroll
-
-local rootPadding = Instance.new("UIPadding")
-rootPadding.PaddingBottom = UDim.new(0, 8)
-rootPadding.Parent = scroll
-
-local refreshers = {}
-local sections = {}
 
 local function rounded(instance, radius)
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, radius or 8)
     corner.Parent = instance
 end
+rounded(frame, 12)
 
-local function makeSection(titleText, defaultOpen)
-    local section = Instance.new("Frame")
-    section.BackgroundColor3 = Color3.fromRGB(25, 25, 31)
-    section.BorderSizePixel = 0
-    section.Size = UDim2.new(1, -4, 0, 40)
-    section.AutomaticSize = Enum.AutomaticSize.Y
-    section.Parent = scroll
-    rounded(section, 9)
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(72, 72, 84)
+stroke.Thickness = 1
+stroke.Parent = frame
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = 1
+uiScale.Parent = frame
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 38)
+header.BackgroundColor3 = Color3.fromRGB(29, 29, 35)
+header.BorderSizePixel = 0
+header.Active = true
+header.Parent = frame
+rounded(header, 12)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -48, 1, 0)
+title.Position = UDim2.fromOffset(10, 0)
+title.BackgroundTransparency = 1
+title.Text = "Smile B | 99 Nights"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.Parent = header
+
+local minimize = Instance.new("TextButton")
+minimize.Size = UDim2.fromOffset(30, 26)
+minimize.Position = UDim2.new(1, -36, 0, 6)
+minimize.BackgroundColor3 = Color3.fromRGB(48, 48, 57)
+minimize.BorderSizePixel = 0
+minimize.Text = "-"
+minimize.TextColor3 = Color3.new(1, 1, 1)
+minimize.Font = Enum.Font.GothamBold
+minimize.TextSize = 16
+minimize.Parent = header
+rounded(minimize, 7)
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -12, 0, 38)
+status.Position = UDim2.fromOffset(6, 43)
+status.BackgroundColor3 = Color3.fromRGB(27, 27, 33)
+status.BorderSizePixel = 0
+status.TextColor3 = Color3.fromRGB(215, 215, 225)
+status.Font = Enum.Font.Gotham
+status.TextSize = 9
+status.TextWrapped = true
+status.Parent = frame
+rounded(status, 8)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -12, 1, -90)
+scroll.Position = UDim2.fromOffset(6, 85)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.CanvasSize = UDim2.new()
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+scroll.Parent = frame
+
+local rootLayout = Instance.new("UIListLayout")
+rootLayout.Padding = UDim.new(0, 5)
+rootLayout.SortOrder = Enum.SortOrder.LayoutOrder
+rootLayout.Parent = scroll
+
+local refreshers = {}
+
+local function refreshAll()
+    for _, fn in ipairs(refreshers) do
+        pcall(fn)
+    end
+end
+
+local function makeSection(label, openByDefault)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(1, -2, 0, 36)
+    holder.AutomaticSize = Enum.AutomaticSize.Y
+    holder.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+    holder.BorderSizePixel = 0
+    holder.Parent = scroll
+    rounded(holder, 8)
 
     local layout = Instance.new("UIListLayout")
     layout.Padding = UDim.new(0, 4)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = section
+    layout.Parent = holder
 
-    local sectionPadding = Instance.new("UIPadding")
-    sectionPadding.PaddingBottom = UDim.new(0, 5)
-    sectionPadding.Parent = section
-
-    local open = defaultOpen ~= false
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, 0, 0, 36)
-    button.BackgroundColor3 = Color3.fromRGB(35, 35, 43)
-    button.BorderSizePixel = 0
-    button.TextColor3 = Color3.fromRGB(225, 225, 235)
-    button.Font = Enum.Font.GothamBold
-    button.TextSize = 11
-    button.TextXAlignment = Enum.TextXAlignment.Left
-    button.LayoutOrder = 1
-    button.Parent = section
-    rounded(button, 8)
+    local open = openByDefault ~= false
+    local head = Instance.new("TextButton")
+    head.Size = UDim2.new(1, 0, 0, 34)
+    head.BackgroundColor3 = Color3.fromRGB(35, 35, 43)
+    head.BorderSizePixel = 0
+    head.TextColor3 = Color3.fromRGB(232, 232, 238)
+    head.Font = Enum.Font.GothamBold
+    head.TextSize = 10
+    head.TextXAlignment = Enum.TextXAlignment.Left
+    head.Parent = holder
+    rounded(head, 8)
 
     local content = Instance.new("Frame")
-    content.BackgroundTransparency = 1
     content.Size = UDim2.new(1, 0, 0, 0)
     content.AutomaticSize = Enum.AutomaticSize.Y
-    content.LayoutOrder = 2
-    content.Parent = section
+    content.BackgroundTransparency = 1
+    content.Parent = holder
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 4)
+    list.Parent = content
 
-    local contentLayout = Instance.new("UIListLayout")
-    contentLayout.Padding = UDim.new(0, 4)
-    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    contentLayout.Parent = content
-
-    local function refreshOpen()
+    local function render()
         content.Visible = open
-        content.Size = UDim2.new(1, 0, 0, 0)
         content.AutomaticSize = open and Enum.AutomaticSize.Y or Enum.AutomaticSize.None
-        button.Text = (open and "  ▼  " or "  ▶  ") .. titleText
+        content.Size = UDim2.new(1, 0, 0, 0)
+        head.Text = (open and "  v  " or "  >  ") .. label
     end
-    refreshOpen()
-
-    track(button.MouseButton1Click:Connect(function()
+    render()
+    track(head.MouseButton1Click:Connect(function()
         open = not open
-        refreshOpen()
+        render()
     end))
-
-    sections[titleText] = { frame = section, content = content, button = button }
     return content
 end
 
-local function makeStatus(parent, getter)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 30)
-    label.BackgroundColor3 = Color3.fromRGB(31, 31, 38)
-    label.BorderSizePixel = 0
-    label.TextColor3 = Color3.fromRGB(205, 205, 215)
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 10
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextTruncate = Enum.TextTruncate.AtEnd
-    label.Parent = parent
-    rounded(label, 7)
-
-    table.insert(refreshers, function()
-        local ok, text = pcall(getter)
-        label.Text = "   " .. (ok and tostring(text) or "Unavailable")
-    end)
-    return label
-end
-
-local function makeToggle(parent, labelText, getter, setter, farmLocked)
+local function makeToggle(parent, label, getter, setter, farmLocked)
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, 0, 0, 34)
+    button.Size = UDim2.new(1, 0, 0, 32)
     button.BorderSizePixel = 0
     button.TextColor3 = Color3.new(1, 1, 1)
     button.Font = Enum.Font.GothamBold
-    button.TextSize = 10
+    button.TextSize = 9
     button.TextXAlignment = Enum.TextXAlignment.Left
     button.Parent = parent
     rounded(button, 7)
 
-    local function refresh()
+    local function render()
         local enabled = getter() == true
         local locked = farmLocked and state.autoFarm
         button.BackgroundColor3 = enabled and Color3.fromRGB(28, 112, 61) or Color3.fromRGB(47, 47, 56)
-        if locked then
-            button.Text = "   🔒 " .. labelText .. "   ON"
-        else
-            button.Text = "   " .. labelText .. (enabled and "   ON" or "   OFF")
-        end
+        button.Text = "   " .. (locked and "[LOCK] " or "") .. label .. (enabled and "  ON" or "  OFF")
     end
-    table.insert(refreshers, refresh)
+    table.insert(refreshers, render)
 
     track(button.MouseButton1Click:Connect(function()
-        if farmLocked and state.autoFarm then
-            return
-        end
+        if farmLocked and state.autoFarm then return end
         setter(not getter())
-        for _, update in ipairs(refreshers) do
-            pcall(update)
-        end
+        refreshAll()
     end))
-    return button
 end
 
-local statusSection = makeSection("STATUS", true)
-makeStatus(statusSection, function()
-    local hunger = getRealHunger()
-    return string.format("● Godmode Active   |   Hunger: %s", hunger and tostring(math.floor(hunger)) or "--")
-end)
-makeStatus(statusSection, function()
-    local count = state.readDiamondCount and state.readDiamondCount() or nil
-    local start = state.diamondScriptStart
-    local gained = count and start and math.max(0, count - start) or 0
-    return string.format("Diamonds: %s   |   Script gain: +%d", count and tostring(count) or "--", gained)
-end)
-makeStatus(statusSection, function()
-    return "Stronghold: " .. tostring(state.strongholdStatus) .. "   |   Timer: " .. tostring(state.strongholdCountdown)
-end)
-
-local farmSection = makeSection("AUTO FARM SUITE", true)
-makeToggle(farmSection, "Auto Farm (locks full suite)", function() return state.autoFarm end, function(value)
-    if value then enableFarm() else disableFarm() end
+local farmSection = makeSection("AUTO FARM", true)
+makeToggle(farmSection, "Auto Farm - full suite", function() return state.autoFarm end, function(v)
+    if v then enableFarm() else disableFarm() end
 end, false)
-makeToggle(farmSection, "Auto Chop", function() return state.autoChop end, function(v) state.autoChop = v end, true)
-makeToggle(farmSection, "Kill Aura", function() return state.killAura end, function(v) state.killAura = v end, true)
-makeToggle(farmSection, "Auto Best Gear", function() return state.autoBestGear end, function(v) state.autoBestGear = v end, true)
-makeToggle(farmSection, "Smart Logs / Scrap", function() return state.smartResources end, function(v) state.smartResources = v end, true)
-makeToggle(farmSection, "Open Nearby Chests", function() return state.autoChest end, function(v) state.autoChest = v end, true)
-makeToggle(farmSection, "Plant Campfire Saplings", function() return state.autoPlant end, function(v) state.autoPlant = v end, true)
-makeToggle(farmSection, "Upgrade Bench + Beds", function() return state.autoCampBuild end, function(v) state.autoCampBuild = v end, true)
-makeToggle(farmSection, "Rescue All 4 Children", function() return state.autoChildRescue end, function(v) state.autoChildRescue = v end, true)
-
-local strongholdSection = makeSection("STRONGHOLD / DIAMONDS", true)
-makeToggle(strongholdSection, "Diamond Farm", function() return state.diamondFarm end, function(v)
-    state.diamondFarm = v
-    if not v then
-        state.strongholdControl = false
-        state.strongholdRunning = false
-        state.strongholdStatus = "Off"
+makeToggle(farmSection, "Auto Chop", function() return state.autoChop end, function(v)
+    state.autoChop = v
+    if v then table.clear(attackCooldown); table.clear(treeVisitCooldown) end
+end, true)
+makeToggle(farmSection, "Kill Aura", function() return state.killAura end, function(v)
+    state.killAura = v
+    if v then table.clear(attackCooldown) end
+end, true)
+makeToggle(farmSection, "Auto Best Gear", function() return state.autoBestGear end, function(v)
+    state.autoBestGear = v
+    if v then table.clear(gearCooldown) end
+end, true)
+makeToggle(farmSection, "Smart Fire / Scrap", function() return state.smartResources end, function(v)
+    state.smartResources = v
+    if v then table.clear(resourceCooldown); state.resourceServiceRunning = false end
+end, true)
+makeToggle(farmSection, "Open Chests", function() return state.autoChest end, function(v)
+    state.autoChest = v
+    if v then table.clear(promptCooldown) end
+end, true)
+makeToggle(farmSection, "Plant Sapling Circle", function() return state.autoPlant end, function(v)
+    state.autoPlant = v
+    if v then state.lastSaplingPlant = 0; state.saplingServiceRunning = false end
+end, true)
+makeToggle(farmSection, "Bench + Beds", function() return state.autoCampBuild end, function(v)
+    state.autoCampBuild = v
+    if v then state.lastCampBuild = 0; state.campBuildRunning = false end
+end, true)
+makeToggle(farmSection, "Rescue 4 Children", function() return state.autoChildRescue end, function(v)
+    state.autoChildRescue = v
+    state.childRescueRunning = false
+    state.childRescuePending = false
+    if v then
+        state.childRescueAttempts = 0
+        state.childRescueCompleted = false
+        state.childRescueObserved = {}
+        state.childRescueVerified = {}
+        state.nextChildRescueAt = 0
     end
 end, true)
-makeStatus(strongholdSection, function()
-    if state.strongholdControl then
-        return "Movement owner: Stronghold (night under-map disabled)"
-    end
-    return "Movement owner: Auto Farm / normal"
-end)
-makeStatus(strongholdSection, function()
-    local baseline = state.strongholdBaseline
-    return string.format("Run baseline: %s   |   Last verified: +%d", baseline and tostring(baseline) or "--", state.strongholdLastGain or 0)
-end)
 
-local infoSection = makeSection("INFO", false)
-makeStatus(infoSection, function() return "Patrol: Y=60 • Night home: under center • Platform: Y=-54" end)
-makeStatus(infoSection, function() return "Saplings: MainFire-centered rings every 10s within 100 studs" end)
-makeStatus(infoSection, function() return "Credits: Smile B" end)
+local strongholdSection = makeSection("STRONGHOLD", false)
+makeToggle(strongholdSection, "Diamond Farm", function() return state.diamondFarm end, function(v)
+    state.diamondFarm = v
+    state.strongholdControl = false
+    state.strongholdRunning = false
+    state.strongholdBaseline = nil
+    state.strongholdRetryAt = 0
+    state.strongholdCycleComplete = false
+    state.strongholdStatus = v and "Waiting" or "Off"
+end, true)
 
 local ball = Instance.new("TextButton")
 ball.Name = "SB_Ball"
-ball.Size = UDim2.fromOffset(58, 58)
-ball.Position = UDim2.new(0, 18, 0.5, -29)
+ball.Size = UDim2.fromOffset(50, 50)
+ball.Position = UDim2.new(0, 14, 0.5, -25)
 ball.BackgroundColor3 = Color3.fromRGB(24, 24, 29)
 ball.BorderSizePixel = 0
 ball.Text = "SB"
 ball.TextColor3 = Color3.new(1, 1, 1)
 ball.Font = Enum.Font.GothamBold
-ball.TextSize = 18
+ball.TextSize = 16
 ball.Visible = false
 ball.Active = true
 ball.Parent = screen
-rounded(ball, 29)
-local ballStroke = Instance.new("UIStroke")
-ballStroke.Thickness = 2
-ballStroke.Color = Color3.fromRGB(105, 105, 120)
-ballStroke.Parent = ball
+rounded(ball, 25)
 
 local function clampToViewport(position, size)
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
-    local maxX = math.max(0, viewport.X - size.X)
-    local maxY = math.max(0, viewport.Y - size.Y)
-    return Vector2.new(math.clamp(position.X, 0, maxX), math.clamp(position.Y, 0, maxY))
+    return Vector2.new(
+        math.clamp(position.X, 0, math.max(0, viewport.X - size.X)),
+        math.clamp(position.Y, 0, math.max(0, viewport.Y - size.Y))
+    )
 end
 
 local lastViewport = Vector2.zero
@@ -4222,48 +4316,38 @@ local function refreshResponsiveLayout()
     local camera = workspace.CurrentCamera
     if not camera then return end
     local viewport = camera.ViewportSize
-    if viewport == lastViewport then return end
-    lastViewport = viewport
-
-    -- Phone-first scaling. Width and height are both respected, with a lower
-    -- bound that keeps touch rows usable instead of shrinking them to tiny text.
-    local widthScale = (viewport.X - 12) / 310
-    local heightScale = (viewport.Y - 12) / 510
-    uiScale.Scale = math.clamp(math.min(1, widthScale, heightScale), 0.68, 1)
-
-    task.defer(function()
-        if not state.active then return end
-        if frame.Visible then
-            local position = clampToViewport(frame.AbsolutePosition, frame.AbsoluteSize)
-            frame.Position = UDim2.fromOffset(position.X, position.Y)
-        elseif ball.Visible then
-            local position = clampToViewport(ball.AbsolutePosition, ball.AbsoluteSize)
-            ball.Position = UDim2.fromOffset(position.X, position.Y)
-        end
-    end)
+    if viewport ~= lastViewport then
+        lastViewport = viewport
+        local widthScale = (viewport.X - 8) / 286
+        local heightScale = (viewport.Y - 8) / 430
+        uiScale.Scale = math.clamp(math.min(1, widthScale, heightScale), 0.76, 1)
+        task.defer(function()
+            if frame.Visible then
+                local p = clampToViewport(frame.AbsolutePosition, frame.AbsoluteSize)
+                frame.Position = UDim2.fromOffset(p.X, p.Y)
+            elseif ball.Visible then
+                local p = clampToViewport(ball.AbsolutePosition, ball.AbsoluteSize)
+                ball.Position = UDim2.fromOffset(p.X, p.Y)
+            end
+        end)
+    end
 end
 
 local function minimizeUI()
-    local position = clampToViewport(frame.AbsolutePosition, ball.AbsoluteSize)
-    ball.Position = UDim2.fromOffset(position.X, position.Y)
+    local p = clampToViewport(frame.AbsolutePosition, ball.AbsoluteSize)
+    ball.Position = UDim2.fromOffset(p.X, p.Y)
     frame.Visible = false
     ball.Visible = true
 end
-
 local function restoreUI()
-    local position = clampToViewport(ball.AbsolutePosition, frame.AbsoluteSize)
-    frame.Position = UDim2.fromOffset(position.X, position.Y)
+    local p = clampToViewport(ball.AbsolutePosition, frame.AbsoluteSize)
+    frame.Position = UDim2.fromOffset(p.X, p.Y)
     ball.Visible = false
     frame.Visible = true
 end
 track(minimize.MouseButton1Click:Connect(minimizeUI))
 
--- Main-window touch/mouse dragging with input ownership.
-local dragging = false
-local dragInput = nil
-local dragTouch = nil
-local dragStart = nil
-local frameStart = nil
+local dragging, dragInput, dragTouch, dragStart, frameStart = false, nil, nil, nil, nil
 track(header.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
@@ -4287,34 +4371,24 @@ track(UserInputService.InputChanged:Connect(function(input)
             frameStart.X.Offset + delta.X + frameStart.X.Scale * viewport.X,
             frameStart.Y.Offset + delta.Y + frameStart.Y.Scale * viewport.Y
         )
-        local clamped = clampToViewport(desired, frame.AbsoluteSize)
-        frame.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+        local p = clampToViewport(desired, frame.AbsoluteSize)
+        frame.Position = UDim2.fromOffset(p.X, p.Y)
     end
 end))
 track(UserInputService.InputEnded:Connect(function(input)
-    local endedOwner = dragging and ((dragTouch and input == dragTouch) or (not dragTouch and input.UserInputType == Enum.UserInputType.MouseButton1))
-    if endedOwner then
-        dragging = false
-        dragInput = nil
-        dragTouch = nil
-        dragStart = nil
-        frameStart = nil
+    local owner = dragging and ((dragTouch and input == dragTouch) or (not dragTouch and input.UserInputType == Enum.UserInputType.MouseButton1))
+    if owner then
+        dragging, dragInput, dragTouch, dragStart, frameStart = false, nil, nil, nil, nil
     end
 end))
 
--- Minimized SB ball: drag or tap to restore, including multi-touch ownership.
-local ballDragging = false
-local ballInput = nil
-local ballTouch = nil
-local ballStart = nil
-local ballPositionStart = nil
-local ballMoved = false
+local ballDragging, ballInput, ballTouch, ballStart, ballPos, ballMoved = false, nil, nil, nil, nil, false
 track(ball.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         ballDragging = true
         ballMoved = false
         ballStart = input.Position
-        ballPositionStart = ball.Position
+        ballPos = ball.Position
         ballTouch = input.UserInputType == Enum.UserInputType.Touch and input or nil
         if ballTouch then ballInput = input end
     end
@@ -4325,40 +4399,46 @@ track(ball.InputChanged:Connect(function(input)
     end
 end))
 track(UserInputService.InputChanged:Connect(function(input)
-    if not ballDragging or input ~= ballInput or not ballStart or not ballPositionStart then return end
+    if not ballDragging or input ~= ballInput or not ballStart or not ballPos then return end
     local delta = input.Position - ballStart
     if delta.Magnitude > 6 then ballMoved = true end
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or Vector2.zero
     local desired = Vector2.new(
-        ballPositionStart.X.Offset + delta.X + ballPositionStart.X.Scale * viewport.X,
-        ballPositionStart.Y.Offset + delta.Y + ballPositionStart.Y.Scale * viewport.Y
+        ballPos.X.Offset + delta.X + ballPos.X.Scale * viewport.X,
+        ballPos.Y.Offset + delta.Y + ballPos.Y.Scale * viewport.Y
     )
-    local clamped = clampToViewport(desired, ball.AbsoluteSize)
-    ball.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+    local p = clampToViewport(desired, ball.AbsoluteSize)
+    ball.Position = UDim2.fromOffset(p.X, p.Y)
 end))
 track(UserInputService.InputEnded:Connect(function(input)
-    local endedOwner = ballDragging and ((ballTouch and input == ballTouch) or (not ballTouch and input.UserInputType == Enum.UserInputType.MouseButton1))
-    if not endedOwner then return end
-    ballDragging = false
-    ballInput = nil
-    ballTouch = nil
+    local owner = ballDragging and ((ballTouch and input == ballTouch) or (not ballTouch and input.UserInputType == Enum.UserInputType.MouseButton1))
+    if not owner then return end
+    ballDragging, ballInput, ballTouch = false, nil, nil
     if not ballMoved and ball.Visible then restoreUI() end
 end))
 
 task.spawn(function()
     while state.active do
-        for _, refresh in ipairs(refreshers) do
-            pcall(refresh)
-        end
+        local fireLevel = getCampfireLevel()
+        local diamonds = state.readDiamondCount and state.readDiamondCount() or nil
+        local radius = currentFarmRadius()
+        status.Text = string.format(
+            "Godmode ON | Fire %s/6 | Radius %d\n%s | Diamonds %s",
+            fireLevel and tostring(fireLevel) or "?",
+            radius,
+            tostring(state.strongholdStatus or "Off"),
+            diamonds and tostring(diamonds) or "--"
+        )
+        refreshAll()
         refreshResponsiveLayout()
         task.wait(0.4)
     end
 end)
 
 task.defer(function()
+    refreshAll()
     refreshResponsiveLayout()
-    for _, refresh in ipairs(refreshers) do pcall(refresh) end
 end)
 
 end)
