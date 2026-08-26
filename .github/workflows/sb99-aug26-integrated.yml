@@ -26,14 +26,56 @@ jobs:
           test "$actual" = "$EXPECTED" || { echo "stale helper before patch: $actual"; exit 20; }
 
           python3 .sb99_aug26_integrated.py
+
+          # The helper was already close to Luau's 200-local top-level limit.
+          # Move every newly-added helper onto state so this feature pass does
+          # not consume permanent registers in the main chunk.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('99 Nights Helper Godmode')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace('local function healthIsNaN(value)\n', 'state.healthIsNaN = function(value)\n', 1)
+          s = s.replace('local function applyNaNHealthGodmode(humanoid)\n', 'state.applyNaNHealthGodmode = function(humanoid)\n', 1)
+          s = s.replace('\nstate.applyNaNHealthGodmode = applyNaNHealthGodmode\n', '\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])healthIsNaN\(', 'state.healthIsNaN(', s)
+          s = re.sub(r'(?<![A-Za-z0-9_.])applyNaNHealthGodmode\(', 'state.applyNaNHealthGodmode(', s)
+
+          s = s.replace('local function getNightCampCFrame()\n', 'state.getNightCampCFrame = function()\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])getNightCampCFrame\(', 'state.getNightCampCFrame(', s)
+
+          s = s.replace('local function fastFoodTransport(item, destination)\n', 'state.fastFoodTransport = function(item, destination)\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])fastFoodTransport\(', 'state.fastFoodTransport(', s)
+
+          s = s.replace('local KNOWN_BED_TIERS = {\n', 'state.KNOWN_BED_TIERS = {\n', 1)
+          s = s.replace('local KNOWN_BED_OFFSETS = {\n', 'state.KNOWN_BED_OFFSETS = {\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])KNOWN_BED_TIERS', 'state.KNOWN_BED_TIERS', s)
+          s = re.sub(r'(?<![A-Za-z0-9_.])KNOWN_BED_OFFSETS', 'state.KNOWN_BED_OFFSETS', s)
+
+          s = s.replace('local function blueprintTierFromGroup(groupKey, blueprint)\n', 'state.blueprintTierFromGroup = function(groupKey, blueprint)\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])blueprintTierFromGroup\(', 'state.blueprintTierFromGroup(', s)
+
+          s = s.replace('local function discoverCampBuildQueue()\n', 'state.discoverCampBuildQueue = function()\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])discoverCampBuildQueue\(', 'state.discoverCampBuildQueue(', s)
+
+          s = s.replace('local function campCraftAccepted(response)\n', 'state.campCraftAccepted = function(response)\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])campCraftAccepted\(', 'state.campCraftAccepted(', s)
+
+          s = s.replace('local function craftCampBlueprint(name)\n', 'state.craftCampBlueprint = function(name)\n', 1)
+          s = re.sub(r'(?<![A-Za-z0-9_.])craftCampBlueprint\(', 'state.craftCampBlueprint(', s)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
           git diff --check
 
           grep -q 'nanHealthGodmode = true' "$TARGET"
-          grep -q 'getNightCampCFrame' "$TARGET"
+          grep -q 'state.getNightCampCFrame' "$TARGET"
           grep -q 'state.nightCampLock = true' "$TARGET"
-          grep -q 'fastFoodTransport' "$TARGET"
-          grep -q 'discoverCampBuildQueue' "$TARGET"
-          grep -q 'campCraftAccepted' "$TARGET"
+          grep -q 'state.fastFoodTransport' "$TARGET"
+          grep -q 'state.discoverCampBuildQueue' "$TARGET"
+          grep -q 'state.campCraftAccepted' "$TARGET"
           grep -q 'strongholdCounter' "$TARGET"
           grep -q 'NaN Health Godmode' "$TARGET"
           grep -q 'RequestBagDropItem' "$TARGET"
