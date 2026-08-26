@@ -293,10 +293,13 @@ local state = {
     patrolRadius = 300,
     patrolMinRadius = 300,
     patrolMaxRadius = 800,
-    patrolSpeed = 38,
-    strongAxePatrolSpeed = 52,
-    patrolIndex = 1,
+    patrolSpeed = 46,
+    strongAxePatrolSpeed = 64,
+    patrolIndex = 0,
     patrolExploreIndex = 0,
+    treeServiceEvery = 4,
+    treeHoldSeconds = 1.6,
+    treeApproachSpeed = 90,
 
     saplingInterval = 10,
     lastSaplingPlant = 0,
@@ -310,10 +313,13 @@ local state = {
 
     campfireTargetLevel = 6,
     campfireMaintainThreshold = 0.80,
-    fireDerivedLevel = math.clamp(tonumber(G.SB99_FIRE_DERIVED_LEVEL) or 1, 1, 6),
-    fireLastTarget = tonumber(G.SB99_FIRE_LAST_TARGET),
-    resourcePassLimit = 24,
-    resourcePickupRange = 2000,
+    -- Never inherit an inferred fire level from an older execution/server.
+    -- workspace.Progress is authoritative when available; FuelTarget transitions
+    -- are only a fallback for the current execution.
+    fireDerivedLevel = 1,
+    fireLastTarget = nil,
+    resourcePassLimit = 48,
+    resourcePickupRange = 10000,
     resourcePauseUntil = 0,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
@@ -342,6 +348,9 @@ local state = {
 G.SB99_STATE = state
 G.SB99_CAMP_BUILD_DONE = state.campBuildDone
 G.SB99_SAPLING_SLOT = state.saplingSlot
+-- Clear stale cross-execution fire inference. This data is session-local only.
+G.SB99_FIRE_DERIVED_LEVEL = nil
+G.SB99_FIRE_LAST_TARGET = nil
 
 -- Background dependency refresh. Missing remotes/modules disable only the
 -- related feature; they never prevent the UI from appearing.
@@ -2067,6 +2076,17 @@ local function isFuelResource(item)
     return fuel ~= nil and fuel > 0
 end
 
+local function fuelPriority(item)
+    local name = lowerName(item)
+    if name == "coal" or name == "charcoal" then return 120 end
+    if name == "fuel canister" or name == "gas canister" then return 115 end
+    if name == "oil barrel" or name == "gasoline" or name == "kerosene" then return 110 end
+    if name == "biofuel" or name == "propane tank" then return 105 end
+    if name == "chair" then return 80 end
+    if isLogResource(item) then return 20 end
+    return 60
+end
+
 local function isProtectedResourceItem(item)
     if not item then
         return true
@@ -2173,6 +2193,7 @@ local function burnItemIntoCampfire(item)
     if not fire then return false end
 
     local beforeFuel = tonumber(fire:GetAttribute("FuelRemaining")) or 0
+    local beforeTarget = tonumber(fire:GetAttribute("FuelTarget"))
     local beforeLevel = getCampfireLevel() or tonumber(state.fireDerivedLevel) or 1
 
     local function accepted()
@@ -2180,62 +2201,51 @@ local function burnItemIntoCampfire(item)
             return true
         end
         local liveFire = getMainFire()
-        if not liveFire then
-            return false
-        end
+        if not liveFire then return false end
         local afterFuel = tonumber(liveFire:GetAttribute("FuelRemaining")) or 0
+        local afterTarget = tonumber(liveFire:GetAttribute("FuelTarget"))
         local afterLevel = getCampfireLevel() or beforeLevel
-        return afterFuel > beforeFuel + 0.001 or afterLevel > beforeLevel
+        return afterFuel > beforeFuel + 0.001
+            or afterLevel > beforeLevel
+            or (beforeTarget ~= nil and afterTarget ~= nil and math.abs(afterTarget - beforeTarget) > 0.001)
     end
 
     local function requestBurn()
-        if not isLive(RequestBurnItem) then
-            refreshRemotes()
-        end
+        if not isLive(RequestBurnItem) then refreshRemotes() end
         local remote = RequestBurnItem
-        if not isLive(remote) then
-            return false
-        end
+        if not isLive(remote) then return false end
+
+        -- Current game flow accepts MainFire + fuel item directly. Do not put
+        -- RemoteEvents behind the generic RemoteFunction timeout/cooldown layer.
         if remote:IsA("RemoteEvent") then
             return pcall(remote.FireServer, remote, fire, item)
         elseif remote:IsA("RemoteFunction") then
-            local ok, response = callUtilityRemote(remote, 1.5, fire, item)
+            local ok, response = callUtilityRemote(remote, 1.25, fire, item)
             return ok and response ~= false
         end
         return false
     end
 
-    -- This RemoteEvent is accepted from anywhere by current live scripts and
-    -- is much more reliable for leveling than waiting for the roaming player.
-    if requestBurn() then
-        local deadline = os.clock() + 0.9
-        repeat
-            task.wait(0.06)
-            if accepted() then return true end
-        until not state.active or os.clock() >= deadline
+    -- Fast path: direct burn first. Two short sends are cheaper and more
+    -- reliable than blocking the whole resource service for ~2 seconds/item.
+    for _ = 1, 2 do
+        if not item.Parent then return true end
+        requestBurn()
+        task.wait(0.08)
+        if accepted() then return true end
     end
 
-    if not item.Parent then
-        return true
-    end
+    if not item.Parent then return true end
 
+    -- Fallback for servers that require drag ownership/proximity.
     local dropCF = getPhysicalFireDrop()
-    if not dragItemTo(item, dropCF) and item.Parent then
-        return false
-    end
-    task.wait(0.10)
-
+    local moved = dragItemTo(item, dropCF)
     if item.Parent then
         requestBurn()
     end
+    task.wait(0.12)
 
-    local deadline = os.clock() + 1.6
-    repeat
-        task.wait(0.08)
-        if accepted() then return true end
-    until not state.active or os.clock() >= deadline
-
-    return not item.Parent
+    return accepted() or (moved and not item.Parent)
 end
 
 local function routeItemToScrapper(item)
@@ -2305,15 +2315,15 @@ local function runResourceService()
                 local target = resourceTarget(item, campfireMaxed, fuelRatio)
                 if target then
                     local part = getPart(item)
-                    if part then
-                        local distance = (part.Position - root.Position).Magnitude
-                        if distance <= state.resourcePickupRange then
-                            table.insert(candidates, {
-                                item = item,
-                                target = target,
-                                distance = distance,
-                            })
-                        end
+                    local distance = part and (part.Position - root.Position).Magnitude or math.huge
+                    -- Fire fuel uses RequestBurnItem and does not need to be near
+                    -- the player. Scrap still requires a physical draggable part.
+                    if target == "fire" or (part and distance <= state.resourcePickupRange) then
+                        table.insert(candidates, {
+                            item = item,
+                            target = target,
+                            distance = distance,
+                        })
                     end
                 end
             end
@@ -2324,10 +2334,10 @@ local function runResourceService()
                 return a.target == "fire"
             end
             if a.target == "fire" then
-                local aLog = isLogResource(a.item)
-                local bLog = isLogResource(b.item)
-                if aLog ~= bLog then
-                    return not aLog
+                local ap = fuelPriority(a.item)
+                local bp = fuelPriority(b.item)
+                if ap ~= bp then
+                    return ap > bp
                 end
             end
             return a.distance < b.distance
@@ -2338,7 +2348,14 @@ local function runResourceService()
             if not state.active or not state.smartResources or state.strongholdControl then break end
             local item = candidate.item
             if item and item.Parent == items then
-                resourceCooldown[item] = os.clock() + 1
+                -- Re-evaluate after every successful fuel item. Reaching Level 6
+                -- can change a queued Log from fire fuel into scrapper material.
+                local liveTarget = resourceTarget(item, campfireMaxed, fuelRatio)
+                if liveTarget ~= candidate.target then
+                    continue
+                end
+
+                resourceCooldown[item] = os.clock() + 0.6
                 local handled = candidate.target == "fire"
                     and burnItemIntoCampfire(item)
                     or routeItemToScrapper(item)
@@ -3583,7 +3600,7 @@ local function runChildRescueAttempt()
     return success
 end
 
-local function moveFarmTo(position, ignoreInterrupts)
+local function moveFarmTo(position, ignoreInterrupts, speedOverride)
     if not state.autoFarm or state.strongholdControl then
         return false
     end
@@ -3596,7 +3613,7 @@ local function moveFarmTo(position, ignoreInterrupts)
     lockFarmCharacter()
 
     local distance = (root.Position - position).Magnitude
-    local patrolSpeed = state.patrolSpeed
+    local patrolSpeed = tonumber(speedOverride) or state.patrolSpeed
     local ownedAxe = select(1, findBestOwned(axeScore))
     if ownedAxe then
         local rank = AXE_FALLBACK[ownedAxe.Name] or 0
@@ -4251,7 +4268,7 @@ local function chooseSmallTreeTarget()
 
     if bestTree then
         local part = getPart(bestTree)
-        treeVisitCooldown[bestTree] = now + 7
+        treeVisitCooldown[bestTree] = now + 12
         return Vector3.new(part.Position.X, FARM_PATROL_Y, part.Position.Z), bestTree
     end
     return nil, nil
@@ -4282,9 +4299,14 @@ local function nextExploreTarget()
 end
 
 local function nextDayFarmTarget()
-    local treePoint, tree = chooseSmallTreeTarget()
-    if treePoint then
-        return treePoint, tree
+    -- Exploration owns the route. Trees are opportunistic stops instead of
+    -- permanently starving chest/map/enemy patrol when foliage is dense.
+    state.patrolIndex = (tonumber(state.patrolIndex) or 0) + 1
+    if state.patrolIndex % math.max(2, tonumber(state.treeServiceEvery) or 4) == 0 then
+        local treePoint, tree = chooseSmallTreeTarget()
+        if treePoint then
+            return treePoint, tree
+        end
     end
     return nextExploreTarget(), nil
 end
@@ -4330,8 +4352,9 @@ local function enableFarm()
     state.autoChest = true
     state.autoChildRescue = true
     state.diamondFarm = true
-    state.patrolIndex = 1
+    state.patrolIndex = 0
     state.patrolExploreIndex = 0
+    state.resourcePauseUntil = 0
     table.clear(treeVisitCooldown)
     table.clear(attackCooldown)
     rebuildTrees()
@@ -4542,36 +4565,30 @@ task.spawn(function()
                                 treePart = getPart(tree)
                             end
 
-                            -- First leg is the normal Y=30 patrol tween. The
-                            -- second leg approaches the trunk with noclip, so
-                            -- terrain/tree collision cannot stop the farm short.
+                            -- Travel stays at Y=30. Only the short vertical tree
+                            -- approach uses the faster noclip tween.
                             if treePart and treePart.Parent then
                                 moveFarmTo(Vector3.new(
                                     treePart.Position.X,
                                     treePart.Position.Y + 5,
                                     treePart.Position.Z
-                                ), false)
+                                ), false, state.treeApproachSpeed)
                             end
 
-                            local holdUntil = os.clock() + 5
+                            local holdUntil = os.clock() + (tonumber(state.treeHoldSeconds) or 1.6)
                             repeat
                                 if tree and tree.Parent and smallTreeAvailable(tree) then
                                     attackTarget(tree, true)
                                 end
-                                -- Service newly spawned logs/fuel while we are
-                                -- deliberately waiting at this tree.
-                                runResourceService()
-                                task.wait(0.14)
+                                task.wait(0.12)
                             until not state.autoFarm
                                 or state.strongholdControl
                                 or isNight()
+                                or not smallTreeAvailable(tree)
                                 or os.clock() >= holdUntil
 
-                            -- One final resource pass catches drops that replicated
-                            -- at the end of the five-second chop window.
-                            runResourceService()
-                            task.wait(0.20)
-
+                            -- Resource routing already owns its own background loop;
+                            -- never block patrol waiting on coal/log verification.
                             if state.autoFarm and not state.strongholdControl and not isNight() then
                                 local liveRoot = getRoot()
                                 if liveRoot then
@@ -4579,11 +4596,11 @@ task.spawn(function()
                                         liveRoot.Position.X,
                                         FARM_PATROL_Y,
                                         liveRoot.Position.Z
-                                    ), false)
+                                    ), false, state.treeApproachSpeed)
                                 end
                             end
                         else
-                            task.wait(0.25)
+                            task.wait(0.12)
                         end
                     else
                         task.wait(0.1)
@@ -4798,7 +4815,11 @@ makeToggle(farmSection, "Auto Best Gear", function() return state.autoBestGear e
 end, true)
 makeToggle(farmSection, "Smart Fire / Scrap", function() return state.smartResources end, function(v)
     state.smartResources = v
-    if v then table.clear(resourceCooldown); state.resourceServiceRunning = false end
+    if v then
+        table.clear(resourceCooldown)
+        state.resourceServiceRunning = false
+        state.resourcePauseUntil = 0
+    end
 end, true)
 makeToggle(farmSection, "Open Chests", function() return state.autoChest end, function(v)
     state.autoChest = v
