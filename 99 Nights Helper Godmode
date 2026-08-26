@@ -261,6 +261,9 @@ local state = {
     fullbright = true,
     nanHealthGodmode = true,
     nightCampLock = false,
+    nightClockSeenDay = false,
+    nightClockFallback = false,
+    nightClockCandidateSince = nil,
 
     strongholdControl = false,
     strongholdRunning = false,
@@ -1840,6 +1843,26 @@ end)
 -- otherwise uses actual Lighting.ClockTime.
 --==============================================================
 
+state.normalizeNightValue = function(value, invert)
+    local result = nil
+    if type(value) == "boolean" then
+        result = value
+    elseif type(value) == "number" and (value == 0 or value == 1) then
+        result = value == 1
+    elseif type(value) == "string" then
+        local lowered = string.lower(value)
+        if lowered == "true" or lowered == "1" or lowered == "night" or lowered == "nighttime" then
+            result = true
+        elseif lowered == "false" or lowered == "0" or lowered == "day" or lowered == "daytime" then
+            result = false
+        end
+    end
+    if result ~= nil and invert then
+        result = not result
+    end
+    return result
+end
+
 local function isNight()
     local sources = {}
     local map = workspace:FindFirstChild("Map")
@@ -1849,45 +1872,100 @@ local function isNight()
     if campground then table.insert(sources, campground) end
     table.insert(sources, Lighting)
 
-    local boolNames = {
-        "IsNight", "Night", "Nighttime", "IsNightTime", "NightActive", "NightStarted",
+    local boolSignals = {
+        { "IsNight", false }, { "Night", false }, { "Nighttime", false },
+        { "IsNightTime", false }, { "NightActive", false }, { "NightStarted", false },
+        { "IsDay", true }, { "Daytime", true }, { "IsDayTime", true }, { "DayActive", true },
     }
     for _, object in ipairs(sources) do
-        for _, name in ipairs(boolNames) do
+        for _, signal in ipairs(boolSignals) do
+            local name, invert = signal[1], signal[2]
             local ok, value = pcall(object.GetAttribute, object, name)
-            if ok then
-                if type(value) == "boolean" then
-                    return value
-                elseif type(value) == "number" and (value == 0 or value == 1) then
-                    return value == 1
-                elseif type(value) == "string" then
-                    local text = string.lower(value)
-                    if text == "true" or text == "night" then return true end
-                    if text == "false" or text == "day" then return false end
+            local result = ok and state.normalizeNightValue(value, invert) or nil
+            if result ~= nil then
+                if result == false then
+                    state.nightClockSeenDay = true
+                    state.nightClockFallback = false
+                    state.nightClockCandidateSince = nil
+                end
+                return result
+            end
+
+            local child = object:FindFirstChild(name)
+            if child and (child:IsA("BoolValue") or child:IsA("IntValue")
+                or child:IsA("NumberValue") or child:IsA("StringValue")) then
+                local valueOk, childValue = pcall(function() return child.Value end)
+                result = valueOk and state.normalizeNightValue(childValue, invert) or nil
+                if result ~= nil then
+                    if result == false then
+                        state.nightClockSeenDay = true
+                        state.nightClockFallback = false
+                        state.nightClockCandidateSince = nil
+                    end
+                    return result
                 end
             end
         end
     end
 
-    local phaseNames = { "Phase", "Cycle", "TimeOfDay", "DayNightState", "WorldPhase" }
+    local phaseNames = {
+        "Phase", "CurrentPhase", "GamePhase", "Cycle", "CycleState", "TimeOfDay",
+        "TimeState", "DayNightState", "DayNightCycle", "WorldPhase",
+    }
     for _, object in ipairs(sources) do
         for _, name in ipairs(phaseNames) do
             local ok, value = pcall(object.GetAttribute, object, name)
             if ok and type(value) == "string" then
-                local text = string.lower(value)
-                if string.find(text, "night", 1, true) then return true end
-                if string.find(text, "day", 1, true)
-                    or string.find(text, "dawn", 1, true)
-                    or string.find(text, "morning", 1, true) then
+                local phase = string.lower(value)
+                if string.find(phase, "night", 1, true) then return true end
+                if string.find(phase, "day", 1, true)
+                    or string.find(phase, "dawn", 1, true)
+                    or string.find(phase, "morning", 1, true) then
+                    state.nightClockSeenDay = true
+                    state.nightClockFallback = false
+                    state.nightClockCandidateSince = nil
+                    return false
+                end
+            end
+
+            local child = object:FindFirstChild(name)
+            if child and child:IsA("StringValue") then
+                local phase = string.lower(child.Value)
+                if string.find(phase, "night", 1, true) then return true end
+                if string.find(phase, "day", 1, true)
+                    or string.find(phase, "dawn", 1, true)
+                    or string.find(phase, "morning", 1, true) then
+                    state.nightClockSeenDay = true
+                    state.nightClockFallback = false
+                    state.nightClockCandidateSince = nil
                     return false
                 end
             end
         end
     end
 
-    -- Unknown phase is treated as daytime. The game's custom lighting can use
-    -- a nighttime ClockTime while the actual gameplay phase is visibly day.
-    return false
+    -- Use ClockTime only after this execution has observed a real daytime clock
+    -- window. This keeps the old false-night Day 1 startup case from returning.
+    local clock = tonumber(Lighting.ClockTime)
+    if clock ~= nil then
+        local dayClock = clock >= 6.25 and clock < 17.75
+        local nightClock = clock >= 18.25 or clock < 5.75
+        local now = os.clock()
+        if dayClock then
+            state.nightClockSeenDay = true
+            state.nightClockFallback = false
+            state.nightClockCandidateSince = nil
+        elseif nightClock and state.nightClockSeenDay then
+            if state.nightClockCandidateSince == nil then
+                state.nightClockCandidateSince = now
+            elseif now - state.nightClockCandidateSince >= 0.65 then
+                state.nightClockFallback = true
+            end
+        else
+            state.nightClockCandidateSince = nil
+        end
+    end
+    return state.nightClockFallback == true
 end
 
 state.getNightCampCFrame = function()
@@ -1897,11 +1975,10 @@ state.getNightCampCFrame = function()
             or fire:FindFirstChild("InnerTouchZone", true)
             or getPart(fire)
         if center and center:IsA("BasePart") then
-            local standY = center.Position.Y + math.max(2.8, center.Size.Y * 0.5 + 2.5)
-            return CFrame.new(center.Position.X, standY, center.Position.Z)
+            return center.CFrame * CFrame.new(0, -40, 0)
         end
     end
-    return CFrame.new(CAMPFIRE_DROP + Vector3.new(0, 3, 0))
+    return CFrame.new(FARM_HOME)
 end
 
 --==============================================================
@@ -2278,6 +2355,7 @@ local SCRAP_NAMES = {
     ["metal chair"] = true,
     ["old car engine"] = true,
     ["washing machine"] = true,
+    ["cultist gem"] = true,
     ["cultist experiment"] = true,
     ["cultist prototype"] = true,
     ["ufo scrap"] = true,
@@ -2349,6 +2427,9 @@ local function isProtectedResourceItem(item)
     end
 
     local name = lowerName(item)
+    if string.find(name, "cultist", 1, true) and string.find(name, "gem", 1, true) then
+        return false
+    end
     for _, pattern in ipairs(PROTECTED_RESOURCE_PATTERNS) do
         if string.find(name, pattern, 1, true) then
             return true
@@ -4099,7 +4180,7 @@ end
 
 local function findOwnedNamedItem(itemName)
     for _, container in ipairs(ownedContainers()) do
-        local item = container and container:FindFirstChild(itemName)
+        local item = container and container:FindFirstChild(itemName, true)
         if item then
             return item
         end
@@ -4153,6 +4234,16 @@ local function getGroundPositionAroundCamp(offset)
     local center = firePart and firePart.Position or Vector3.new(0, 10, 0)
     local x = center.X + offset.X
     local z = center.Z + offset.Z
+    local map = workspace:FindFirstChild("Map")
+    local ground = map and map:FindFirstChild("Ground")
+    local grass = ground and ground:FindFirstChild("Grass", true)
+
+    -- Current live placement scripts use the Grass Y directly. This also avoids
+    -- raycasts landing on an existing bed, bench or campfire part.
+    if grass and grass:IsA("BasePart") then
+        return Vector3.new(x, grass.Position.Y, z), center
+    end
+
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     local character = getCharacter()
@@ -4170,35 +4261,35 @@ local function placeCampStructure(item, offset)
     if not isLive(RequestPlaceStructure) then refreshRemotes() end
     if not isLive(RequestPlaceStructure) then return false end
 
-    equipOwnedItem(item)
+    -- RequestPlaceStructure accepts the crafted Inventory instance directly.
+    -- Equipping it first can move/reparent the instance during validation.
     local base = offset or Vector3.new(35, 0, 0)
     local attempts = {
         base,
-        base + Vector3.new(5, 0, 0),
-        base + Vector3.new(-5, 0, 0),
-        base + Vector3.new(0, 0, 5),
-        base + Vector3.new(0, 0, -5),
+        base + Vector3.new(6, 0, 0),
+        base + Vector3.new(-6, 0, 0),
+        base + Vector3.new(0, 0, 6),
+        base + Vector3.new(0, 0, -6),
         Vector3.new(-base.Z, 0, base.X),
         Vector3.new(base.Z, 0, -base.X),
     }
 
     for _, tryOffset in ipairs(attempts) do
         if not item.Parent then return true end
-        local placePos, center = getGroundPositionAroundCamp(tryOffset)
-        placePos += Vector3.new(0, 0.15, 0)
-        local placeCF = CFrame.lookAt(placePos, Vector3.new(center.X, placePos.Y, center.Z))
+        local placePos = getGroundPositionAroundCamp(tryOffset)
+        local placeCF = CFrame.new(placePos)
         local placement = { Valid = true, CFrame = placeCF, Position = placePos }
-        local ok, response = callUtilityRemote(RequestPlaceStructure, 1.5, item, placement, placeCF)
+        local ok, response = callUtilityRemote(RequestPlaceStructure, 1.75, item, placement, placeCF)
         local accepted = ok and response ~= false
             and not (type(response) == "table" and response.Success == false)
         if accepted then
-            local deadline = os.clock() + 1.25
+            local deadline = os.clock() + 1.6
             repeat
                 if not item.Parent or worldHasCampStructure(item.Name) then return true end
                 task.wait(0.08)
             until os.clock() >= deadline
         end
-        task.wait(0.08)
+        task.wait(0.10)
     end
     return worldHasCampStructure(item.Name)
 end
@@ -4207,10 +4298,10 @@ end
 -- CraftingDatabase and the CraftingTable TierN UI. Do not invent Bench 6-8 if
 -- the current place only contains fewer tiers.
 state.KNOWN_BED_TIERS = {
-    ["Old Bed"] = 2,
-    ["Regular Bed"] = 3,
-    ["Good Bed"] = 4,
-    ["Giant Bed"] = 5,
+    ["Old Bed"] = 1,
+    ["Regular Bed"] = 2,
+    ["Good Bed"] = 3,
+    ["Giant Bed"] = 4,
 }
 
 state.KNOWN_BED_OFFSETS = {
@@ -4248,7 +4339,7 @@ state.discoverCampBuildQueue = function()
                         if bench then
                             maxBench = math.max(maxBench, bench)
                         elseif string.find(string.lower(name), "bed", 1, true) then
-                            local required = tier or state.KNOWN_BED_TIERS[name] or 1
+                            local required = state.KNOWN_BED_TIERS[name] or tier or 1
                             if not seenBeds[name] then
                                 seenBeds[name] = true
                                 table.insert(beds, { name = name, tier = required })
@@ -4300,7 +4391,7 @@ state.discoverCampBuildQueue = function()
 
     local queue = {}
     local bedIndex = 0
-    for tier = 2, maxBench do
+    for tier = 1, maxBench do
         local benchName = "Crafting Bench " .. tostring(tier)
         local wood, scrap = getCraftCost(benchName)
         if wood ~= nil and scrap ~= nil then
@@ -4391,17 +4482,19 @@ local function runCampBuildService()
             if not state.active or not state.autoFarm or state.strongholdControl or isNight() then break end
             if campBuildIsDone(spec) then continue end
 
+            -- A crafted bed must remain placeable even after its purchase already
+            -- consumed the required wood/scrap. Do not gate an owned bed on buying it again.
+            local ownedItem = spec.kind == "bed" and findOwnedNamedItem(spec.name) or nil
             local woodCost, scrapCost = getCraftCost(spec.name)
-            if woodCost == nil or scrapCost == nil then
-                -- A UI-only entry that is not a craftable blueprint must not
-                -- block later real tiers/beds.
+            if not ownedItem and (woodCost == nil or scrapCost == nil) then
                 continue
             end
-            local totalWood = tonumber(campground:GetAttribute("TotalWood")) or 0
-            local totalScrap = tonumber(campground:GetAttribute("TotalScrap")) or 0
-            if totalWood < woodCost or totalScrap < scrapCost then
-                -- Keep scanning: a later zero-cost/owned structure may still be placeable.
-                continue
+            if not ownedItem then
+                local totalWood = tonumber(campground:GetAttribute("TotalWood")) or 0
+                local totalScrap = tonumber(campground:GetAttribute("TotalScrap")) or 0
+                if totalWood < woodCost or totalScrap < scrapCost then
+                    continue
+                end
             end
 
             if spec.kind == "bench" then
@@ -4412,7 +4505,7 @@ local function runCampBuildService()
                     task.wait(0.28)
                 end
             else
-                local item = findOwnedNamedItem(spec.name)
+                local item = ownedItem
                 if not item and state.craftCampBlueprint(spec.name) then
                     local deadline = os.clock() + 2.25
                     repeat
@@ -4790,6 +4883,15 @@ track(RunService.Heartbeat:Connect(function()
         state.nightCampLock = false
         state.releaseFarmForStronghold()
     else
+        if state.nightCampLock then
+            local character = getCharacter()
+            local root = getRoot()
+            local hideCF = state.getNightCampCFrame()
+            if character and root and (root.Position - hideCF.Position).Magnitude > 0.75 then
+                cancelFarmTween()
+                pcall(character.PivotTo, character, hideCF)
+            end
+        end
         lockFarmCharacter()
     end
 end))
