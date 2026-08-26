@@ -259,13 +259,15 @@ local state = {
     strongholdAttemptActive = false,
 
     range = 200,
-    maxInflight = 16,
+    maxInflight = 8,
     inflight = 0,
-    targetCooldown = 0.08,
-    workerDelay = 0.012,
-    combatScanInterval = 0.05,
+    targetCooldown = 0.12,
+    workerDelay = 0.02,
+    combatScanInterval = 0.08,
     capturedTokens = {},
     hitSequence = 0,
+    lastAttackAccepted = 0,
+    lastAttackRejected = 0,
 
     maxHunger = 200,
     eatThreshold = 160,
@@ -299,8 +301,9 @@ local state = {
     campfireMaintainThreshold = 0.80,
     fireDerivedLevel = math.clamp(tonumber(G.SB99_FIRE_DERIVED_LEVEL) or 1, 1, 6),
     fireLastTarget = tonumber(G.SB99_FIRE_LAST_TARGET),
-    resourcePassLimit = 12,
-    resourcePickupRange = 360,
+    resourcePassLimit = 8,
+    resourcePickupRange = 220,
+    resourcePauseUntil = 0,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
     childRescueMaxAttempts = 5,
@@ -1311,22 +1314,9 @@ local KNOWN_TOKENS = {
     ["Admin Axe"] = "116_7367831688",
 }
 
-local function makeHitId(weapon, isTree)
-    local token = state.capturedTokens[weapon.Name] or KNOWN_TOKENS[weapon.Name]
-    if not isTree then
-        return token or ("1_" .. tostring(weapon:GetAttribute("Owner") or player.UserId))
-    end
-
-    state.hitSequence = (tonumber(state.hitSequence) or 0) + 1
-    if state.hitSequence > 1000000000 then
-        state.hitSequence = 1
-    end
-
-    local suffix = type(token) == "string" and string.match(token, "^[^_]+_(.+)$") or nil
-    if suffix == nil or suffix == "" then
-        suffix = tostring(weapon:GetAttribute("Owner") or player.UserId)
-    end
-    return tostring(state.hitSequence) .. "_" .. suffix
+local function makeHitId(weapon)
+    return state.capturedTokens[weapon.Name]
+        or KNOWN_TOKENS[weapon.Name]
 end
 
 local attackCooldown = setmetatable({}, { __mode = "k" })
@@ -1366,15 +1356,15 @@ local function attackTarget(target, isTree)
         return
     end
 
-    local hitId = makeHitId(weapon, isTree)
+    local hitId = makeHitId(weapon)
     if not hitId then
         return
     end
 
     attackCooldown[target] = now
+    state.hitSequence = (tonumber(state.hitSequence) or 0) + 1
     ensureAxeArmed(weapon)
 
-    local remote = ToolDamageObject
     local targetPart = nil
     if isTree then
         local trunk = target:FindFirstChild("Trunk", true)
@@ -1383,12 +1373,27 @@ local function attackTarget(target, isTree)
         end
     end
     targetPart = targetPart or getPart(target)
-    local attackCFrame = targetPart and targetPart.CFrame or root.CFrame
 
-    -- RemoteEvents do not yield, so avoid spawning thousands of tiny tasks.
+    local attackCFrame = root.CFrame
+    if targetPart then
+        local direction = targetPart.Position - root.Position
+        if direction.Magnitude > 0.001 then
+            local lookOk, lookCF = pcall(CFrame.lookAt, root.Position, targetPart.Position)
+            if lookOk then
+                attackCFrame = lookCF
+            end
+        end
+    end
+
+    local remote = ToolDamageObject
     if remote:IsA("RemoteEvent") then
         state.inflight = state.inflight + 1
-        pcall(remote.FireServer, remote, target, weapon, hitId, attackCFrame)
+        local ok = pcall(remote.FireServer, remote, target, weapon, hitId, attackCFrame)
+        if ok then
+            state.lastAttackAccepted = os.clock()
+        else
+            state.lastAttackRejected = os.clock()
+        end
         state.inflight = math.max(0, state.inflight - 1)
         return
     end
@@ -1400,28 +1405,28 @@ local function attackTarget(target, isTree)
     state.inflight = state.inflight + 1
     local released = false
     local function releaseInflight()
-        if released then
-            return
-        end
+        if released then return end
         released = true
         state.inflight = math.max(0, state.inflight - 1)
     end
 
-    -- Bound both the inflight counter and the suspended coroutine. Executors
-    -- that support task.cancel will not accumulate permanently hung invokes.
     local attackThread
     attackThread = task.spawn(function()
-        pcall(remote.InvokeServer, remote, target, weapon, hitId, attackCFrame)
+        local ok, response = pcall(remote.InvokeServer, remote, target, weapon, hitId, attackCFrame)
+        if ok and response ~= false then
+            state.lastAttackAccepted = os.clock()
+        else
+            state.lastAttackRejected = os.clock()
+        end
         releaseInflight()
     end)
 
     task.delay(1, function()
-        if released then
-            return
-        end
+        if released then return end
         if type(task.cancel) == "function" and attackThread then
             pcall(task.cancel, attackThread)
         end
+        state.lastAttackRejected = os.clock()
         releaseInflight()
     end)
 end
@@ -1569,20 +1574,18 @@ task.spawn(function()
             end
 
             if state.killAura then
-                for _, info in ipairs(cachedEntities) do
-                    if state.inflight >= state.maxInflight then
-                        break
-                    end
-                    attackTarget(info.target, false)
+                local budget = state.autoFarm and 3 or 5
+                for index = 1, math.min(budget, #cachedEntities) do
+                    if state.inflight >= state.maxInflight then break end
+                    attackTarget(cachedEntities[index].target, false)
                 end
             end
 
             if state.autoChop then
-                for _, info in ipairs(cachedTrees) do
-                    if state.inflight >= state.maxInflight then
-                        break
-                    end
-                    attackTarget(info.target, true)
+                local budget = state.autoFarm and 1 or 3
+                for index = 1, math.min(budget, #cachedTrees) do
+                    if state.inflight >= state.maxInflight then break end
+                    attackTarget(cachedTrees[index].target, true)
                 end
             end
         else
@@ -1590,8 +1593,6 @@ task.spawn(function()
             cachedTrees = {}
         end
 
-        -- Fast path only while combat is enabled. This keeps the UI and
-        -- low-end/mobile clients responsive when both combat toggles are off.
         task.wait((state.killAura or state.autoChop) and state.workerDelay or 0.08)
     end
 end)
@@ -1603,20 +1604,53 @@ end)
 --==============================================================
 
 local function isNight()
-    local objects = { workspace, Lighting }
-    local names = { "IsNight", "Night", "Nighttime" }
+    local sources = {}
+    local map = workspace:FindFirstChild("Map")
+    local campground = map and map:FindFirstChild("Campground")
+    table.insert(sources, workspace)
+    if map then table.insert(sources, map) end
+    if campground then table.insert(sources, campground) end
+    table.insert(sources, Lighting)
 
-    for _, object in ipairs(objects) do
-        for _, name in ipairs(names) do
-            local value = object:GetAttribute(name)
-            if type(value) == "boolean" then
-                return value
+    local boolNames = {
+        "IsNight", "Night", "Nighttime", "IsNightTime", "NightActive", "NightStarted",
+    }
+    for _, object in ipairs(sources) do
+        for _, name in ipairs(boolNames) do
+            local ok, value = pcall(object.GetAttribute, object, name)
+            if ok then
+                if type(value) == "boolean" then
+                    return value
+                elseif type(value) == "number" and (value == 0 or value == 1) then
+                    return value == 1
+                elseif type(value) == "string" then
+                    local text = string.lower(value)
+                    if text == "true" or text == "night" then return true end
+                    if text == "false" or text == "day" then return false end
+                end
             end
         end
     end
 
-    local clock = Lighting.ClockTime
-    return clock >= 18 or clock < 6
+    local phaseNames = { "Phase", "Cycle", "TimeOfDay", "DayNightState", "WorldPhase" }
+    for _, object in ipairs(sources) do
+        for _, name in ipairs(phaseNames) do
+            local ok, value = pcall(object.GetAttribute, object, name)
+            if ok and type(value) == "string" then
+                local text = string.lower(value)
+                if string.find(text, "night", 1, true) then return true end
+                if string.find(text, "day", 1, true)
+                    or string.find(text, "dawn", 1, true)
+                    or string.find(text, "morning", 1, true) then
+                    return false
+                end
+            end
+        end
+    end
+
+    -- Unknown phase is treated as daytime. The game's custom lighting can use
+    -- a nighttime ClockTime while the actual gameplay phase is visibly day.
+    return false
 end
 
 --==============================================================
@@ -1996,75 +2030,119 @@ local function isScrapResource(item)
 local resourceCooldown = setmetatable({}, { __mode = "k" })
 
 local function resourceTarget(item, campfireMaxed, fuelRatio)
-    -- Before Level 6, every usable fuel source is reserved for the fire.
     if not campfireMaxed then
-        return isFuelResource(item) and CAMPFIRE_DROP or nil
+        return isFuelResource(item) and "fire" or nil
     end
 
-    -- At Level 6, logs and scrappable/furniture/metal become crafting
-    -- resources even if the game also considers some furniture fuel.
     if isLogResource(item) or isScrapResource(item) then
-        return SCRAP_DROP
+        return "scrap"
     end
 
-    -- Coal/canisters/oil/biofuel are kept for maintenance only.
     if isFuelResource(item)
         and fuelRatio ~= nil
         and fuelRatio < state.campfireMaintainThreshold then
-        return CAMPFIRE_DROP
+        return "fire"
     end
     return nil
 end
 
+local function getPhysicalFireDrop()
+    local fire = getMainFire()
+    local center = fire and fire:FindFirstChild("Center", true)
+    if center and center:IsA("BasePart") then
+        return center.CFrame * CFrame.new(0, 30, 0), center.Position
+    end
+    return CFrame.new(CAMPFIRE_DROP + Vector3.new(0, 30, 0)), CAMPFIRE_DROP
+end
+
+local function getPhysicalScrapDrop()
+    local map = workspace:FindFirstChild("Map")
+    local campground = map and map:FindFirstChild("Campground")
+    local scrapper = campground and campground:FindFirstChild("Scrapper")
+    local dashed = scrapper and scrapper:FindFirstChild("DashedLine", true)
+    if dashed and dashed:IsA("BasePart") then
+        return dashed.CFrame * CFrame.new(0, 30, 0), dashed.Position
+    end
+    return CFrame.new(SCRAP_DROP + Vector3.new(0, 30, 0)), SCRAP_DROP
+end
+
+local function getCampTotals()
+    local map = workspace:FindFirstChild("Map")
+    local campground = map and map:FindFirstChild("Campground")
+    if not campground then return nil, nil end
+    return tonumber(campground:GetAttribute("TotalWood")), tonumber(campground:GetAttribute("TotalScrap"))
+end
+
 local function burnItemIntoCampfire(item)
-    if not item or not item.Parent then
+    if not item or not item.Parent then return false end
+    local fire = getMainFire()
+    if not fire then return false end
+
+    local beforeFuel = tonumber(fire:GetAttribute("FuelRemaining")) or 0
+    local beforeLevel = getCampfireLevel() or tonumber(state.fireDerivedLevel) or 1
+    local dropCF = getPhysicalFireDrop()
+    local moved = dragItemTo(item, dropCF)
+    if not moved and item.Parent then
         return false
     end
 
-    local mainFire = getMainFire()
-    if not mainFire then
+    local deadline = os.clock() + 2
+    repeat
+        task.wait(0.10)
+        local liveFire = getMainFire()
+        if liveFire then
+            local afterFuel = tonumber(liveFire:GetAttribute("FuelRemaining")) or 0
+            local afterLevel = getCampfireLevel() or beforeLevel
+            if afterFuel > beforeFuel + 0.001 or afterLevel > beforeLevel then
+                return true
+            end
+        end
+    until not state.active or os.clock() >= deadline
+
+    return false
+end
+
+local function routeItemToScrapper(item)
+    if not item or not item.Parent then return false end
+    local beforeWood, beforeScrap = getCampTotals()
+    local dropCF = getPhysicalScrapDrop()
+    local moved = dragItemTo(item, dropCF)
+    if not moved and item.Parent then
         return false
     end
 
-    if not isLive(RequestBurnItem) then
-        refreshRemotes()
-    end
-    if not isLive(RequestBurnItem) then
-        return false
-    end
-
-    if RequestBurnItem:IsA("RemoteEvent") then
-        local ok = pcall(RequestBurnItem.FireServer, RequestBurnItem, mainFire, item)
-        return ok
-    end
-
-    if RequestBurnItem:IsA("RemoteFunction") then
-        local ok, response = callUtilityRemote(RequestBurnItem, 1.5, mainFire, item)
-        return ok and response ~= false
-    end
+    local deadline = os.clock() + 1.8
+    repeat
+        task.wait(0.10)
+        local wood, scrap = getCampTotals()
+        if beforeWood ~= nil and wood ~= nil and wood > beforeWood then
+            return true
+        end
+        if beforeScrap ~= nil and scrap ~= nil and scrap > beforeScrap then
+            return true
+        end
+    until not state.active or os.clock() >= deadline
 
     return false
 end
 
 local function runResourceService()
+    local now = os.clock()
     if not state.active
         or not state.smartResources
         or state.resourceServiceRunning
         or state.foodServiceRunning
         or state.childRescueRunning
-        or state.strongholdControl then
+        or state.strongholdControl
+        or now < (tonumber(state.resourcePauseUntil) or 0) then
         return
     end
 
     state.resourceServiceRunning = true
-    local serviceOk = pcall(function()
-        local level = getCampfireLevel()
-        if level == nil then
-            return
-        end
+    pcall(function()
+        local level = getCampfireLevel() or tonumber(state.fireDerivedLevel) or 1
         local campfireMaxed = level >= state.campfireTargetLevel
         local fuelRatio = getCampfireFuelRatio()
-        local now = os.clock()
 
         if campfireMaxed
             and state.autoFarm
@@ -2077,102 +2155,65 @@ local function runResourceService()
         end
 
         local items = workspace:FindFirstChild("Items")
-        if not items then
-            return
-        end
-
         local root = getRoot()
+        if not items or not root then return end
+
         local candidates = {}
         for _, item in ipairs(items:GetChildren()) do
             if item.Parent == items and (not resourceCooldown[item] or resourceCooldown[item] <= now) then
                 local target = resourceTarget(item, campfireMaxed, fuelRatio)
                 if target then
                     local part = getPart(item)
-                    local distance = math.huge
-                    if root and part then
-                        distance = (part.Position - root.Position).Magnitude
+                    if part then
+                        local distance = (part.Position - root.Position).Magnitude
+                        if distance <= state.resourcePickupRange then
+                            table.insert(candidates, {
+                                item = item,
+                                target = target,
+                                distance = distance,
+                            })
+                        end
                     end
-                    table.insert(candidates, {
-                        item = item,
-                        target = target,
-                        distance = distance,
-                        firePriority = target == CAMPFIRE_DROP,
-                    })
                 end
             end
         end
 
         table.sort(candidates, function(a, b)
-            if a.firePriority ~= b.firePriority then
-                return a.firePriority
+            if a.target ~= b.target then
+                return a.target == "fire"
             end
             return a.distance < b.distance
         end)
 
         local processed = 0
         for _, candidate in ipairs(candidates) do
-            if not state.active or not state.smartResources or state.strongholdControl then
-                break
-            end
-
+            if not state.active or not state.smartResources or state.strongholdControl then break end
             local item = candidate.item
-            local target = candidate.target
             if item and item.Parent == items then
-                -- Remote burning does not require dragging the object through
-                -- the map. Scrap/log routing is proximity-aware so nearby drops
-                -- from the current patrol tree cannot be starved by far items.
-                if target ~= CAMPFIRE_DROP and candidate.distance > state.resourcePickupRange then
-                    continue
+                resourceCooldown[item] = os.clock() + 1
+                local handled = candidate.target == "fire"
+                    and burnItemIntoCampfire(item)
+                    or routeItemToScrapper(item)
+
+                if not handled then
+                    resourceCooldown[item] = os.clock() + 3
+                    state.resourcePauseUntil = os.clock() + 0.8
+                    break
                 end
 
-                resourceCooldown[item] = os.clock() + 0.8
-                local handled = false
-                if target == CAMPFIRE_DROP then
-                    -- The live game accepts fuel most reliably after normal drag
-                    -- ownership and a physical drop at the fire. Do not remotely
-                    -- burn objects from across the map.
-                    handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
-                    task.wait(0.10)
-
-                    if item.Parent == items then
-                        local part = getPart(item)
-                        local nearFire = part and (part.Position - CAMPFIRE_DROP).Magnitude <= 24
-                        if nearFire then
-                            handled = burnItemIntoCampfire(item) or handled
-                        end
-                    else
-                        handled = true
-                    end
-                else
-                    handled = dragItemTo(item, CFrame.new(target))
+                processed = processed + 1
+                if candidate.target == "fire" then
+                    level = getCampfireLevel() or level
+                    campfireMaxed = level >= state.campfireTargetLevel
+                    fuelRatio = getCampfireFuelRatio()
                 end
-
-                if handled then
-                    processed = processed + 1
-                    if target == CAMPFIRE_DROP then
-                        task.wait(0.08)
-                        local updatedLevel = getCampfireLevel()
-                        if updatedLevel ~= nil and updatedLevel >= state.campfireTargetLevel then
-                            campfireMaxed = true
-                        end
-                        fuelRatio = getCampfireFuelRatio()
-                    else
-                        task.wait(0.03)
-                    end
-                end
+                task.wait(0.05)
             end
 
-            if processed >= state.resourcePassLimit then
-                break
-            end
+            if processed >= state.resourcePassLimit then break end
         end
     end)
-
     state.resourceServiceRunning = false
-    if not serviceOk then
-        -- Retry quickly after a transient streamed-instance race.
-        task.wait(0.05)
-    end
 end
 
 local promptOriginals = G.SB99_PROMPT_ORIGINALS
@@ -4369,10 +4410,10 @@ task.spawn(function()
                                 task.wait(0.10)
                             end
 
-                            local chopDeadline = os.clock() + 3
+                            local chopDeadline = os.clock() + 1.6
                             repeat
                                 attackTarget(tree, true)
-                                task.wait(0.09)
+                                task.wait(0.12)
                             until not state.autoFarm
                                 or state.strongholdControl
                                 or not smallTreeAvailable(tree)
