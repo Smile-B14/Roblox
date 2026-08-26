@@ -1,8 +1,7 @@
-name: SB99 guarded polish
+name: SB99 Remote Guard Patch
 
 on:
   push:
-    branches: [main]
     paths:
       - '.github/workflows/sb99-polish.yml'
 
@@ -10,31 +9,39 @@ permissions:
   contents: write
 
 jobs:
-  polish:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Patch utility remote single-flight guard
+
+      - name: Harden utility RemoteFunction single-flight behavior
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
-          
+          import re
+
           path = Path('99 Nights Helper Godmode')
-          expected = 'fad489d80b4297ae9d4fb0065360cc6391507d45'
-          current = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
-          if current != expected:
-              raise SystemExit(f'target changed: expected {expected}, got {current}')
-          
+          workflow = Path('.github/workflows/sb99-polish.yml')
+          expected_blob = 'fad489d80b4297ae9d4fb0065360cc6391507d45'
+          actual_blob = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+
+          if actual_blob != expected_blob:
+              print(f'Target changed before patch: expected {expected_blob}, got {actual_blob}. Leaving target untouched.')
+              workflow.unlink(missing_ok=True)
+              raise SystemExit(0)
+
           text = path.read_text(encoding='utf-8')
           start_marker = 'local invokeLocks = setmetatable({}, { __mode = "k" })'
           end_marker = '-- No Hunger spoof in the final build.'
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit('Utility remote section markers changed; refusing unsafe patch')
+
           start = text.index(start_marker)
           end = text.index(end_marker, start)
-          
           replacement = '''local invokeLocks = setmetatable({}, { __mode = "k" })
 
 local function callUtilityRemote(remote, timeoutSeconds, ...)
@@ -51,12 +58,12 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
         return false, nil
     end
 
-    -- RemoteFunction calls are single-flight per remote instance. Roblox/Luau
-    -- cannot cancel a yielded InvokeServer, so a timed-out call intentionally
-    -- keeps this lock until its coroutine really returns. Retrying while an old
-    -- invocation is still yielded would slowly accumulate stuck coroutines.
-    -- If the game replaces the remote, refreshRemotes supplies a new Instance
-    -- with an independent lock, so normal recovery still works.
+    -- Roblox/Luau cannot cancel a yielded InvokeServer. Keep exactly one
+    -- in-flight invocation per RemoteFunction until that coroutine actually
+    -- returns. A timeout only stops the caller from waiting; it does not start
+    -- another invocation that could become another permanently stuck thread.
+    -- If the game replaces the remote Instance, refreshRemotes naturally gives
+    -- the replacement its own independent single-flight lock.
     if invokeLocks[remote] ~= nil then
         return false, nil
     end
@@ -85,8 +92,6 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
     end
 
     if not done then
-        -- Keep the token locked. The spawned InvokeServer is still alive and
-        -- only that invocation is allowed to release its own lock later.
         return false, nil
     end
 
@@ -94,49 +99,56 @@ local function callUtilityRemote(remote, timeoutSeconds, ...)
 end
 
 '''
-          
-          updated = text[:start] + replacement + text[end:]
-          if updated == text:
-              raise SystemExit('no change produced')
-          
-          # Guardrails: preserve every major feature and avoid unbounded startup waits.
-          required = [
+
+          patched = text[:start] + replacement + text[end:]
+          if patched == text:
+              raise SystemExit('No target change produced')
+          if 'invokeCooldowns' in patched or 'expiresAt' in patched:
+              raise SystemExit('Old expiring invocation guard still present')
+
+          required = (
+              'Smile B - 99 Nights Helper',
               'local function attemptAutoEat()',
               'local function attackTarget(target, isTree)',
               'local function runFoodService()',
               'local function isNight()',
               'local function enableFarm()',
               'local function disableFarm()',
-              'Smile B - 99 Nights Helper',
               'Godmode Active',
-          ]
-          for token_text in required:
-              if token_text not in updated:
-                  raise SystemExit(f'missing required section: {token_text}')
-          if 'invokeCooldowns' in updated:
-              raise SystemExit('stale invokeCooldowns reference remains')
-          
-          # Every WaitForChild in this helper must have a finite timeout argument.
-          import re
-          for match in re.finditer(r'WaitForChild\(([^\n\)]*)\)', updated):
+              'Credits: Smile B',
+              'updateButtons()',
+          )
+          for marker in required:
+              if marker not in patched:
+                  raise SystemExit(f'Missing required section: {marker}')
+
+          unbounded = []
+          for match in re.finditer(r':WaitForChild\(([^\n\)]*)\)', patched):
               if ',' not in match.group(1):
-                  raise SystemExit(f'unbounded WaitForChild: {match.group(0)}')
-          
-          path.write_text(updated, encoding='utf-8')
+                  unbounded.append(match.group(0))
+          if unbounded:
+              raise SystemExit(f'Unbounded WaitForChild found: {unbounded[:3]}')
+
+          if len(patched) < 30000 or patched.count('local function ') < 20:
+              raise SystemExit('Unexpected structural shrink detected')
+
+          path.write_text(patched, encoding='utf-8')
+          workflow.unlink(missing_ok=True)
           PY
-      - name: Verify scoped diff
+
+      - name: Commit guarded improvement
         shell: bash
         run: |
-          git diff --check
-          git diff --exit-code -- .github/workflows/sb99-polish.yml >/dev/null || true
-          test -n "$(git diff -- '99 Nights Helper Godmode')"
-          changed="$(git diff --name-only)"
-          test "$changed" = "99 Nights Helper Godmode"
-      - name: Commit improvement
-        shell: bash
-        run: |
-          git config user.name 'Smile B Script Polish'
-          git config user.email 'actions@users.noreply.github.com'
-          git add -- '99 Nights Helper Godmode'
-          git commit -m 'fix: prevent hung remote coroutine buildup'
+          git config user.name "Smile B Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          changed="$(git diff --cached --name-only)"
+          echo "$changed" | grep -Fx '99 Nights Helper Godmode'
+          echo "$changed" | grep -Fx '.github/workflows/sb99-polish.yml'
+          test "$(echo "$changed" | wc -l)" -eq 2
+          git commit -m "fix: prevent hung remote coroutine buildup"
           git push origin HEAD:main
