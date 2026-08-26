@@ -1,0 +1,112 @@
+name: SB99 place-backed repair v3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sb99-place-backed-fix-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch, compile, verify, guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          EXPECTED='2975d6b5ddd01c80589f593aa20d93aa0b2fd21f'
+
+          actual="$(git hash-object "$TARGET")"
+          test "$actual" = "$EXPECTED" || { echo "stale target before patch: $actual"; exit 20; }
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.sb99_place_fix.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '# Useful runtime state in compact status, without adding another debug UI.'
+          start = s.find(marker)
+          if start >= 0:
+              end = s.find("TARGET.write_text(s, encoding='utf-8')", start)
+              if end < 0:
+                  raise SystemExit('cannot locate patch tail')
+              s = s[:start] + s[end:]
+              p.write_text(s, encoding='utf-8')
+          PY
+
+          python3 .sb99_place_fix.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('99 Nights Helper Godmode')
+          s = p.read_text(encoding='utf-8')
+
+          replacements = []
+          replacements.append((
+          '''        -- Grab any already-streamed child first.\n        storeCurrentlyLoaded()\n\n        -- Then visit each MissingKids position and immediately bag whatever\n''',
+          '''        -- Grab any already-streamed child first. Children already stored by a\n        -- previous retry remain in ItemBag; never unload a partial rescue set.\n        storeCurrentlyLoaded()\n\n        -- Then visit each MissingKids position and immediately bag whatever\n''', 'child intro'))
+          replacements.append((
+          '''            if verifiedChildCount() + (function()\n                local n = 0\n                for _ in pairs(storedNames) do n = n + 1 end\n                return n\n            end)() >= 4 then\n                break\n            end\n''',
+          '''            if verifiedChildCount() + #getBaggedChildren() >= 4 then\n                break\n            end\n''', 'child count'))
+          replacements.append((
+          '''        if next(usedBags) ~= nil or #getBaggedChildren() > 0 then\n            dropChildrenAtCamp(usedBags)\n        end\n\n        task.wait(1)\n        getUnrescuedChildren()\n        success = verifiedChildCount() >= 4\n''',
+          '''        local alreadyVerified = verifiedChildCount()\n        local baggedCount = #getBaggedChildren()\n        local neededInBag = math.max(0, 4 - alreadyVerified)\n\n        -- Keep partial progress in the sack between attempts. Only return to\n        -- camp once every remaining child is actually stored.\n        if neededInBag == 0 then\n            success = true\n        elseif baggedCount >= neededInBag then\n            dropChildrenAtCamp(usedBags)\n            local verifyDeadline = os.clock() + 5\n            repeat\n                task.wait(0.2)\n                getUnrescuedChildren()\n                success = verifiedChildCount() >= 4\n            until success or not state.autoFarm or os.clock() >= verifyDeadline\n        else\n            success = false\n        end\n''', 'partial child drop'))
+          replacements.append((
+          '''    local before = getSackStoredCount(sack)\n    local ok, response = callUtilityRemote(RequestBagStoreItem, 2, sack, child)\n''',
+          '''    local before = getSackStoredCount(sack)\n    equipOwnedItem(sack)\n\n    local client = getGameClient()\n    local interactionHandler = client and client.InteractionHandler\n    local interactions = interactionHandler and interactionHandler.Interactions\n    if interactions and type(interactions.CanBeBagged) == "function" then\n        pcall(interactions.CanBeBagged, child)\n        local interactionDeadline = os.clock() + 1\n        repeat\n            if childStoredInItemBag(childName) or getSackStoredCount(sack) > before then\n                state.childRescueObserved[childName] = true\n                return true\n            end\n            task.wait(0.06)\n        until not state.active or os.clock() >= interactionDeadline\n        child = reacquireChild(childName) or child\n        if not child or not child.Parent then\n            return childStoredInItemBag(childName)\n        end\n    end\n\n    local ok, response = callUtilityRemote(RequestBagStoreItem, 2, sack, child)\n''', 'exact CanBeBagged path'))
+
+          for old, new, label in replacements:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1, got {count}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          git diff --check
+
+          check() { grep -q "$1" "$TARGET" || { echo "missing check: $1"; exit 30; }; }
+          check 'ApplyLocalDamage'
+          check 'inventoryHandler.RequestEquipItem'
+          check 'RequestScrapItem'
+          check 'GetAttribute("BurnFuel")'
+          check 'remaining <= 1'
+          check 'root.Position.Y < -20'
+          check 'baggedCount >= neededInBag'
+          check 'interactions.CanBeBagged'
+          if grep -q 'item:GetAttribute("Scrappable") == true' "$TARGET"; then
+            echo 'old boolean Scrappable check still present'; exit 31
+          fi
+
+          git clone --depth 1 https://github.com/luau-lang/luau.git /tmp/luau
+          cmake -S /tmp/luau -B /tmp/luau/build -DCMAKE_BUILD_TYPE=Release >/dev/null
+          cmake --build /tmp/luau/build --target Luau.Compile -j2 >/dev/null
+          /tmp/luau/build/luau-compile "$TARGET" >/dev/null
+
+          git fetch origin main
+          remote_head="$(git rev-parse origin/main)"
+          test "$remote_head" = "$GITHUB_SHA" || { echo "main advanced during validation"; exit 21; }
+          remote_blob="$(git rev-parse "origin/main:$TARGET")"
+          test "$remote_blob" = "$EXPECTED" || { echo "target changed during validation: $remote_blob"; exit 22; }
+
+          rm -f .sb99_place_fix.py \
+            .github/workflows/sb99-place-backed-fix.yml \
+            .github/workflows/sb99-place-backed-fix-v2.yml \
+            .github/workflows/sb99-place-backed-fix-v3.yml
+          git add "$TARGET" .sb99_place_fix.py \
+            .github/workflows/sb99-place-backed-fix.yml \
+            .github/workflows/sb99-place-backed-fix-v2.yml \
+            .github/workflows/sb99-place-backed-fix-v3.yml
+          git diff --cached --check
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: align farm combat and rescue with game client'
+          git push origin HEAD:main
