@@ -1,0 +1,57 @@
+name: SB99 final farm update
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-final-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          PATCH='.sb99_patch_overmap.py'
+          WORKFLOW='.github/workflows/sb99-final-apply.yml'
+          EXPECTED='ba92751b20e8dedc216079769020e0f1e9fc6f68'
+
+          test "$(git rev-parse HEAD:"$TARGET")" = "$EXPECTED"
+          python3 "$PATCH"
+          git diff --check
+
+          curl -fsSL 'https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip' -o /tmp/luau.zip
+          mkdir -p /tmp/luau
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+
+          grep -q 'FARM_PATROL_Y = 60' "$TARGET"
+          grep -q 'FARM_PLATFORM_Y = -54' "$TARGET"
+          grep -q 'CHILD_CAMP_DROP = Vector3.new(0, 15, 0)' "$TARGET"
+          grep -q 'SetGameplayPausedNotificationEnabled(false)' "$TARGET"
+          grep -q 'saplingInterval = 10' "$TARGET"
+          grep -q 'local CAMP_BUILD_QUEUE = {' "$TARGET"
+
+          git fetch origin main
+          test "$(git rev-parse origin/main:"$TARGET")" = "$EXPECTED"
+
+          rm -f "$PATCH" "$WORKFLOW"
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: upgrade farm traversal and camp automation'
+
+          git fetch origin main
+          test "$(git rev-parse origin/main:"$TARGET")" = "$EXPECTED"
+          git merge-base --is-ancestor origin/main HEAD
+          git push origin HEAD:main
