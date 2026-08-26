@@ -2528,7 +2528,11 @@ local function runStrongholdCycle()
         return false
     end
 
-    local baseline = getDiamondCount()
+    local currentCount = getDiamondCount()
+    -- Preserve one baseline across retries. If the UI updates late after a
+    -- successful chest collection, a retry must still compare against the
+    -- count captured before this Stronghold cycle began.
+    local baseline = state.strongholdBaseline or currentCount
     if baseline == nil then
         state.strongholdStatus = "Waiting for diamond count"
         state.strongholdControl = true
@@ -2537,10 +2541,12 @@ local function runStrongholdCycle()
     end
 
     if state.diamondScriptStart == nil then
-        state.diamondScriptStart = baseline
+        state.diamondScriptStart = currentCount or baseline
     end
 
-    state.strongholdBaseline = baseline
+    if state.strongholdBaseline == nil then
+        state.strongholdBaseline = baseline
+    end
     state.strongholdControl = true
     state.strongholdRunning = true
     state.strongholdStatus = "Entering stronghold"
@@ -2638,12 +2644,16 @@ task.spawn(function()
     while state.active do
         local countdown = getStrongholdCountdownText()
         state.strongholdCountdown = countdown
+        if state.diamondScriptStart == nil then
+            state.diamondScriptStart = getDiamondCount()
+        end
 
         local doorOpen = strongholdDoorOpen()
         if state.strongholdCycleComplete and not doorOpen then
             local normalized = string.lower(string.gsub(countdown, "%s+", ""))
             if normalized ~= "00s" and normalized ~= "0s" and normalized ~= "ready" then
                 state.strongholdCycleComplete = false
+                state.strongholdBaseline = nil
             end
         end
 
@@ -2651,6 +2661,7 @@ task.spawn(function()
             if state.strongholdControl or state.strongholdRunning then
                 state.strongholdControl = false
                 state.strongholdRunning = false
+                state.strongholdBaseline = nil
                 state.strongholdStatus = "Off"
                 if not state.autoFarm and state.strongholdManualKillRestore ~= nil then
                     state.killAura = state.strongholdManualKillRestore
@@ -2663,7 +2674,12 @@ task.spawn(function()
         elseif state.strongholdControl and not state.strongholdRunning and os.clock() >= state.strongholdRetryAt then
             runStrongholdCycle()
             task.wait(0.25)
-        elseif not state.strongholdCycleComplete and strongholdReady() and not state.strongholdRunning then
+        elseif not state.strongholdCycleComplete
+            and strongholdReady()
+            and not state.strongholdRunning
+            and not state.foodServiceRunning
+            and not state.childRescueRunning
+            and not state.campBuildRunning then
             runStrongholdCycle()
             task.wait(0.25)
         else
@@ -2840,7 +2856,7 @@ local function discoverMissingChildren()
     end
 
     for _, position in pairs(missing:GetAttributes()) do
-        if not state.autoFarm then
+        if not state.autoFarm or state.strongholdControl then
             break
         end
         if typeof(position) == "Vector3" then
@@ -2853,7 +2869,7 @@ local function discoverMissingChildren()
 end
 
 local function storeChildInSack(sack, child)
-    if not state.autoFarm or not sack or not sack.Parent or not child or not child.Parent then
+    if not state.autoFarm or state.strongholdControl or not sack or not sack.Parent or not child or not child.Parent then
         return false
     end
 
@@ -3045,6 +3061,7 @@ end
 
 local function runChildRescueAttempt()
     if not state.autoFarm
+        or state.strongholdControl
         or state.childRescueRunning
         or state.childRescueCompleted
         or state.childRescueAttempts >= state.childRescueMaxAttempts then
@@ -3252,7 +3269,7 @@ local function cookItem(item)
 end
 
 local function runFoodService()
-    if not state.autoFarm or state.foodServiceRunning then
+    if not state.autoFarm or state.foodServiceRunning or state.strongholdControl then
         return
     end
 
@@ -4050,6 +4067,8 @@ local function makeSection(titleText, defaultOpen)
 
     local function refreshOpen()
         content.Visible = open
+        content.Size = UDim2.new(1, 0, 0, 0)
+        content.AutomaticSize = open and Enum.AutomaticSize.Y or Enum.AutomaticSize.None
         button.Text = (open and "  ▼  " or "  ▶  ") .. titleText
     end
     refreshOpen()
