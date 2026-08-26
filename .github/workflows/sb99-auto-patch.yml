@@ -1,9 +1,9 @@
-name: SB99 reliability patch
+name: SB99 Food Reliability Patch
 
 on:
   push:
-    branches:
-      - main
+    paths:
+      - '.github/workflows/sb99-auto-patch.yml'
 
 permissions:
   contents: write
@@ -12,166 +12,181 @@ jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Patch helper safely
+      - name: Harden drag remotes and food verification
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import subprocess
           import re
 
-          path = Path("99 Nights Helper Godmode")
-          text = path.read_text(encoding="utf-8")
+          path = Path('99 Nights Helper Godmode')
+          expected_blob = '2cefff85f1091afddc3c494aec82b83d164f0ebf'
+          actual_blob = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+          workflow = Path('.github/workflows/sb99-auto-patch.yml')
+
+          if actual_blob != expected_blob:
+              print(f'Target changed before patch: expected {expected_blob}, got {actual_blob}. Leaving target untouched.')
+              workflow.unlink(missing_ok=True)
+              raise SystemExit(0)
+
+          text = path.read_text(encoding='utf-8')
 
           old_drag = '''local function dragItemTo(item, destination)
-    if not item or not item.Parent or not StartDragging or not StopDragging then
-        return false
-    end
+              if not item or not item.Parent or not StartDragging or not StopDragging then
+                  return false
+              end
 
-    local started = pcall(function()
-        StartDragging:FireServer(item)
-    end)
-    if not started then
-        return false
-    end
+              local started = pcall(function()
+                  StartDragging:FireServer(item)
+              end)
+              if not started then
+                  return false
+              end
 
-    task.wait(0.02)
+              task.wait(0.02)
 
-    local moved = pcall(function()
-        if item:IsA("Model") then
-            item:PivotTo(destination)
-        elseif item:IsA("BasePart") then
-            item.CFrame = destination
-        end
-    end)
+              local moved = pcall(function()
+                  if item:IsA("Model") then
+                      item:PivotTo(destination)
+                  elseif item:IsA("BasePart") then
+                      item.CFrame = destination
+                  end
+              end)
 
-    task.wait(0.02)
-    pcall(function()
-        StopDragging:FireServer()
-    end)
+              task.wait(0.02)
+              pcall(function()
+                  StopDragging:FireServer()
+              end)
 
-    return moved and item.Parent ~= nil
-end'''
+              return moved and item.Parent ~= nil
+          end'''
 
           new_drag = '''local function dragItemTo(item, destination)
-    if not item or not item.Parent then
-        return false
-    end
+              if not item or not item.Parent then
+                  return false
+              end
 
-    -- Drag remotes can be replaced during round transitions. Resolve stale
-    -- references on demand instead of waiting for the background refresh.
-    if not isLive(StartDragging) or not isLive(StopDragging) then
-        refreshRemotes()
-        if not isLive(StartDragging) or not isLive(StopDragging) then
-            return false
-        end
-    end
+              -- Drag remotes may be replaced during round transitions. Refresh
+              -- stale references immediately instead of waiting for the poller.
+              if not isLive(StartDragging) or not isLive(StopDragging) then
+                  refreshRemotes()
+                  if not isLive(StartDragging) or not isLive(StopDragging) then
+                      return false
+                  end
+              end
 
-    local startRemote = StartDragging
-    local stopRemote = StopDragging
-    local started = pcall(startRemote.FireServer, startRemote, item)
-    if not started then
-        return false
-    end
+              local startRemote = StartDragging
+              local stopRemote = StopDragging
+              local started = pcall(startRemote.FireServer, startRemote, item)
+              if not started then
+                  return false
+              end
 
-    task.wait(0.02)
+              task.wait(0.02)
 
-    local moved = pcall(function()
-        if item:IsA("Model") then
-            item:PivotTo(destination)
-        elseif item:IsA("BasePart") then
-            item.CFrame = destination
-        end
-    end)
+              local moved = pcall(function()
+                  if item:IsA("Model") then
+                      item:PivotTo(destination)
+                  elseif item:IsA("BasePart") then
+                      item.CFrame = destination
+                  end
+              end)
 
-    task.wait(0.02)
-    pcall(stopRemote.FireServer, stopRemote)
+              task.wait(0.02)
+              pcall(stopRemote.FireServer, stopRemote)
 
-    return moved and item.Parent ~= nil
-end'''
+              return moved and item.Parent ~= nil
+          end'''
 
           old_consume = '''    local before = getRealHunger()
 
-    -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
-    -- items that can produce Roblox's "trying to set locked parent!" warning.
-    -- The current server accepts nearby items through RequestConsumeItem directly.
-    local success, response = callUtilityRemote(RequestConsumeItem, 1.5, item)
+              -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
+              -- items that can produce Roblox's "trying to set locked parent!" warning.
+              -- The current server accepts nearby items through RequestConsumeItem directly.
+              local success, response = callUtilityRemote(RequestConsumeItem, 1.5, item)
 
-    task.wait(0.10)
+              task.wait(0.10)
 
-    local after = getRealHunger()
-    local accepted = success and (
-        response == true
-        or (type(response) == "table" and response.Success == true)
-        or (before ~= nil and after ~= nil and after > before)
-    )'''
+              local after = getRealHunger()
+              local accepted = success and (
+                  response == true
+                  or (type(response) == "table" and response.Success == true)
+                  or (before ~= nil and after ~= nil and after > before)
+              )'''
 
           new_consume = '''    local before = getRealHunger()
-    local consumeRemote = RequestConsumeItem
-    local remoteIsEvent = isLive(consumeRemote) and consumeRemote:IsA("RemoteEvent")
+              local consumeRemote = RequestConsumeItem
+              local remoteIsEvent = isLive(consumeRemote) and consumeRemote:IsA("RemoteEvent")
 
-    -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
-    -- items that can produce Roblox's "trying to set locked parent!" warning.
-    -- For RemoteEvents, FireServer succeeding only means the request was sent;
-    -- it does not prove the server accepted the food. Require an observable
-    -- hunger increase or the consumed item disappearing before reporting success.
-    local success, response = callUtilityRemote(consumeRemote, 1.5, item)
+              -- Do NOT reparent the live item into TempStorage here. On consumed/destroyed
+              -- items that can produce Roblox's "trying to set locked parent!" warning.
+              -- A successful FireServer only proves the request was sent, not accepted.
+              -- For RemoteEvents require observable consumption before reporting success.
+              local success, response = callUtilityRemote(consumeRemote, 1.5, item)
 
-    task.wait(0.12)
+              task.wait(0.12)
 
-    local after = getRealHunger()
-    local itemConsumed = not item.Parent
-    local hungerIncreased = before ~= nil and after ~= nil and after > before
-    local explicitSuccess = not remoteIsEvent and (
-        response == true
-        or (type(response) == "table" and response.Success == true)
-    )
-    local accepted = success and (explicitSuccess or itemConsumed or hungerIncreased)'''
+              local after = getRealHunger()
+              local itemConsumed = not item.Parent
+              local hungerIncreased = before ~= nil and after ~= nil and after > before
+              local explicitSuccess = not remoteIsEvent and (
+                  response == true
+                  or (type(response) == "table" and response.Success == true)
+              )
+              local accepted = success and (explicitSuccess or itemConsumed or hungerIncreased)'''
 
           if text.count(old_drag) != 1:
-              raise SystemExit("dragItemTo source block changed; refusing unsafe patch")
+              raise SystemExit(f'Expected one drag block, found {text.count(old_drag)}')
           if text.count(old_consume) != 1:
-              raise SystemExit("consumeFood source block changed; refusing unsafe patch")
+              raise SystemExit(f'Expected one consume block, found {text.count(old_consume)}')
 
-          text = text.replace(old_drag, new_drag, 1)
-          text = text.replace(old_consume, new_consume, 1)
+          patched = text.replace(old_drag, new_drag, 1).replace(old_consume, new_consume, 1)
 
-          for marker in (
-              "Smile B - 99 Nights Helper",
-              "local function attemptAutoEat()",
-              "local function attackTarget(target, isTree)",
-              "local function runFoodService()",
-              "local function enableFarm()",
-              "local function disableFarm()",
-              "Godmode Active",
-              "Credits: Smile B",
+          if len(patched) < 30000:
+              raise SystemExit('Patched script unexpectedly short')
+          for required in (
+              'Smile B - 99 Nights Helper',
+              'local function attemptAutoEat',
+              'local function attackTarget',
+              'local function runFoodService',
+              'local function enableFarm',
+              'local function disableFarm',
+              'Godmode Active',
+              'Credits: Smile B',
+              'updateButtons()',
           ):
-              if marker not in text:
-                  raise SystemExit("required section missing: " + marker)
+              if required not in patched:
+                  raise SystemExit(f'Missing required section: {required}')
 
-          if re.search(r'WaitForChild\(\s*["\'][^"\']+["\']\s*\)', text):
-              raise SystemExit("unbounded WaitForChild found")
+          unbounded = []
+          for match in re.finditer(r':WaitForChild\(([^\n\)]*)\)', patched):
+              if ',' not in match.group(1):
+                  unbounded.append(match.group(0))
+          if unbounded:
+              raise SystemExit(f'Unbounded WaitForChild found: {unbounded[:3]}')
 
-          if text.count("local function ") < 20:
-              raise SystemExit("unexpected function-count drop")
-
-          path.write_text(text, encoding="utf-8")
+          path.write_text(patched, encoding='utf-8')
+          workflow.unlink(missing_ok=True)
           PY
 
-      - name: Commit update and remove temporary workflow
+      - name: Commit guarded improvement
         shell: bash
         run: |
-          git config user.name "Smile B Script Polish"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/sb99-auto-patch.yml
-          git add '99 Nights Helper Godmode' .github/workflows/sb99-auto-patch.yml
+          git config user.name "Smile B Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
           git diff --cached --check
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "fix: verify remote food consumption"
-          git push origin main
+          if git diff --cached -- '99 Nights Helper Godmode' | grep -q 'remoteIsEvent'; then
+            git commit -m "fix: verify remote food consumption"
+          else
+            git commit -m "chore: remove stale SB99 patch workflow"
+          fi
+          git push origin HEAD:main
