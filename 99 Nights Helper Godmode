@@ -215,6 +215,17 @@ if type(G.SB99_PROMPT_ORIGINALS) == "table" then
 end
 G.SB99_PROMPT_ORIGINALS = setmetatable({}, { __mode = "k" })
 
+if type(G.SB99_FARM_COLLISIONS) == "table" then
+    for part, canCollide in pairs(G.SB99_FARM_COLLISIONS) do
+        if typeof(part) == "Instance" and part.Parent and part:IsA("BasePart") then
+            pcall(function()
+                part.CanCollide = canCollide == true
+            end)
+        end
+    end
+end
+G.SB99_FARM_COLLISIONS = setmetatable({}, { __mode = "k" })
+
 local function track(connection)
     if connection then
         table.insert(G.SB99_CONNECTIONS, connection)
@@ -301,8 +312,8 @@ local state = {
     campfireMaintainThreshold = 0.80,
     fireDerivedLevel = math.clamp(tonumber(G.SB99_FIRE_DERIVED_LEVEL) or 1, 1, 6),
     fireLastTarget = tonumber(G.SB99_FIRE_LAST_TARGET),
-    resourcePassLimit = 8,
-    resourcePickupRange = 220,
+    resourcePassLimit = 24,
+    resourcePickupRange = 2000,
     resourcePauseUntil = 0,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
@@ -818,7 +829,7 @@ local function dragItemTo(item, destination)
         end
 
         -- Let the server grant drag ownership before changing the item CFrame.
-        task.wait(0.08)
+        task.wait(0.15)
         if not item.Parent then
             return false
         end
@@ -838,8 +849,9 @@ local function dragItemTo(item, destination)
 
         -- Current public game implementations leave a replication window and
         -- send the dragged item back to StopDraggingItem explicitly.
-        task.wait(0.12)
+        task.wait(0.30)
         finishDrag()
+        task.wait(0.06)
         return item.Parent ~= nil
     end)
 
@@ -902,48 +914,93 @@ local function getFoodCandidates()
     return candidates
 end
 
+local function directConsumeRequest(item)
+    if not item or not item.Parent then
+        return false, nil
+    end
+
+    if not isLive(RequestConsumeItem) then
+        refreshRemotes()
+    end
+    local remote = RequestConsumeItem
+    if not isLive(remote) then
+        return false, nil
+    end
+
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(remote.FireServer, remote, item)
+        return ok, ok and true or nil
+    end
+    if not remote:IsA("RemoteFunction") then
+        return false, nil
+    end
+
+    local done = false
+    local ok = false
+    local response = nil
+    local thread = task.spawn(function()
+        ok, response = pcall(remote.InvokeServer, remote, item)
+        done = true
+    end)
+
+    local deadline = os.clock() + 2
+    while state.active and not done and item.Parent and os.clock() < deadline do
+        task.wait()
+    end
+
+    -- Item removal is the strongest confirmation even if the RemoteFunction
+    -- response arrives late on a high-ping executor/mobile client.
+    if not item.Parent then
+        if not done and type(task.cancel) == "function" then
+            pcall(task.cancel, thread)
+        end
+        return true, true
+    end
+
+    if not done then
+        if type(task.cancel) == "function" then
+            pcall(task.cancel, thread)
+        end
+        return false, nil
+    end
+
+    return ok, response
+end
+
 local function consumeFood(item)
     if not item or not item.Parent or not state.active then
         return false
     end
 
-    if not isLive(RequestConsumeItem) then
-        refreshRemotes()
-        if not isLive(RequestConsumeItem) then
-            return false
-        end
-    end
-
+    local before = getRealHunger()
     local root = getRoot()
     if not root then
         return false
     end
 
-    -- Bring world food into a normal server-valid range first.
+    -- Current live scripts bring world cooked food beside the player before
+    -- RequestConsumeItem, but inventory/backpack food can be consumed directly.
     if item:IsDescendantOf(workspace) then
         local part = getPart(item)
-        if part and (part.Position - root.Position).Magnitude > 12 then
-            dragItemTo(item, root.CFrame * CFrame.new(0, 1, -3))
-            task.wait(0.06)
+        if part and (part.Position - root.Position).Magnitude > 10 then
+            dragItemTo(item, root.CFrame * CFrame.new(0, 2, -2))
+            task.wait(0.12)
         end
     end
 
-    local before = getRealHunger()
-    local consumeRemote = RequestConsumeItem
-    local remoteIsEvent = consumeRemote:IsA("RemoteEvent")
-
-    -- A successful FireServer only proves the request was sent, not accepted.
-    -- RemoteEvents are verified by an observable item removal or Hunger gain,
-    -- with a short replication window for higher-ping/mobile sessions.
-    local success, response = callUtilityRemote(consumeRemote, 1.5, item)
-    if not success then
-        if item.Parent then
-            failedFoodUntil[item] = os.clock() + 2
+    local success, response = directConsumeRequest(item)
+    if not success and item.Parent and item:IsDescendantOf(workspace) then
+        -- One fresh drag/retry covers ownership races without poisoning future
+        -- consume attempts with a long global cooldown.
+        local liveRoot = getRoot()
+        if liveRoot then
+            dragItemTo(item, liveRoot.CFrame * CFrame.new(0, 2, -2))
+            task.wait(0.15)
+            success, response = directConsumeRequest(item)
         end
-        return false
     end
 
-    local explicitSuccess = not remoteIsEvent and (
+    local explicitSuccess = success and (
         response == true
         or (type(response) == "table" and response.Success == true)
     )
@@ -951,22 +1008,18 @@ local function consumeFood(item)
         return true
     end
 
-    local verifyDeadline = os.clock() + (remoteIsEvent and 0.5 or 0.2)
+    local verifyDeadline = os.clock() + 0.9
     repeat
         task.wait(0.05)
-
         local after = getRealHunger()
-        local itemConsumed = not item.Parent
-        local hungerIncreased = before ~= nil and after ~= nil and after > before
-        if itemConsumed or hungerIncreased then
+        if not item.Parent or (before ~= nil and after ~= nil and after > before) then
             return true
         end
     until not state.active or os.clock() >= verifyDeadline
 
     if item.Parent then
-        failedFoodUntil[item] = os.clock() + 2
+        failedFoodUntil[item] = os.clock() + 0.75
     end
-
     return false
 end
 
@@ -1706,9 +1759,44 @@ local previousFarm = {
     autoRotate = true,
 }
 
+local function applyFarmNoclip()
+    local character = getCharacter()
+    if not character then return end
+    local originals = G.SB99_FARM_COLLISIONS
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if originals[part] == nil then
+                originals[part] = part.CanCollide
+            end
+            if part.CanCollide then
+                pcall(function()
+                    part.CanCollide = false
+                end)
+            end
+        end
+    end
+end
+
+local function restoreFarmNoclip()
+    local originals = G.SB99_FARM_COLLISIONS
+    if type(originals) ~= "table" then return end
+    for part, canCollide in pairs(originals) do
+        if typeof(part) == "Instance" and part.Parent and part:IsA("BasePart") then
+            pcall(function()
+                part.CanCollide = canCollide == true
+            end)
+        end
+    end
+    table.clear(originals)
+end
+
 local function lockFarmCharacter()
     local humanoid = getHumanoid()
     local root = getRoot()
+
+    if state.autoFarm then
+        applyFarmNoclip()
+    end
 
     if humanoid and humanoid.Parent then
         pcall(function()
@@ -1917,6 +2005,12 @@ local FUEL_NAMES = {
     ["fuel canister"] = true,
     ["oil barrel"] = true,
     ["biofuel"] = true,
+    ["charcoal"] = true,
+    ["gas canister"] = true,
+    ["gasoline"] = true,
+    ["propane tank"] = true,
+    ["kerosene"] = true,
+    ["firewood"] = true,
     ["chair"] = true,
 }
 
@@ -2080,50 +2174,97 @@ local function burnItemIntoCampfire(item)
 
     local beforeFuel = tonumber(fire:GetAttribute("FuelRemaining")) or 0
     local beforeLevel = getCampfireLevel() or tonumber(state.fireDerivedLevel) or 1
-    local dropCF = getPhysicalFireDrop()
-    local moved = dragItemTo(item, dropCF)
-    if not moved and item.Parent then
+
+    local function accepted()
+        if not item.Parent then
+            return true
+        end
+        local liveFire = getMainFire()
+        if not liveFire then
+            return false
+        end
+        local afterFuel = tonumber(liveFire:GetAttribute("FuelRemaining")) or 0
+        local afterLevel = getCampfireLevel() or beforeLevel
+        return afterFuel > beforeFuel + 0.001 or afterLevel > beforeLevel
+    end
+
+    local function requestBurn()
+        if not isLive(RequestBurnItem) then
+            refreshRemotes()
+        end
+        local remote = RequestBurnItem
+        if not isLive(remote) then
+            return false
+        end
+        if remote:IsA("RemoteEvent") then
+            return pcall(remote.FireServer, remote, fire, item)
+        elseif remote:IsA("RemoteFunction") then
+            local ok, response = callUtilityRemote(remote, 1.5, fire, item)
+            return ok and response ~= false
+        end
         return false
     end
 
-    local deadline = os.clock() + 2
+    -- This RemoteEvent is accepted from anywhere by current live scripts and
+    -- is much more reliable for leveling than waiting for the roaming player.
+    if requestBurn() then
+        local deadline = os.clock() + 0.9
+        repeat
+            task.wait(0.06)
+            if accepted() then return true end
+        until not state.active or os.clock() >= deadline
+    end
+
+    if not item.Parent then
+        return true
+    end
+
+    local dropCF = getPhysicalFireDrop()
+    if not dragItemTo(item, dropCF) and item.Parent then
+        return false
+    end
+    task.wait(0.10)
+
+    if item.Parent then
+        requestBurn()
+    end
+
+    local deadline = os.clock() + 1.6
     repeat
-        task.wait(0.10)
-        local liveFire = getMainFire()
-        if liveFire then
-            local afterFuel = tonumber(liveFire:GetAttribute("FuelRemaining")) or 0
-            local afterLevel = getCampfireLevel() or beforeLevel
-            if afterFuel > beforeFuel + 0.001 or afterLevel > beforeLevel then
-                return true
-            end
-        end
+        task.wait(0.08)
+        if accepted() then return true end
     until not state.active or os.clock() >= deadline
 
-    return false
+    return not item.Parent
 end
 
 local function routeItemToScrapper(item)
     if not item or not item.Parent then return false end
     local beforeWood, beforeScrap = getCampTotals()
     local dropCF = getPhysicalScrapDrop()
-    local moved = dragItemTo(item, dropCF)
-    if not moved and item.Parent then
+
+    local function accepted()
+        if not item.Parent then return true end
+        local wood, scrap = getCampTotals()
+        if beforeWood ~= nil and wood ~= nil and wood > beforeWood then return true end
+        if beforeScrap ~= nil and scrap ~= nil and scrap > beforeScrap then return true end
         return false
     end
 
-    local deadline = os.clock() + 1.8
-    repeat
-        task.wait(0.10)
-        local wood, scrap = getCampTotals()
-        if beforeWood ~= nil and wood ~= nil and wood > beforeWood then
-            return true
+    for attempt = 1, 2 do
+        if not item.Parent then return true end
+        if not dragItemTo(item, dropCF) and item.Parent then
+            task.wait(0.10)
         end
-        if beforeScrap ~= nil and scrap ~= nil and scrap > beforeScrap then
-            return true
-        end
-    until not state.active or os.clock() >= deadline
 
-    return false
+        local deadline = os.clock() + (attempt == 1 and 1.5 or 2.0)
+        repeat
+            task.wait(0.10)
+            if accepted() then return true end
+        until not state.active or os.clock() >= deadline
+    end
+
+    return accepted()
 end
 
 local function runResourceService()
@@ -2182,6 +2323,13 @@ local function runResourceService()
             if a.target ~= b.target then
                 return a.target == "fire"
             end
+            if a.target == "fire" then
+                local aLog = isLogResource(a.item)
+                local bLog = isLogResource(b.item)
+                if aLog ~= bLog then
+                    return not aLog
+                end
+            end
             return a.distance < b.distance
         end)
 
@@ -2195,17 +2343,15 @@ local function runResourceService()
                     and burnItemIntoCampfire(item)
                     or routeItemToScrapper(item)
 
-                if not handled then
-                    resourceCooldown[item] = os.clock() + 3
-                    state.resourcePauseUntil = os.clock() + 0.8
-                    break
-                end
-
-                processed = processed + 1
-                if candidate.target == "fire" then
-                    level = getCampfireLevel() or level
-                    campfireMaxed = level >= state.campfireTargetLevel
-                    fuelRatio = getCampfireFuelRatio()
+                if handled then
+                    processed = processed + 1
+                    if candidate.target == "fire" then
+                        level = getCampfireLevel() or level
+                        campfireMaxed = level >= state.campfireTargetLevel
+                        fuelRatio = getCampfireFuelRatio()
+                    end
+                else
+                    resourceCooldown[item] = os.clock() + 2.5
                 end
                 task.wait(0.05)
             end
@@ -4105,7 +4251,7 @@ local function chooseSmallTreeTarget()
 
     if bestTree then
         local part = getPart(bestTree)
-        treeVisitCooldown[bestTree] = now + 4
+        treeVisitCooldown[bestTree] = now + 7
         return Vector3.new(part.Position.X, FARM_PATROL_Y, part.Position.Z), bestTree
     end
     return nil, nil
@@ -4272,6 +4418,7 @@ local function disableFarm()
 
     destroyPlatform()
     restoreInstantPrompts()
+    restoreFarmNoclip()
 
     if character then
         pcall(character.PivotTo, character, CFrame.new(RETURN_POSITION))
@@ -4390,44 +4537,49 @@ task.spawn(function()
                     local point, tree = nextDayFarmTarget()
                     if point and moveFarmTo(point, false) then
                         if tree and tree.Parent and state.autoChop then
-                            -- Travel stays at Y=30, but actual chopping is done at
-                            -- the tree's replicated trunk height. The debug probe
-                            -- showed manual chopping working around ground level
-                            -- while Auto Farm was attacking from ~27 studs above.
                             local treePart = tree:FindFirstChild("Trunk", true)
                             if not (treePart and treePart:IsA("BasePart")) then
                                 treePart = getPart(tree)
                             end
 
-                            local character = getCharacter()
-                            if treePart and character then
-                                pcall(character.PivotTo, character, CFrame.new(
+                            -- First leg is the normal Y=30 patrol tween. The
+                            -- second leg approaches the trunk with noclip, so
+                            -- terrain/tree collision cannot stop the farm short.
+                            if treePart and treePart.Parent then
+                                moveFarmTo(Vector3.new(
                                     treePart.Position.X,
-                                    treePart.Position.Y + 4,
+                                    treePart.Position.Y + 5,
                                     treePart.Position.Z
-                                ))
-                                lockFarmCharacter()
-                                task.wait(0.10)
+                                ), false)
                             end
 
-                            local chopDeadline = os.clock() + 1.6
+                            local holdUntil = os.clock() + 5
                             repeat
-                                attackTarget(tree, true)
-                                task.wait(0.12)
+                                if tree and tree.Parent and smallTreeAvailable(tree) then
+                                    attackTarget(tree, true)
+                                end
+                                -- Service newly spawned logs/fuel while we are
+                                -- deliberately waiting at this tree.
+                                runResourceService()
+                                task.wait(0.14)
                             until not state.autoFarm
                                 or state.strongholdControl
-                                or not smallTreeAvailable(tree)
-                                or os.clock() >= chopDeadline
+                                or isNight()
+                                or os.clock() >= holdUntil
+
+                            -- One final resource pass catches drops that replicated
+                            -- at the end of the five-second chop window.
+                            runResourceService()
+                            task.wait(0.20)
 
                             if state.autoFarm and not state.strongholdControl and not isNight() then
                                 local liveRoot = getRoot()
-                                if liveRoot and character and character.Parent then
-                                    pcall(character.PivotTo, character, CFrame.new(
+                                if liveRoot then
+                                    moveFarmTo(Vector3.new(
                                         liveRoot.Position.X,
                                         FARM_PATROL_Y,
                                         liveRoot.Position.Z
-                                    ))
-                                    lockFarmCharacter()
+                                    ), false)
                                 end
                             end
                         else
