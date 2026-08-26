@@ -241,6 +241,8 @@ local state = {
     childRescueRunning = false,
     childRescuePending = false,
     childRescueCompleted = false,
+    childRescueObserved = {},
+    childRescueVerified = {},
     nextChildRescueAt = 0,
     promptRange = 260,
 
@@ -2095,6 +2097,7 @@ local function getLostChildren()
 
     for _, child in ipairs(characters:GetChildren()) do
         if child:IsA("Model") and isLostChild(child) then
+            state.childRescueObserved[child.Name] = true
             table.insert(children, child)
         end
     end
@@ -2134,11 +2137,23 @@ end
 local function getUnrescuedChildren()
     local children = {}
     for _, child in ipairs(getLostChildren()) do
-        if not childIsAtCamp(child) then
+        if childIsAtCamp(child) then
+            state.childRescueVerified[child.Name] = true
+        else
             table.insert(children, child)
         end
     end
     return children
+end
+
+local function verifiedChildCount()
+    local count = 0
+    for name in pairs(LOST_CHILD_NAMES) do
+        if state.childRescueVerified[name] == true then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 local function getItemBag()
@@ -2157,6 +2172,11 @@ local function getSackStoredCount(sack)
 
     local itemBag = getItemBag()
     if itemBag then
+        for _, item in ipairs(itemBag:GetChildren()) do
+            if isLostChild(item) then
+                state.childRescueObserved[item.Name] = true
+            end
+        end
         return #itemBag:GetChildren()
     end
     return #sack:GetChildren()
@@ -2381,11 +2401,17 @@ local function unstoreSackAtCamp(sack)
                 break
             end
             if isLostChild(item) then
+                state.childRescueObserved[item.Name] = true
                 local wasParent = item.Parent
                 local ok = callUtilityRemote(RequestBagDropItem, 0.75, sack, item)
                 if ok then
-                    task.wait(0.08)
-                    droppedAny = droppedAny or item.Parent ~= wasParent or childIsAtCamp(item)
+                    task.wait(0.12)
+                    local movedOutOfBag = item.Parent ~= wasParent
+                    local rescuedAtCamp = childIsAtCamp(item)
+                    if movedOutOfBag or rescuedAtCamp then
+                        state.childRescueVerified[item.Name] = true
+                        droppedAny = true
+                    end
                 end
             end
         end
@@ -2442,10 +2468,15 @@ local function runChildRescueAttempt()
     task.wait(0.25)
 
     local children = getUnrescuedChildren()
-    if #children == 0 then
+    if verifiedChildCount() >= 4 then
         state.childRescueCompleted = true
         state.childRescuePending = false
         return true
+    end
+    -- Never treat an empty replication snapshot as success. If fewer
+    -- than four children have been verified, retry discovery later.
+    if #children == 0 then
+        return false
     end
 
     state.childRescueRunning = true
@@ -2490,8 +2521,8 @@ local function runChildRescueAttempt()
         task.wait(2)
         local afterDrop = getSackStoredCount(sack)
         local sackVerified = dropped and afterDrop < beforeDrop
-        local remaining = getUnrescuedChildren()
-        success = sackVerified and #remaining == 0
+        getUnrescuedChildren() -- refresh Lost/rescue attributes after the drop
+        success = sackVerified and verifiedChildCount() >= 4
     end)
 
     if camera then
@@ -2764,6 +2795,8 @@ local function enableFarm()
     state.childRescueRunning = false
     state.childRescuePending = false
     state.childRescueCompleted = false
+    state.childRescueObserved = {}
+    state.childRescueVerified = {}
     state.nextChildRescueAt = 0
 
     -- Immediate first food sweep, then every minute.
