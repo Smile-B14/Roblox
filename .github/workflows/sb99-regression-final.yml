@@ -1,0 +1,76 @@
+name: SB99 final regression repair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-regression-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          PATCH='.github/sb99_regression_final.py'
+          FLOW='.github/workflows/sb99-regression-final.yml'
+          EXPECTED='5c74d45a03c95c0670cfe2b26009927fe3875cc8'
+
+          BASE_BLOB="$(git rev-parse HEAD:"$TARGET")"
+          test "$BASE_BLOB" = "$EXPECTED"
+
+          python3 "$PATCH"
+          git diff --check -- "$TARGET"
+
+          if grep -nE 'WaitForChild\([^,\)]*\)' "$TARGET"; then
+            echo 'unbounded WaitForChild introduced/found'
+            exit 1
+          fi
+
+          curl -fsSL --retry 3 -o /tmp/luau.zip \
+            'https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip'
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+
+          grep -q 'return strongholdDoorOpen() or strongholdGateOpen()' "$TARGET"
+          grep -q 'for _, object in ipairs(folder:GetDescendants()) do' "$TARGET"
+          grep -q 'local chopDeadline = os.clock() + 1.1' "$TARGET"
+          grep -q 'local maxBench = 8' "$TARGET"
+          grep -q 'for level = 5, maxBench do' "$TARGET"
+          grep -q 'prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)' "$TARGET"
+          grep -q 'layout.SortOrder = Enum.SortOrder.LayoutOrder' "$TARGET"
+          grep -q 'screen.IgnoreGuiInset = true' "$TARGET"
+          grep -q 'track(status.InputBegan:Connect(beginFrameDrag))' "$TARGET"
+
+          # The old false-ready Stronghold prompt path must be gone.
+          if grep -q 'if prompt and prompt.Enabled then' "$TARGET"; then
+            echo 'stale false-ready Stronghold prompt path remains'
+            exit 1
+          fi
+
+          git fetch origin main
+          REMOTE_BLOB="$(git rev-parse origin/main:"$TARGET")"
+          test "$REMOTE_BLOB" = "$EXPECTED"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          rm -f "$PATCH" "$FLOW"
+          git add -A
+          git commit -m 'fix: restore farm crafting and mobile UI'
+
+          # Race guard immediately before write.
+          git fetch origin main
+          FINAL_REMOTE_BLOB="$(git rev-parse origin/main:"$TARGET")"
+          test "$FINAL_REMOTE_BLOB" = "$EXPECTED"
+          git push origin HEAD:main
