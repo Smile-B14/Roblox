@@ -1,0 +1,67 @@
+name: SB99 patrol rescue UI final validation
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-patrol-child-ui-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          PATCH='.github/sb99_patrol_child_ui_patch.py'
+          FLOW='.github/workflows/sb99-patrol-child-ui-final.yml'
+          EXPECTED='664896cb9ccd7c4f407bac2ccee4f2cc747a9a16'
+
+          BASE_BLOB="$(git rev-parse HEAD:"$TARGET")"
+          test "$BASE_BLOB" = "$EXPECTED"
+
+          python3 "$PATCH"
+          git diff --check -- "$TARGET"
+
+          if grep -nE 'WaitForChild\([^,\)]*\)' "$TARGET"; then
+            echo 'unbounded WaitForChild introduced/found'
+            exit 1
+          fi
+
+          curl -fsSL --retry 3 -o /tmp/luau.zip \
+            'https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip'
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+
+          grep -q 'local FARM_PATROL_Y = 30' "$TARGET"
+          grep -q 'RequestBurnItem = findReplicated("RequestBurnItem")' "$TARGET"
+          grep -q 'local function currentFarmRadius()' "$TARGET"
+          grep -q 'local function getMissingChildPositions()' "$TARGET"
+          grep -q 'child = reacquireChild(childName) or child' "$TARGET"
+          grep -q 'G.SB99_SAPLING_SLOT = slot' "$TARGET"
+          grep -q 'PHONE-FIRST COLLAPSIBLE UI' "$TARGET"
+
+          git fetch origin main
+          REMOTE_BLOB="$(git rev-parse origin/main:"$TARGET")"
+          test "$REMOTE_BLOB" = "$EXPECTED"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          rm -f "$PATCH" "$FLOW"
+          git add -A
+          git commit -m 'fix: improve patrol fire and child rescue'
+
+          git fetch origin main
+          FINAL_REMOTE_BLOB="$(git rev-parse origin/main:"$TARGET")"
+          test "$FINAL_REMOTE_BLOB" = "$EXPECTED"
+          git push origin HEAD:main
