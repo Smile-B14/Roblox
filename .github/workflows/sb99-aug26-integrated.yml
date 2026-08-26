@@ -1,0 +1,65 @@
+name: SB99 integrated camp and godmode update
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          EXPECTED='9b6a85c9617e07aa98a72824ddf181e7aea769d3'
+
+          actual="$(git hash-object "$TARGET")"
+          test "$actual" = "$EXPECTED" || { echo "stale helper before patch: $actual"; exit 20; }
+
+          python3 .sb99_aug26_integrated.py
+          git diff --check
+
+          grep -q 'nanHealthGodmode = true' "$TARGET"
+          grep -q 'getNightCampCFrame' "$TARGET"
+          grep -q 'state.nightCampLock = true' "$TARGET"
+          grep -q 'fastFoodTransport' "$TARGET"
+          grep -q 'discoverCampBuildQueue' "$TARGET"
+          grep -q 'campCraftAccepted' "$TARGET"
+          grep -q 'strongholdCounter' "$TARGET"
+          grep -q 'NaN Health Godmode' "$TARGET"
+          grep -q 'RequestBagDropItem' "$TARGET"
+          grep -q 'RequestScrapItem' "$TARGET"
+          grep -q 'InteractionHandler' "$TARGET"
+
+          curl -fsSL -o /tmp/luau.zip \
+            https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip
+          mkdir -p /tmp/luau-bin
+          unzip -q /tmp/luau.zip -d /tmp/luau-bin
+          LUAU_COMPILE="$(find /tmp/luau-bin -type f -name 'luau-compile' | head -1)"
+          test -n "$LUAU_COMPILE"
+          chmod +x "$LUAU_COMPILE"
+          "$LUAU_COMPILE" "$TARGET" >/dev/null
+
+          # Race guard immediately before the only helper write.
+          git fetch origin main
+          remote_head="$(git rev-parse origin/main)"
+          test "$remote_head" = "$GITHUB_SHA" || { echo "main advanced during validation: $remote_head"; exit 21; }
+          remote_blob="$(git rev-parse "origin/main:$TARGET")"
+          test "$remote_blob" = "$EXPECTED" || { echo "helper changed during validation: $remote_blob"; exit 22; }
+
+          rm -f .sb99_aug26_integrated.py .github/workflows/sb99-aug26-integrated.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: improve night camp crafting food and godmode'
+          git push origin HEAD:main
