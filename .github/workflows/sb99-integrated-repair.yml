@@ -1,0 +1,63 @@
+name: SB99 integrated farm repair
+
+on:
+  push:
+    paths:
+      - '.github/sb99-integrated-repair.py'
+      - '.github/workflows/sb99-integrated-repair.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch compile verify and guarded push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          EXPECTED='f8ce3d614c6d61049fe3b937a2a828ac85aa3b98'
+
+          ACTUAL="$(git rev-parse HEAD:"$TARGET")"
+          test "$ACTUAL" = "$EXPECTED" || { echo "stale starting helper blob: $ACTUAL"; exit 1; }
+
+          python3 .github/sb99-integrated-repair.py
+          git diff --check
+
+          # Basic startup/static guards.
+          if grep -nE 'WaitForChild\([^,\)]*\)' "$TARGET"; then
+            echo 'unbounded WaitForChild found'
+            exit 1
+          fi
+          grep -Fq 'maxTreeInflight = 5' "$TARGET"
+          grep -Fq 'maxEntityInflight = 7' "$TARGET"
+          grep -Fq 'state.focusTree = tree' "$TARGET"
+          grep -Fq 'CFrame.new(CAMPFIRE_DROP)' "$TARGET"
+          grep -Fq 'CFrame.new(SCRAP_DROP)' "$TARGET"
+          grep -Fq 'Fullbright + No Fog' "$TARGET"
+          grep -Fq 'Lighting.FogEnd = 1000000000' "$TARGET"
+
+          # Build the official Luau compiler and compile the exact candidate.
+          git clone --depth 1 https://github.com/luau-lang/luau.git /tmp/luau
+          cmake -S /tmp/luau -B /tmp/luau/build -DCMAKE_BUILD_TYPE=Release >/dev/null
+          cmake --build /tmp/luau/build --target Luau.Compile.CLI -j2 >/dev/null
+          /tmp/luau/build/luau-compile "$TARGET" >/dev/null
+
+          # Immediately before writing, refetch main and verify nobody changed
+          # the helper while validation was running.
+          git fetch origin main
+          REMOTE_BLOB="$(git rev-parse origin/main:"$TARGET")"
+          test "$REMOTE_BLOB" = "$EXPECTED" || { echo "helper changed during validation: $REMOTE_BLOB"; exit 1; }
+
+          rm -f .github/sb99-integrated-repair.py .github/workflows/sb99-integrated-repair.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: integrate farm combat resources and visuals'
+          git push origin HEAD:main
