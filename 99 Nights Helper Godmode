@@ -461,7 +461,10 @@ local function protectCharacter(character)
         return
     end
 
-    lastSafeCFrame = character:GetPivot()
+    local pivotOk, pivot = pcall(character.GetPivot, character)
+    if pivotOk then
+        lastSafeCFrame = pivot
+    end
 
     pcall(function()
         humanoid.BreakJointsOnDeath = false
@@ -523,15 +526,20 @@ task.spawn(function()
 
             if humanoid.FloorMaterial ~= Enum.Material.Air
                 and root.Position.Y > destroyY + 80 then
-                lastSafeCFrame = character:GetPivot()
+                local pivotOk, pivot = pcall(character.GetPivot, character)
+                if pivotOk then
+                    lastSafeCFrame = pivot
+                end
             end
 
             if root.Position.Y <= destroyY + 35 then
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                pcall(function()
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
 
                 if lastSafeCFrame then
-                    character:PivotTo(lastSafeCFrame + Vector3.new(0, 5, 0))
+                    pcall(character.PivotTo, character, lastSafeCFrame + Vector3.new(0, 5, 0))
                 else
                     pcall(character.PivotTo, character, CFrame.new(RETURN_POSITION))
                 end
