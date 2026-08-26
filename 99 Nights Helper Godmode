@@ -46,6 +46,7 @@ local StopDragging = nil
 local RequestHotbarItem = nil
 local RequestConsumeItem = nil
 local RequestCookItem = nil
+local RequestBagStoreItem = nil
 
 local function findReplicated(name)
     if RemoteEvents then
@@ -69,6 +70,7 @@ local function refreshRemotes()
     RequestHotbarItem = findReplicated("RequestHotbarItem")
     RequestConsumeItem = findReplicated("RequestConsumeItem")
     RequestCookItem = findReplicated("RequestCookItem")
+    RequestBagStoreItem = findReplicated("RequestBagStoreItem")
 end
 
 refreshRemotes()
@@ -81,7 +83,9 @@ end
 
 local FARM_HOME = Vector3.new(0, -50, 0)
 local RETURN_POSITION = Vector3.new(0, 50, 0)
-local FOOD_AREA = Vector3.new(0, 20, 0)
+local CAMPFIRE_DROP = Vector3.new(0, 13, 0)
+local FOOD_AREA = CAMPFIRE_DROP
+local SCRAP_DROP = Vector3.new(20, 13, -5)
 
 -- Hit IDs use captured legitimate tool tokens / known game tokens.
 -- We intentionally do NOT call Client.EnemyHandler.ApplyLocalDamage here;
@@ -101,6 +105,10 @@ if type(previousState) == "table" then
     previousState.autoBestGear = false
     previousState.emergencyFoodRun = false
     previousState.foodServiceRunning = false
+    previousState.smartResources = false
+    previousState.resourceServiceRunning = false
+    previousState.childRescueRunning = false
+    previousState.childRescuePending = false
 end
 
 if previousWasFarming then
@@ -160,6 +168,20 @@ end
 
 G.SB99_CONNECTIONS = {}
 
+-- Restore ProximityPrompt properties changed by a previous SB99 run.
+if type(G.SB99_PROMPT_ORIGINALS) == "table" then
+    for prompt, original in pairs(G.SB99_PROMPT_ORIGINALS) do
+        if typeof(prompt) == "Instance" and prompt.Parent and type(original) == "table" then
+            pcall(function()
+                prompt.HoldDuration = original.holdDuration
+                prompt.RequiresLineOfSight = original.requiresLineOfSight
+                prompt.MaxActivationDistance = original.maxActivationDistance
+            end)
+        end
+    end
+end
+G.SB99_PROMPT_ORIGINALS = setmetatable({}, { __mode = "k" })
+
 local function track(connection)
     if connection then
         table.insert(G.SB99_CONNECTIONS, connection)
@@ -184,6 +206,7 @@ local state = {
     killAura = false,
     autoBestGear = false,
     autoFarm = false,
+    smartResources = false,
 
     range = 200,
     maxInflight = 72,
@@ -206,6 +229,18 @@ local state = {
     patrolRadius = 700,
     patrolSpeed = 60,
     patrolIndex = 1,
+
+    campfireTargetLevel = 6,
+    campfireMaintainThreshold = 0.80,
+    resourcePassLimit = 18,
+    resourceServiceRunning = false,
+    childRescueAttempts = 0,
+    childRescueMaxAttempts = 5,
+    childRescueRunning = false,
+    childRescuePending = false,
+    childRescueCompleted = false,
+    nextChildRescueAt = 0,
+    promptRange = 260,
 
     blockedRemotes = {
         DamagePlayer = true,
@@ -244,7 +279,8 @@ track(ReplicatedStorage.DescendantAdded:Connect(function(descendant)
         or name == "StopDraggingItem"
         or name == "RequestHotbarItem"
         or name == "RequestConsumeItem"
-        or name == "RequestCookItem" then
+        or name == "RequestCookItem"
+        or name == "RequestBagStoreItem" then
         task.defer(refreshRemotes)
     end
 end))
@@ -1316,6 +1352,17 @@ task.spawn(function()
     end
 end)
 
+local LOST_CHILD_NAMES = {
+    ["Lost Child"] = true,
+    ["Lost Child2"] = true,
+    ["Lost Child3"] = true,
+    ["Lost Child4"] = true,
+}
+
+local function isLostChild(object)
+    return object ~= nil and LOST_CHILD_NAMES[object.Name] == true
+end
+
 local function sortedEntities(root)
     local result = {}
     local folder = workspace:FindFirstChild("Characters")
@@ -1325,7 +1372,7 @@ local function sortedEntities(root)
     end
 
     for _, target in ipairs(folder:GetChildren()) do
-        if target:IsA("Model") and target ~= player.Character then
+        if target:IsA("Model") and target ~= player.Character and not isLostChild(target) and target.Name ~= "Pelt Trader" then
             local part = getPart(target)
             if part then
                 local distance = (part.Position - root.Position).Magnitude
@@ -1479,6 +1526,7 @@ local previousFarm = {
     chop = false,
     kill = false,
     gear = false,
+    smart = false,
     walkSpeed = 16,
     jumpPower = 50,
     jumpHeight = 7.2,
@@ -1536,6 +1584,845 @@ local function foodServiceDue()
     return os.clock() - state.lastFoodService >= state.foodInterval
 end
 
+--==============================================================
+-- SMART RESOURCES / INSTANT PROMPTS / CHILD RESCUE
+--==============================================================
+
+local function readNumberValue(object, names)
+    if not object then
+        return nil
+    end
+
+    for _, name in ipairs(names) do
+        local ok, value = pcall(object.GetAttribute, object, name)
+        if ok then
+            value = tonumber(value)
+            if value ~= nil then
+                return value
+            end
+        end
+    end
+
+    for _, name in ipairs(names) do
+        local child = object:FindFirstChild(name, true)
+        if child then
+            local ok, value = pcall(function()
+                return child.Value
+            end)
+            if ok then
+                value = tonumber(value)
+                if value ~= nil then
+                    return value
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function getCampfireLevel()
+    local fire = getMainFire()
+    if not fire then
+        return nil
+    end
+
+    local level = readNumberValue(fire, {
+        "Level", "FireLevel", "CampfireLevel", "UpgradeLevel", "CurrentLevel",
+    })
+    if level == nil and fire.Parent then
+        level = readNumberValue(fire.Parent, {
+            "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
+        })
+    end
+    if level == nil then
+        level = readNumberValue(workspace, {
+            "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
+        })
+    end
+
+    if level ~= nil then
+        return math.max(0, math.floor(level + 0.001))
+    end
+    return nil
+end
+
+local function getCampfireFuelRatio()
+    local fire = getMainFire()
+    if not fire then
+        return nil
+    end
+
+    local percent = readNumberValue(fire, {
+        "FuelPercent", "FuelPercentage", "HealthPercent", "HealthPercentage",
+    })
+    if percent ~= nil then
+        if percent > 1 then
+            percent = percent / 100
+        end
+        return math.clamp(percent, 0, 1)
+    end
+
+    local current = readNumberValue(fire, {
+        "Fuel", "CurrentFuel", "FuelAmount", "Health", "CurrentHealth",
+    })
+    local maximum = readNumberValue(fire, {
+        "MaxFuel", "MaximumFuel", "FuelMax", "MaxHealth", "MaximumHealth",
+    })
+
+    if current ~= nil and maximum ~= nil and maximum > 0 then
+        return math.clamp(current / maximum, 0, 1)
+    end
+    if current ~= nil and current >= 0 and current <= 1 then
+        return current
+    end
+    if current ~= nil and current >= 0 and current <= 100 then
+        return current / 100
+    end
+
+    return nil
+end
+
+local FUEL_NAMES = {
+    ["log"] = true,
+    ["coal"] = true,
+    ["fuel canister"] = true,
+    ["oil barrel"] = true,
+    ["biofuel"] = true,
+}
+
+local SCRAP_NAMES = {
+    ["bolt"] = true,
+    ["broken fan"] = true,
+    ["old radio"] = true,
+    ["broken microwave"] = true,
+    ["tyre"] = true,
+    ["tire"] = true,
+    ["sheet metal"] = true,
+    ["metal sheet"] = true,
+    ["metal chair"] = true,
+    ["old car engine"] = true,
+    ["washing machine"] = true,
+    ["cultist experiment"] = true,
+    ["cultist prototype"] = true,
+    ["ufo scrap"] = true,
+    ["ufo junk"] = true,
+    ["ufo component"] = true,
+    ["gears"] = true,
+}
+
+local PROTECTED_RESOURCE_PATTERNS = {
+    "ammo", "armor", "bandage", "medkit", "revolver", "rifle", "shotgun",
+    "spear", "sword", "crossbow", "flashlight", "lantern", "key", "map",
+    "compass", "fishing rod", "flute", "gem", "coin", "seed", "tablet",
+}
+
+local function lowerName(item)
+    return item and string.lower(item.Name) or ""
+end
+
+local function isLogResource(item)
+    local name = lowerName(item)
+    return name == "log"
+        or string.find(name, " log", 1, true) ~= nil
+        or string.find(name, "log ", 1, true) ~= nil
+end
+
+local function isFuelResource(item)
+    if not item then
+        return false
+    end
+    local name = lowerName(item)
+    if FUEL_NAMES[name] or isLogResource(item) then
+        return true
+    end
+
+    local fuel = tonumber(item:GetAttribute("FuelAmount"))
+        or tonumber(item:GetAttribute("FuelValue"))
+        or tonumber(item:GetAttribute("BurnValue"))
+        or tonumber(item:GetAttribute("Fuel"))
+    return fuel ~= nil and fuel > 0
+end
+
+local function isProtectedResourceItem(item)
+    if not item then
+        return true
+    end
+    if isFoodItem(item) or isAxe(item) or isSack(item) then
+        return true
+    end
+
+    local name = lowerName(item)
+    for _, pattern in ipairs(PROTECTED_RESOURCE_PATTERNS) do
+        if string.find(name, pattern, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isScrapResource(item)
+    if not item or isProtectedResourceItem(item) then
+        return false
+    end
+
+    local name = lowerName(item)
+    if SCRAP_NAMES[name] then
+        return true
+    end
+
+    local scrap = tonumber(item:GetAttribute("Scrap"))
+        or tonumber(item:GetAttribute("ScrapValue"))
+        or tonumber(item:GetAttribute("WoodValue"))
+    if scrap ~= nil and scrap > 0 then
+        return true
+    end
+
+    return string.find(name, "scrap", 1, true) ~= nil
+        or string.find(name, "junk", 1, true) ~= nil
+        or string.find(name, "metal", 1, true) ~= nil
+        or string.find(name, "chair", 1, true) ~= nil
+        or string.find(name, "washing machine", 1, true) ~= nil
+        or string.find(name, "car engine", 1, true) ~= nil
+        or string.find(name, "microwave", 1, true) ~= nil
+        or string.find(name, "broken fan", 1, true) ~= nil
+        or string.find(name, "radio", 1, true) ~= nil
+        or string.find(name, "furniture", 1, true) ~= nil
+        or string.find(name, "stool", 1, true) ~= nil
+        or string.find(name, "cabinet", 1, true) ~= nil
+        or string.find(name, "shelf", 1, true) ~= nil
+    end
+
+local resourceCooldown = setmetatable({}, { __mode = "k" })
+
+local function resourceTarget(item, campfireMaxed, fuelRatio)
+    if isFuelResource(item) then
+        if not campfireMaxed then
+            return CAMPFIRE_DROP
+        end
+
+        if isLogResource(item) then
+            return SCRAP_DROP
+        end
+
+        if fuelRatio ~= nil and fuelRatio < state.campfireMaintainThreshold then
+            return CAMPFIRE_DROP
+        end
+        return nil
+    end
+
+    if campfireMaxed and isScrapResource(item) then
+        return SCRAP_DROP
+    end
+    return nil
+end
+
+local function runResourceService()
+    if not state.active
+        or not state.smartResources
+        or state.resourceServiceRunning
+        or state.foodServiceRunning
+        or state.childRescueRunning then
+        return
+    end
+
+    state.resourceServiceRunning = true
+    pcall(function()
+        local level = getCampfireLevel()
+        local campfireMaxed = level ~= nil and level >= state.campfireTargetLevel
+        local fuelRatio = getCampfireFuelRatio()
+        local now = os.clock()
+
+        if campfireMaxed
+            and state.autoFarm
+            and not state.childRescueCompleted
+            and state.childRescueAttempts < state.childRescueMaxAttempts
+            and now >= state.nextChildRescueAt then
+            state.childRescuePending = true
+            cancelFarmTween()
+        end
+
+        local items = workspace:FindFirstChild("Items")
+        if not items then
+            return
+        end
+
+        local processed = 0
+        for _, item in ipairs(items:GetChildren()) do
+            if not state.active or not state.smartResources then
+                break
+            end
+
+            local cooldown = resourceCooldown[item]
+            if item.Parent and (not cooldown or cooldown <= now) then
+                local target = resourceTarget(item, campfireMaxed, fuelRatio)
+                if target then
+                    resourceCooldown[item] = now + 1.5
+                    if dragItemTo(item, CFrame.new(target)) then
+                        processed = processed + 1
+                        task.wait(0.015)
+
+                        if target == CAMPFIRE_DROP then
+                            local updatedLevel = getCampfireLevel()
+                            if updatedLevel ~= nil and updatedLevel >= state.campfireTargetLevel then
+                                campfireMaxed = true
+                                fuelRatio = getCampfireFuelRatio()
+                            elseif campfireMaxed then
+                                fuelRatio = getCampfireFuelRatio()
+                            end
+                        end
+                    end
+                end
+            end
+
+            if processed >= state.resourcePassLimit then
+                break
+            end
+        end
+    end)
+    state.resourceServiceRunning = false
+end
+
+local promptOriginals = G.SB99_PROMPT_ORIGINALS
+local promptSet = setmetatable({}, { __mode = "k" })
+local promptCooldown = setmetatable({}, { __mode = "k" })
+
+local function setPromptInstant(prompt)
+    if not prompt or not prompt.Parent then
+        return
+    end
+
+    if promptOriginals[prompt] == nil then
+        local ok, original = pcall(function()
+            return {
+                holdDuration = prompt.HoldDuration,
+                requiresLineOfSight = prompt.RequiresLineOfSight,
+                maxActivationDistance = prompt.MaxActivationDistance,
+            }
+        end)
+        if ok then
+            promptOriginals[prompt] = original
+        end
+    end
+
+    pcall(function()
+        prompt.HoldDuration = 0
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance, state.promptRange)
+    end)
+end
+
+local function restoreInstantPrompts()
+    for prompt, original in pairs(promptOriginals) do
+        if prompt and prompt.Parent and type(original) == "table" then
+            pcall(function()
+                prompt.HoldDuration = original.holdDuration
+                prompt.RequiresLineOfSight = original.requiresLineOfSight
+                prompt.MaxActivationDistance = original.maxActivationDistance
+            end)
+        end
+    end
+end
+
+local function registerPrompt(descendant)
+    if descendant and descendant:IsA("ProximityPrompt") then
+        promptSet[descendant] = true
+        if state.autoFarm then
+            setPromptInstant(descendant)
+        end
+    end
+end
+
+local function setAllPromptsInstant()
+    for prompt in pairs(promptSet) do
+        setPromptInstant(prompt)
+    end
+end
+
+task.spawn(function()
+    local count = 0
+    for _, descendant in ipairs(workspace:GetDescendants()) do
+        if descendant:IsA("ProximityPrompt") then
+            promptSet[descendant] = true
+        end
+        count = count + 1
+        if count % 600 == 0 then
+            task.wait()
+        end
+    end
+    if state.autoFarm then
+        setAllPromptsInstant()
+    end
+end)
+
+track(workspace.DescendantAdded:Connect(registerPrompt))
+
+local function firePromptNow(prompt)
+    if not prompt or not prompt.Parent then
+        return false
+    end
+    setPromptInstant(prompt)
+
+    local firePrompt = rawget(G, "fireproximityprompt")
+    if type(firePrompt) ~= "function" and type(fireproximityprompt) == "function" then
+        firePrompt = fireproximityprompt
+    end
+    if type(firePrompt) == "function" then
+        local ok = pcall(firePrompt, prompt)
+        if ok then
+            return true
+        end
+        ok = pcall(firePrompt, prompt, 0)
+        if ok then
+            return true
+        end
+    end
+
+    local began = pcall(prompt.InputHoldBegin, prompt)
+    if began then
+        task.wait()
+        pcall(prompt.InputHoldEnd, prompt)
+        return true
+    end
+    return false
+end
+
+local function isChestPrompt(prompt)
+    if not prompt or not prompt.Parent then
+        return false
+    end
+
+    local ok, text = pcall(function()
+        return string.lower((prompt.ActionText or "") .. " " .. (prompt.ObjectText or ""))
+    end)
+    if ok and (
+        string.find(text, "chest", 1, true)
+        or string.find(text, "crate", 1, true)
+        or string.find(text, "loot", 1, true)
+    ) then
+        return true
+    end
+
+    local ancestor = prompt.Parent
+    for _ = 1, 6 do
+        if not ancestor then
+            break
+        end
+        local name = string.lower(ancestor.Name)
+        if string.find(name, "chest", 1, true)
+            or string.find(name, "loot crate", 1, true) then
+            return true
+        end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
+
+local function getPromptPart(prompt)
+    local parent = prompt and prompt.Parent
+    if not parent then
+        return nil
+    end
+    if parent:IsA("Attachment") then
+        parent = parent.Parent
+    end
+    return getPart(parent)
+end
+
+local function openNearbyChests()
+    if not state.autoFarm then
+        return
+    end
+
+    local root = getRoot()
+    if not root then
+        return
+    end
+
+    local now = os.clock()
+    local fired = 0
+    for prompt in pairs(promptSet) do
+        if prompt.Parent and isChestPrompt(prompt) then
+            local part = getPromptPart(prompt)
+            if part then
+                local dx = part.Position.X - root.Position.X
+                local dz = part.Position.Z - root.Position.Z
+                local horizontalDistance = math.sqrt(dx * dx + dz * dz)
+                if horizontalDistance <= state.promptRange
+                    and (not promptCooldown[prompt] or promptCooldown[prompt] <= now) then
+                    promptCooldown[prompt] = now + 4
+                    if firePromptNow(prompt) then
+                        fired = fired + 1
+                    end
+                end
+            end
+        end
+
+        if fired >= 8 then
+            break
+        end
+    end
+end
+
+local function getLostChildren()
+    local characters = workspace:FindFirstChild("Characters")
+    local children = {}
+    if not characters then
+        return children
+    end
+
+    for _, child in ipairs(characters:GetChildren()) do
+        if child:IsA("Model") and isLostChild(child) then
+            table.insert(children, child)
+        end
+    end
+
+    table.sort(children, function(a, b)
+        return a.Name < b.Name
+    end)
+    return children
+end
+
+local function childIsAtCamp(child)
+    if not child or not child.Parent then
+        return false
+    end
+
+    for _, name in ipairs({ "Rescued", "Saved", "AtCamp", "IsRescued" }) do
+        local value = child:GetAttribute(name)
+        if value == true or value == 1 or value == "true" then
+            return true
+        end
+    end
+
+    local part = getPart(child)
+    if not part then
+        return false
+    end
+    local firePart = getPart(getMainFire())
+    local center = firePart and firePart.Position or CAMPFIRE_DROP
+    return (part.Position - center).Magnitude <= 120
+end
+
+local function getUnrescuedChildren()
+    local children = {}
+    for _, child in ipairs(getLostChildren()) do
+        if not childIsAtCamp(child) then
+            table.insert(children, child)
+        end
+    end
+    return children
+end
+
+local function chooseRescueSack(requiredSlots)
+    local best = nil
+    local bestFits = false
+    local bestCount = math.huge
+    local bestFree = -1
+
+    for _, container in ipairs(ownedContainers()) do
+        for _, item in ipairs(container:GetChildren()) do
+            if isSack(item) then
+                local count = tonumber(item:GetAttribute("NumberItems")) or 0
+                local capacity = tonumber(item:GetAttribute("Capacity")) or 0
+                local free = math.max(0, capacity - count)
+                local fits = free >= requiredSlots
+
+                if (fits and not bestFits)
+                    or (fits == bestFits and fits and (count < bestCount or (count == bestCount and free > bestFree)))
+                    or (not fits and not bestFits and free > bestFree) then
+                    best = item
+                    bestFits = fits
+                    bestCount = count
+                    bestFree = free
+                end
+            end
+        end
+    end
+
+    return best, bestFree
+end
+
+local function equipOwnedItem(item)
+    if not item or not item.Parent then
+        return false
+    end
+    if not isLive(EquipItemHandle) then
+        refreshRemotes()
+    end
+    if not isLive(EquipItemHandle) then
+        return false
+    end
+
+    local worked, response = callUtilityRemote(EquipItemHandle, 0.75, "FireAllClients", item)
+    if worked and response ~= false then
+        return true
+    end
+    worked, response = callUtilityRemote(EquipItemHandle, 0.75, item)
+    return worked and response ~= false
+end
+
+local function focusCameraAt(position)
+    local camera = workspace.CurrentCamera
+    local root = getRoot()
+    if camera and root then
+        pcall(function()
+            camera.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 3, 0), position)
+        end)
+    end
+end
+
+local function storeChildInSack(sack, child)
+    if not state.autoFarm or not sack or not sack.Parent or not child or not child.Parent then
+        return false
+    end
+
+    local part = getPart(child)
+    local character = getCharacter()
+    if part and character then
+        pcall(character.PivotTo, character, part.CFrame * CFrame.new(0, 0, 3))
+        lockFarmCharacter()
+        focusCameraAt(part.Position)
+    end
+
+    equipOwnedItem(sack)
+
+    local prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        firePromptNow(prompt)
+        task.wait(0.05)
+    end
+
+    local before = tonumber(sack:GetAttribute("NumberItems"))
+    if not isLive(RequestBagStoreItem) then
+        refreshRemotes()
+    end
+
+    if isLive(RequestBagStoreItem) and child.Parent then
+        callUtilityRemote(RequestBagStoreItem, 1.5, sack, child)
+    end
+
+    local deadline = os.clock() + 0.8
+    repeat
+        task.wait(0.05)
+        local after = tonumber(sack:GetAttribute("NumberItems"))
+        local characters = workspace:FindFirstChild("Characters")
+        local leftWorld = not child.Parent or (characters and not child:IsDescendantOf(characters))
+        local countIncreased = before ~= nil and after ~= nil and after > before
+        if leftWorld or countIncreased then
+            return true
+        end
+    until not state.autoFarm or os.clock() >= deadline
+
+    return false
+end
+
+local function findBagUnstoreRemote()
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+            local name = string.lower(remote.Name)
+            if string.find(name, "bag", 1, true)
+                and (string.find(name, "unstore", 1, true) or string.find(name, "removeitem", 1, true)) then
+                return remote
+            end
+        end
+    end
+    return nil
+end
+
+local function activateUnstoreGui()
+    local fireSignal = rawget(G, "firesignal")
+    if type(fireSignal) ~= "function" and type(firesignal) == "function" then
+        fireSignal = firesignal
+    end
+
+    local activated = false
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        if object:IsA("GuiButton") and object.Visible then
+            local ok, text = pcall(function()
+                return string.lower(object.Text or "")
+            end)
+            if ok and string.find(text, "unstore", 1, true) then
+                if type(fireSignal) == "function" then
+                    activated = pcall(fireSignal, object.Activated) or activated
+                end
+                pcall(function()
+                    object:Activate()
+                end)
+            end
+        end
+    end
+    return activated
+end
+
+local function simulateUnstoreKey()
+    local vimOk, vim = pcall(game.GetService, game, "VirtualInputManager")
+    if vimOk and vim then
+        local pressed = pcall(vim.SendKeyEvent, vim, true, Enum.KeyCode.F, false, game)
+        if pressed then
+            task.wait(2.35)
+            pcall(vim.SendKeyEvent, vim, false, Enum.KeyCode.F, false, game)
+            return true
+        end
+    end
+
+    local press = rawget(G, "keypress")
+    local release = rawget(G, "keyrelease")
+    if type(press) == "function" and type(release) == "function" then
+        local ok = pcall(press, 0x46)
+        if ok then
+            task.wait(2.35)
+            pcall(release, 0x46)
+            return true
+        end
+    end
+    return false
+end
+
+local function unstoreSackAtCamp(sack)
+    if not sack or not sack.Parent then
+        return false
+    end
+
+    local character = getCharacter()
+    if character then
+        pcall(character.PivotTo, character, CFrame.new(CAMPFIRE_DROP + Vector3.new(0, 3, 4)))
+    end
+    lockFarmCharacter()
+    equipOwnedItem(sack)
+    focusCameraAt(CAMPFIRE_DROP)
+
+    local before = tonumber(sack:GetAttribute("NumberItems"))
+    local remote = findBagUnstoreRemote()
+    if remote and (before == nil or before > 0) then
+        for _ = 1, math.min(before or 8, 12) do
+            callUtilityRemote(remote, 0.75, sack)
+            task.wait(0.04)
+        end
+        task.wait(0.35)
+    end
+
+    local afterRemote = tonumber(sack:GetAttribute("NumberItems"))
+    if before == nil or afterRemote == nil or afterRemote >= before then
+        for _ = 1, 8 do
+            activateUnstoreGui()
+            task.wait(0.04)
+        end
+        task.wait(0.25)
+    end
+
+    local afterGui = tonumber(sack:GetAttribute("NumberItems"))
+    if before == nil or afterGui == nil or afterGui >= before then
+        simulateUnstoreKey()
+    end
+
+    task.wait(0.8)
+    local after = tonumber(sack:GetAttribute("NumberItems"))
+    return before == nil or after == nil or after < before
+end
+
+local function runChildRescueAttempt()
+    if not state.autoFarm
+        or state.childRescueRunning
+        or state.childRescueCompleted
+        or state.childRescueAttempts >= state.childRescueMaxAttempts then
+        return false
+    end
+
+    local level = getCampfireLevel()
+    if level == nil or level < state.campfireTargetLevel then
+        return false
+    end
+
+    local children = getUnrescuedChildren()
+    if #children == 0 then
+        state.childRescueCompleted = true
+        state.childRescuePending = false
+        return true
+    end
+
+    state.childRescueRunning = true
+    state.childRescuePending = false
+    state.childRescueAttempts = state.childRescueAttempts + 1
+    cancelFarmTween()
+
+    local camera = workspace.CurrentCamera
+    local oldCameraType = camera and camera.CameraType
+    local oldCameraSubject = camera and camera.CameraSubject
+    local oldCameraCFrame = camera and camera.CFrame
+    if camera then
+        pcall(function()
+            camera.CameraType = Enum.CameraType.Scriptable
+        end)
+    end
+
+    local success = false
+    pcall(function()
+        local sack, freeSlots = chooseRescueSack(#children)
+        if not sack or freeSlots <= 0 then
+            return
+        end
+
+        local stored = 0
+        for _, child in ipairs(children) do
+            if not state.autoFarm then
+                break
+            end
+            if storeChildInSack(sack, child) then
+                stored = stored + 1
+            end
+            task.wait(0.08)
+        end
+
+        if stored <= 0 then
+            return
+        end
+
+        local beforeDrop = tonumber(sack:GetAttribute("NumberItems"))
+        local dropped = unstoreSackAtCamp(sack)
+        task.wait(2)
+        local afterDrop = tonumber(sack:GetAttribute("NumberItems"))
+        local sackVerified = dropped
+            and (beforeDrop == nil or afterDrop == nil or afterDrop < beforeDrop)
+        local remaining = getUnrescuedChildren()
+        success = sackVerified and #remaining == 0
+    end)
+
+    if camera then
+        pcall(function()
+            if oldCameraCFrame then
+                camera.CFrame = oldCameraCFrame
+            end
+            if oldCameraSubject then
+                camera.CameraSubject = oldCameraSubject
+            end
+            if oldCameraType then
+                camera.CameraType = oldCameraType
+            else
+                camera.CameraType = Enum.CameraType.Custom
+            end
+        end)
+    end
+
+    if state.autoFarm then
+        local character = getCharacter()
+        if character then
+            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+        end
+        lockFarmCharacter()
+    end
+
+    state.childRescueRunning = false
+    if success then
+        state.childRescueCompleted = true
+        state.childRescuePending = false
+    else
+        state.nextChildRescueAt = os.clock() + 5
+        state.childRescuePending = false
+    end
+    return success
+end
+
 local function moveFarmTo(position, ignoreInterrupts)
     if not state.autoFarm then
         return false
@@ -1584,7 +2471,7 @@ local function moveFarmTo(position, ignoreInterrupts)
         end
 
         if not ignoreInterrupts
-            and (state.emergencyFoodRun or foodServiceDue() or isNight()) then
+            and (state.emergencyFoodRun or foodServiceDue() or isNight() or state.childRescuePending or state.childRescueRunning) then
             pcall(tween.Cancel, tween)
             break
         end
@@ -1695,6 +2582,28 @@ local function runFoodService()
     end
 end
 
+task.spawn(function()
+    while state.active do
+        if state.smartResources then
+            runResourceService()
+            task.wait(0.35)
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+task.spawn(function()
+    while state.active do
+        if state.autoFarm then
+            openNearbyChests()
+            task.wait(0.3)
+        else
+            task.wait(0.9)
+        end
+    end
+end)
+
 local patrolPoints = {}
 
 -- Four rings out to 700 studs. Offset alternating rings so coverage overlaps.
@@ -1723,6 +2632,7 @@ local function enableFarm()
     previousFarm.chop = state.autoChop
     previousFarm.kill = state.killAura
     previousFarm.gear = state.autoBestGear
+    previousFarm.smart = state.smartResources
 
     if humanoid then
         previousFarm.walkSpeed = humanoid.WalkSpeed
@@ -1742,12 +2652,20 @@ local function enableFarm()
     state.autoChop = true
     state.killAura = true
     state.autoBestGear = true
+    state.smartResources = true
+    state.smartResources = true
     state.patrolIndex = 1
+    state.childRescueAttempts = 0
+    state.childRescueRunning = false
+    state.childRescuePending = false
+    state.childRescueCompleted = false
+    state.nextChildRescueAt = 0
 
     -- Immediate first food sweep, then every minute.
     state.lastFoodService = 0
 
     createPlatform()
+    setAllPromptsInstant()
 
     local character = getCharacter()
     if character then
@@ -1765,12 +2683,15 @@ local function disableFarm()
     state.autoFarm = false
     state.emergencyFoodRun = false
     state.foodServiceRunning = false
+    state.childRescuePending = false
+    state.childRescueRunning = false
 
     cancelFarmTween()
 
     state.autoChop = previousFarm.chop
     state.killAura = previousFarm.kill
     state.autoBestGear = previousFarm.gear
+    state.smartResources = previousFarm.smart
 
     local humanoid = getHumanoid()
     local root = getRoot()
@@ -1798,6 +2719,7 @@ local function disableFarm()
     end
 
     destroyPlatform()
+    restoreInstantPrompts()
 
     if character then
         pcall(character.PivotTo, character, CFrame.new(RETURN_POSITION))
@@ -1872,8 +2794,12 @@ task.spawn(function()
             else
                 wasNight = false
 
+                -- After Level 6, rescuing children has priority during daytime.
+                if state.childRescuePending and not state.childRescueRunning then
+                    runChildRescueAttempt()
+                    task.wait(0.2)
                 -- Food service has priority over roaming.
-                if state.emergencyFoodRun or foodServiceDue() then
+                elseif state.emergencyFoodRun or foodServiceDue() then
                     moveFarmTo(FARM_HOME, true)
                     runFoodService()
                     task.wait(0.2)
@@ -1914,7 +2840,7 @@ screen.Parent = playerGui
 
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(250, 320)
+frame.Size = UDim2.fromOffset(250, 364)
 frame.Position = UDim2.new(0.5, -117, 0.16, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
 frame.BorderSizePixel = 0
@@ -2005,10 +2931,11 @@ local chopButton = makeButton(72, "Auto Chop")
 local killButton = makeButton(116, "Kill Aura")
 local gearButton = makeButton(160, "Auto Best Gear")
 local farmButton = makeButton(204, "Auto Farm")
+local smartButton = makeButton(248, "Smart Logs / Scrap")
 
 local credits = Instance.new("TextLabel")
 credits.Size = UDim2.new(1, -16, 0, 30)
-credits.Position = UDim2.fromOffset(8, 268)
+credits.Position = UDim2.fromOffset(8, 318)
 credits.BackgroundTransparency = 1
 credits.Text = "Credits: Smile B"
 credits.TextColor3 = Color3.fromRGB(145, 145, 155)
@@ -2050,6 +2977,7 @@ local function updateButtons()
     setButtonState(killButton, state.killAura)
     setButtonState(gearButton, state.autoBestGear)
     setButtonState(farmButton, state.autoFarm)
+    setButtonState(smartButton, state.smartResources)
 end
 
 track(chopButton.MouseButton1Click:Connect(function()
@@ -2085,6 +3013,14 @@ track(farmButton.MouseButton1Click:Connect(function()
     updateButtons()
 end))
 
+track(smartButton.MouseButton1Click:Connect(function()
+    if state.autoFarm then
+        return
+    end
+    state.smartResources = not state.smartResources
+    updateButtons()
+end))
+
 local function clampToViewport(position, size)
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
@@ -2110,7 +3046,7 @@ local function refreshResponsiveLayout()
     lastViewport = viewport
 
     local widthScale = math.max(0.72, (viewport.X - 16) / 250)
-    local heightScale = math.max(0.72, (viewport.Y - 16) / 320)
+    local heightScale = math.max(0.72, (viewport.Y - 16) / 364)
     uiScale.Scale = math.clamp(math.min(1, widthScale, heightScale), 0.72, 1)
 
     task.defer(function()
