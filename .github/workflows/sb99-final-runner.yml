@@ -46,38 +46,43 @@ jobs:
           end = spec.index("\n          PY", start)
           patch_source = textwrap.dedent(spec[start:end])
 
-          # The first guard run exposed one indentation-only defect in this exact
-          # patch anchor. Remove only that rep() from the extracted specification;
-          # the equivalent source edit is applied explicitly below.
+          # Two exact-text anchors in the original guard were affected by YAML
+          # indentation normalization. Remove only those rep() calls; equivalent
+          # source edits are applied explicitly after the reviewed patch executes.
           bad_start = patch_source.index("rep('''                        local executorCall = false")
           bad_end = patch_source.index("rep('''local function ensureAxeArmed", bad_start)
+          patch_source = patch_source[:bad_start] + patch_source[bad_end:]
+
+          bad_start = patch_source.index("rep('''                if character and (not root or (root.Position - FARM_HOME).Magnitude > 1.5) then")
+          bad_end = patch_source.index("rep('''-- Main window dragging.", bad_start)
           patch_source = patch_source[:bad_start] + patch_source[bad_end:]
 
           exec(compile(patch_source, "<sb99-reviewed-patch>", "exec"), {})
 
           text = target.read_text(encoding="utf-8")
-          old = '''                        local executorCall = false
-                          if type(checkcaller) == "function" then
-                              executorCall = checkcaller()
-                          end'''
-          # Try the actual source indentation first. The second form is retained
-          # only as a defensive fallback if YAML indentation normalization differs.
-          actual = '''                        local executorCall = false
+
+          actual_checkcaller = '''                        local executorCall = false
                         if type(checkcaller) == "function" then
                             executorCall = checkcaller()
                         end'''
-          new = '''                        local executorCall = false
+          hardened_checkcaller = '''                        local executorCall = false
                         if type(checkcaller) == "function" then
                             local callerOk, callerResult = pcall(checkcaller)
                             executorCall = callerOk and callerResult == true
                         end'''
-
-          if actual in text:
-              text = text.replace(actual, new, 1)
-          elif old in text:
-              text = text.replace(old, new, 1)
-          else:
+          if actual_checkcaller not in text:
               raise SystemExit("checkcaller source anchor missing after reviewed patch")
+          text = text.replace(actual_checkcaller, hardened_checkcaller, 1)
+
+          actual_night_pivot = '''                if character and (not root or (root.Position - FARM_HOME).Magnitude > 1.5) then
+                    character:PivotTo(CFrame.new(FARM_HOME))
+                end'''
+          hardened_night_pivot = '''                if character and (not root or (root.Position - FARM_HOME).Magnitude > 1.5) then
+                    pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+                end'''
+          if actual_night_pivot not in text:
+              raise SystemExit("night PivotTo source anchor missing after reviewed patch")
+          text = text.replace(actual_night_pivot, hardened_night_pivot, 1)
 
           target.write_text(text, encoding="utf-8")
           PY
@@ -104,6 +109,7 @@ jobs:
               "pcall(task.cancel, attackThread)",
               "local function lockFarmCharacter",
               "local deadline = os.clock() + duration + 2",
+              "pcall(character.PivotTo, character, CFrame.new(FARM_HOME))",
               "local dragTouch = nil",
               "local ballTouch = nil",
               "local function runFoodService",
@@ -120,6 +126,7 @@ jobs:
               'local G = (type(getgenv) == "function" and getgenv()) or _G',
               'and type(newcclosure) == "function" then',
               'executorCall = checkcaller()',
+              'character:PivotTo(CFrame.new(FARM_HOME))',
           )
           for needle in forbidden:
               if needle in s:
@@ -138,8 +145,6 @@ jobs:
           chmod +x /tmp/luau/luau-compile
           /tmp/luau/luau-compile "$TARGET" >/dev/null
 
-          # Refetch main immediately before creating the GitHub write. If the
-          # target changed at all, abort instead of overwriting it.
           git fetch origin main
           remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
           if [[ "$remote_blob" != "$EXPECTED_BLOB" ]]; then
@@ -162,8 +167,6 @@ jobs:
 
           git rebase origin/main
 
-          # One last target refetch directly before the push. A concurrent branch
-          # update after this point still makes the non-force push fail safely.
           git fetch origin main
           remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
           if [[ "$remote_blob" != "$EXPECTED_BLOB" ]]; then
