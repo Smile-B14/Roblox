@@ -28,6 +28,26 @@ jobs:
           BASE_BLOB="$(git rev-parse HEAD:"$TARGET")"
           test "$BASE_BLOB" = "$EXPECTED"
 
+          # Narrow one staged patch assertion to the state-initialization site.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/sb99_patrol_child_ui_patch.py')
+          t = p.read_text(encoding='utf-8')
+          old = """replace_once(
+              'G.SB99_CAMP_BUILD_DONE = state.campBuildDone',
+              'G.SB99_CAMP_BUILD_DONE = state.campBuildDone\\nG.SB99_SAPLING_SLOT = state.saplingSlot',
+              'persist sapling slot'
+          )"""
+          new = """replace_once(
+              'G.SB99_STATE = state\\nG.SB99_CAMP_BUILD_DONE = state.campBuildDone',
+              'G.SB99_STATE = state\\nG.SB99_CAMP_BUILD_DONE = state.campBuildDone\\nG.SB99_SAPLING_SLOT = state.saplingSlot',
+              'persist sapling slot'
+          )"""
+          if t.count(old) != 1:
+              raise SystemExit('staged sapling guard anchor mismatch')
+          p.write_text(t.replace(old, new, 1), encoding='utf-8')
+          PY
+
           python3 "$PATCH"
           git diff --check -- "$TARGET"
 
