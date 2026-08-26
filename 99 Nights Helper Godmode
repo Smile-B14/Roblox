@@ -259,10 +259,10 @@ local state = {
     strongholdAttemptActive = false,
 
     range = 200,
-    maxInflight = 72,
+    maxInflight = 16,
     inflight = 0,
-    targetCooldown = 0.06,
-    workerDelay = 0.008,
+    targetCooldown = 0.08,
+    workerDelay = 0.012,
     combatScanInterval = 0.05,
     capturedTokens = {},
     hitSequence = 0,
@@ -297,8 +297,10 @@ local state = {
 
     campfireTargetLevel = 6,
     campfireMaintainThreshold = 0.80,
-    resourcePassLimit = 64,
-    resourcePickupRange = 320,
+    fireDerivedLevel = math.clamp(tonumber(G.SB99_FIRE_DERIVED_LEVEL) or 1, 1, 6),
+    fireLastTarget = tonumber(G.SB99_FIRE_LAST_TARGET),
+    resourcePassLimit = 12,
+    resourcePickupRange = 360,
     resourceServiceRunning = false,
     childRescueAttempts = 0,
     childRescueMaxAttempts = 5,
@@ -1413,7 +1415,7 @@ local function attackTarget(target, isTree)
         releaseInflight()
     end)
 
-    task.delay(2, function()
+    task.delay(1, function()
         if released then
             return
         end
@@ -1494,12 +1496,17 @@ local function sortedEntities(root)
         return result
     end
 
+    local maxRange = state.range
+    if state.autoFarm and root.Position.Y >= 0 then
+        maxRange = math.min(maxRange, 90)
+    end
+
     for _, target in ipairs(folder:GetChildren()) do
         if target:IsA("Model") and target ~= player.Character and not isLostChild(target) and target.Name ~= "Pelt Trader" then
             local part = getPart(target)
             if part then
                 local distance = (part.Position - root.Position).Magnitude
-                if distance <= state.range then
+                if distance <= maxRange then
                     table.insert(result, {
                         target = target,
                         distance = distance,
@@ -1518,13 +1525,17 @@ end
 
 local function sortedTrees(root)
     local result = {}
+    local maxRange = state.range
+    if state.autoFarm and root.Position.Y >= 0 then
+        maxRange = math.min(maxRange, 45)
+    end
 
     for _, tree in ipairs(treeCache) do
         if tree.Parent then
             local part = getPart(tree)
             if part then
                 local distance = (part.Position - root.Position).Magnitude
-                if distance <= state.range then
+                if distance <= maxRange then
                     table.insert(result, {
                         target = tree,
                         distance = distance,
@@ -1750,11 +1761,25 @@ local function readNumberValue(object, names)
 end
 
 local function getCampfireLevel()
-    -- Current game path: workspace.Progress is the campfire progression
-    -- and reaches 6 at the maximum campfire level.
     local progress = tonumber(workspace:GetAttribute("Progress"))
+
+    if progress == nil then
+        local progressObject = workspace:FindFirstChild("Progress")
+        if progressObject then
+            local ok, value = pcall(function()
+                return progressObject.Value
+            end)
+            if ok then
+                progress = tonumber(value)
+            end
+        end
+    end
+
     if progress ~= nil then
-        return math.max(0, math.floor(progress + 0.001))
+        local level = math.clamp(math.floor(progress + 0.001), 1, state.campfireTargetLevel)
+        state.fireDerivedLevel = level
+        G.SB99_FIRE_DERIVED_LEVEL = level
+        return level
     end
 
     local fire = getMainFire()
@@ -1763,22 +1788,49 @@ local function getCampfireLevel()
     end
 
     local level = readNumberValue(fire, {
-        "Level", "FireLevel", "CampfireLevel", "UpgradeLevel", "CurrentLevel",
+        "Progress", "CampfireProgress", "Level", "FireLevel", "CampfireLevel", "UpgradeLevel", "CurrentLevel",
     })
     if level == nil and fire.Parent then
         level = readNumberValue(fire.Parent, {
-            "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
+            "Progress", "CampfireProgress", "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
         })
     end
     if level == nil then
         level = readNumberValue(workspace, {
-            "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
+            "Progress", "CampfireProgress", "CampfireLevel", "FireLevel", "CurrentFireLevel", "MainFireLevel",
         })
     end
 
     if level ~= nil then
-        return math.max(0, math.floor(level + 0.001))
+        level = math.clamp(math.floor(level + 0.001), 1, state.campfireTargetLevel)
+        state.fireDerivedLevel = level
+        G.SB99_FIRE_DERIVED_LEVEL = level
+        return level
     end
+
+    -- Some current servers expose FuelTarget immediately but do not replicate
+    -- Progress to the client. FuelTarget changes only when the fire advances,
+    -- so track those transitions for this server session rather than returning
+    -- nil forever and burning every log indefinitely.
+    local target = tonumber(fire:GetAttribute("FuelTarget"))
+    if target ~= nil and target > 0 then
+        local previousTarget = tonumber(state.fireLastTarget)
+        if previousTarget == nil then
+            state.fireLastTarget = target
+        elseif math.abs(target - previousTarget) > 0.001 then
+            state.fireDerivedLevel = math.clamp(
+                (tonumber(state.fireDerivedLevel) or 1) + 1,
+                1,
+                state.campfireTargetLevel
+            )
+            state.fireLastTarget = target
+        end
+
+        G.SB99_FIRE_DERIVED_LEVEL = state.fireDerivedLevel
+        G.SB99_FIRE_LAST_TARGET = state.fireLastTarget
+        return state.fireDerivedLevel
+    end
+
     return nil
 end
 
@@ -2007,7 +2059,10 @@ local function runResourceService()
     state.resourceServiceRunning = true
     local serviceOk = pcall(function()
         local level = getCampfireLevel()
-        local campfireMaxed = level ~= nil and level >= state.campfireTargetLevel
+        if level == nil then
+            return
+        end
+        local campfireMaxed = level >= state.campfireTargetLevel
         local fuelRatio = getCampfireFuelRatio()
         local now = os.clock()
 
@@ -2073,9 +2128,20 @@ local function runResourceService()
                 resourceCooldown[item] = os.clock() + 0.8
                 local handled = false
                 if target == CAMPFIRE_DROP then
-                    handled = burnItemIntoCampfire(item)
-                    if not handled and item.Parent == items and candidate.distance <= state.resourcePickupRange then
-                        handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
+                    -- The live game accepts fuel most reliably after normal drag
+                    -- ownership and a physical drop at the fire. Do not remotely
+                    -- burn objects from across the map.
+                    handled = dragItemTo(item, CFrame.new(CAMPFIRE_DROP))
+                    task.wait(0.10)
+
+                    if item.Parent == items then
+                        local part = getPart(item)
+                        local nearFire = part and (part.Position - CAMPFIRE_DROP).Magnitude <= 24
+                        if nearFire then
+                            handled = burnItemIntoCampfire(item) or handled
+                        end
+                    else
+                        handled = true
                     end
                 else
                     handled = dragItemTo(item, CFrame.new(target))
@@ -3436,10 +3502,10 @@ local function runFoodService()
     cancelFarmTween()
 
     local serviceOk = pcall(function()
-        -- Always stay under center while servicing food.
         local character = getCharacter()
+        local servicePosition = isNight() and FARM_HOME or CHILD_CAMP_DROP
         if character then
-            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+            pcall(character.PivotTo, character, CFrame.new(servicePosition))
         end
         lockFarmCharacter()
 
@@ -4091,15 +4157,23 @@ local function enableFarm()
     state.childRescueVerified = {}
     state.nextChildRescueAt = 0
 
-    -- Immediate first food sweep, then every minute.
-    state.lastFoodService = 0
+    -- Start roaming immediately. Emergency hunger can still request food,
+    -- while the normal collection/cooking sweep starts after one interval.
+    state.lastFoodService = os.clock()
 
     createPlatform()
     setAllPromptsInstant()
 
     local character = getCharacter()
+    local root = getRoot()
     if character then
-        pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+        if isNight() then
+            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+        elseif root then
+            pcall(character.PivotTo, character, CFrame.new(root.Position.X, FARM_PATROL_Y, root.Position.Z))
+        else
+            pcall(character.PivotTo, character, CFrame.new(getFarmCenter()))
+        end
     end
 
     lockFarmCharacter()
@@ -4204,7 +4278,14 @@ track(player.CharacterAdded:Connect(function(character)
         if state.strongholdControl then
             state.releaseFarmForStronghold()
         else
-            pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+            local root = character:FindFirstChild("HumanoidRootPart")
+            if isNight() then
+                pcall(character.PivotTo, character, CFrame.new(FARM_HOME))
+            elseif root then
+                pcall(character.PivotTo, character, CFrame.new(root.Position.X, FARM_PATROL_Y, root.Position.Z))
+            else
+                pcall(character.PivotTo, character, CFrame.new(getFarmCenter()))
+            end
             lockFarmCharacter()
         end
     end)
@@ -4261,23 +4342,53 @@ task.spawn(function()
                     task.wait(0.2)
                 -- Food service has priority over roaming.
                 elseif state.emergencyFoodRun or foodServiceDue() then
-                    moveFarmTo(FARM_HOME, true)
+                    moveFarmTo(getFarmCenter(), true)
                     runFoodService()
                     task.wait(0.2)
                 else
                     local point, tree = nextDayFarmTarget()
                     if point and moveFarmTo(point, false) then
                         if tree and tree.Parent and state.autoChop then
-                            -- Directly service the selected Small Tree while the
-                            -- normal aura worker keeps handling nearby trees/enemies.
-                            local chopDeadline = os.clock() + 1.1
+                            -- Travel stays at Y=30, but actual chopping is done at
+                            -- the tree's replicated trunk height. The debug probe
+                            -- showed manual chopping working around ground level
+                            -- while Auto Farm was attacking from ~27 studs above.
+                            local treePart = tree:FindFirstChild("Trunk", true)
+                            if not (treePart and treePart:IsA("BasePart")) then
+                                treePart = getPart(tree)
+                            end
+
+                            local character = getCharacter()
+                            if treePart and character then
+                                pcall(character.PivotTo, character, CFrame.new(
+                                    treePart.Position.X,
+                                    treePart.Position.Y + 4,
+                                    treePart.Position.Z
+                                ))
+                                lockFarmCharacter()
+                                task.wait(0.10)
+                            end
+
+                            local chopDeadline = os.clock() + 3
                             repeat
                                 attackTarget(tree, true)
-                                task.wait(0.08)
+                                task.wait(0.09)
                             until not state.autoFarm
                                 or state.strongholdControl
                                 or not smallTreeAvailable(tree)
                                 or os.clock() >= chopDeadline
+
+                            if state.autoFarm and not state.strongholdControl and not isNight() then
+                                local liveRoot = getRoot()
+                                if liveRoot and character and character.Parent then
+                                    pcall(character.PivotTo, character, CFrame.new(
+                                        liveRoot.Position.X,
+                                        FARM_PATROL_Y,
+                                        liveRoot.Position.Z
+                                    ))
+                                    lockFarmCharacter()
+                                end
+                            end
                         else
                             task.wait(0.25)
                         end
@@ -4694,10 +4805,11 @@ task.spawn(function()
         local radius = currentFarmRadius()
         local axeName = bestAxe and bestAxe.Parent and bestAxe.Name or "none"
         status.Text = string.format(
-            "Fire %s/6 | Axe %s | Trees %d\nSmart %s | SH %s | Diamonds %s",
+            "Fire %s/6 | Axe %s | Trees %d | Inflight %d\nSmart %s | SH %s | Diamonds %s",
             fireLevel and tostring(fireLevel) or "?",
             axeName,
             #treeCache,
+            state.inflight,
             state.smartResources and "ON" or "OFF",
             tostring(state.strongholdStatus or "Off"),
             diamonds and tostring(diamonds) or "--"
