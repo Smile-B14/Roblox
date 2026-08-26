@@ -1,0 +1,168 @@
+name: SB99 smart resource final validation 2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sb99-smart-resources-final2.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch, compile, and guarded push
+        shell: bash
+        env:
+          EXPECTED_BLOB: eba8a23765c87d50b713b6153fddfd6a59784e19
+          TARGET: 99 Nights Helper Godmode
+        run: |
+          set -euo pipefail
+          [[ "$(git hash-object "$TARGET")" == "$EXPECTED_BLOB" ]] || { echo "Target changed before patch"; exit 42; }
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import textwrap
+
+          target = Path("99 Nights Helper Godmode")
+          workflow = Path(".github/workflows/sb99-smart-resources-final.yml").read_text(encoding="utf-8")
+
+          marker = "          python3 <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          source = textwrap.dedent(workflow[start:end])
+
+          # Remove only the whitespace-sensitive daytime-controller rep() from
+          # the reviewed patch. Everything else executes exactly as reviewed.
+          needle = "After Level 6, rescuing children has priority during daytime."
+          pos = source.index(needle)
+          block_start = source.rfind("\nrep(", 0, pos) + 1
+          block_end = source.find("\n\nrep(", pos)
+          if block_start <= 0 or block_end < 0:
+              raise SystemExit("day-controller patch block could not be isolated")
+          source = source[:block_start] + source[block_end + 2:]
+
+          exec(compile(source, "<sb99-smart-reviewed-patch>", "exec"), {})
+
+          text = target.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r'(?m)^([ \t]*)-- Food service has priority over roaming\.\n'
+              r'\1if state\.emergencyFoodRun or foodServiceDue\(\) then\n'
+              r'\1    moveFarmTo\(FARM_HOME, true\)\n'
+              r'\1    runFoodService\(\)\n'
+              r'\1    task\.wait\(0\.2\)\n'
+              r'\1else'
+          )
+
+          def replace_day(match):
+              i = match.group(1)
+              return (
+                  i + '-- After Level 6, rescuing children has priority during daytime.\n'
+                  + i + 'if state.childRescuePending and not state.childRescueRunning then\n'
+                  + i + '    runChildRescueAttempt()\n'
+                  + i + '    task.wait(0.2)\n'
+                  + i + '-- Food service has priority over roaming.\n'
+                  + i + 'elseif state.emergencyFoodRun or foodServiceDue() then\n'
+                  + i + '    moveFarmTo(FARM_HOME, true)\n'
+                  + i + '    runFoodService()\n'
+                  + i + '    task.wait(0.2)\n'
+                  + i + 'else'
+              )
+
+          text, count = pattern.subn(replace_day, text, count=1)
+          if count != 1:
+              raise SystemExit(f"day-controller semantic patch mismatch: {count}")
+          target.write_text(text, encoding="utf-8")
+          PY
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          s = Path("99 Nights Helper Godmode").read_text(encoding="utf-8")
+          if re.search(r'WaitForChild\([^,\n\)]*\)', s):
+              raise SystemExit("unbounded WaitForChild found")
+
+          required = (
+              'local CAMPFIRE_DROP = Vector3.new(0, 13, 0)',
+              'local FOOD_AREA = CAMPFIRE_DROP',
+              'local SCRAP_DROP = Vector3.new(20, 13, -5)',
+              'local RequestBagStoreItem = nil',
+              'RequestBagStoreItem = findReplicated("RequestBagStoreItem")',
+              'smartResources = false',
+              'campfireTargetLevel = 6',
+              'campfireMaintainThreshold = 0.80',
+              'childRescueMaxAttempts = 5',
+              '["Lost Child"] = true',
+              '["Lost Child2"] = true',
+              '["Lost Child3"] = true',
+              '["Lost Child4"] = true',
+              'not isLostChild(target)',
+              'local function runResourceService()',
+              'local function openNearbyChests()',
+              'local function runChildRescueAttempt()',
+              'callUtilityRemote(RequestBagStoreItem, 1.5, sack, child)',
+              'state.childRescueAttempts = state.childRescueAttempts + 1',
+              'state.childRescuePending and not state.childRescueRunning',
+              'fireproximityprompt',
+              'VirtualInputManager',
+              'Smart Logs / Scrap',
+              'setAllPromptsInstant()',
+              'restoreInstantPrompts()',
+              'state.smartResources = true',
+          )
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(f"required smart-farm path missing: {needle}")
+
+          forbidden = (
+              'local FOOD_AREA = Vector3.new(0, 20, 0)',
+              'if target:IsA("Model") and target ~= player.Character then',
+          )
+          for needle in forbidden:
+              if needle in s:
+                  raise SystemExit(f"legacy path remains: {needle}")
+          PY
+
+          git diff --check -- "$TARGET"
+          git diff --quiet -- "$TARGET" && { echo "No target change"; exit 46; } || true
+
+          curl -fsSL https://api.github.com/repos/luau-lang/luau/releases/latest -o /tmp/luau-release.json
+          luau_url="$(jq -r '.assets[] | select(.name == "luau-ubuntu.zip") | .browser_download_url' /tmp/luau-release.json | head -n1)"
+          test -n "$luau_url"
+          curl -fsSL "$luau_url" -o /tmp/luau.zip
+          rm -rf /tmp/luau && mkdir -p /tmp/luau
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+
+          # Immediate target refetch before preparing any target write.
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          [[ "$remote_blob" == "$EXPECTED_BLOB" ]] || { echo "Target changed before write: $remote_blob"; exit 43; }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$TARGET"
+          git rm -- \
+            .github/workflows/sb99-smart-resources-final.yml \
+            .github/workflows/sb99-smart-resources-final2.yml
+          git commit -m "feat: add smart resource and rescue farm"
+
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          [[ "$remote_blob" == "$EXPECTED_BLOB" ]] || { echo "Target changed during validation: $remote_blob"; exit 44; }
+          git rebase origin/main
+
+          # Final target refetch immediately before the non-force push.
+          git fetch origin main
+          remote_blob="$(git ls-tree origin/main -- "$TARGET" | awk '{print $3}')"
+          [[ "$remote_blob" == "$EXPECTED_BLOB" ]] || { echo "Target changed before push: $remote_blob"; exit 45; }
+          git push origin HEAD:main
