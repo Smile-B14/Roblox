@@ -1,0 +1,44 @@
+name: SB99 child fullbag hotfix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sb99-child-fullbag-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch compile verify and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='99 Nights Helper Godmode'
+          PATCH='.github/sb99_child_fullbag_hotfix.py'
+          FLOW='.github/workflows/sb99-child-fullbag-hotfix.yml'
+          EXPECTED='c8b5116bfd942d4a695da863df1a202d51cab078'
+          test "$(git rev-parse HEAD:"$TARGET")" = "$EXPECTED"
+          python3 "$PATCH"
+          git diff --check -- "$TARGET"
+          curl -fsSL --retry 3 -o /tmp/luau.zip 'https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip'
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+          /tmp/luau/luau-compile "$TARGET" >/dev/null
+          grep -q 'Include full bags in discovery' "$TARGET"
+          git fetch origin main
+          test "$(git rev-parse origin/main:"$TARGET")" = "$EXPECTED"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          rm -f "$PATCH" "$FLOW"
+          git add -A
+          git commit -m 'fix: recover children from full bags'
+          git fetch origin main
+          test "$(git rev-parse origin/main:"$TARGET")" = "$EXPECTED"
+          git push origin HEAD:main
