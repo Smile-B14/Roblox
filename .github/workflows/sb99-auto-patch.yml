@@ -2,19 +2,18 @@ name: SB99 reliability patch
 
 on:
   push:
-    branches: [main]
-    paths:
-      - '.github/workflows/sb99-auto-patch.yml'
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: run helper reliability patch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -25,8 +24,8 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path('99 Nights Helper Godmode')
-          text = path.read_text(encoding='utf-8')
+          path = Path("99 Nights Helper Godmode")
+          text = path.read_text(encoding="utf-8")
 
           old_drag = '''local function dragItemTo(item, destination)
     if not item or not item.Parent or not StartDragging or not StopDragging then
@@ -134,41 +133,36 @@ end'''
     local accepted = success and (explicitSuccess or itemConsumed or hungerIncreased)'''
 
           if text.count(old_drag) != 1:
-              raise SystemExit('Expected dragItemTo block not found exactly once; refusing unsafe patch')
+              raise SystemExit("dragItemTo source block changed; refusing unsafe patch")
           if text.count(old_consume) != 1:
-              raise SystemExit('Expected consumeFood block not found exactly once; refusing unsafe patch')
+              raise SystemExit("consumeFood source block changed; refusing unsafe patch")
 
           text = text.replace(old_drag, new_drag, 1)
           text = text.replace(old_consume, new_consume, 1)
 
-          # Static sanity checks: preserve core sections and reject common fragile waits.
-          required = [
-              'Smile B - 99 Nights Helper',
-              'local function attemptAutoEat()',
-              'local function attackTarget(target, isTree)',
-              'local function runFoodService()',
-              'local function enableFarm()',
-              'local function disableFarm()',
-              'Godmode Active',
-              'Credits: Smile B',
-          ]
-          for marker in required:
+          for marker in (
+              "Smile B - 99 Nights Helper",
+              "local function attemptAutoEat()",
+              "local function attackTarget(target, isTree)",
+              "local function runFoodService()",
+              "local function enableFarm()",
+              "local function disableFarm()",
+              "Godmode Active",
+              "Credits: Smile B",
+          ):
               if marker not in text:
-                  raise SystemExit(f'Missing required marker after patch: {marker}')
+                  raise SystemExit("required section missing: " + marker)
 
-          unbounded = re.findall(r'WaitForChild\(\s*["\'][^"\']+["\']\s*\)', text)
-          if unbounded:
-              raise SystemExit(f'Unbounded WaitForChild introduced/found: {unbounded[:3]}')
+          if re.search(r'WaitForChild\(\s*["\'][^"\']+["\']\s*\)', text):
+              raise SystemExit("unbounded WaitForChild found")
 
-          # Lightweight delimiter check outside quoted strings/comments is intentionally
-          # conservative; exact replacements above protect the surrounding Luau structure.
-          if text.count('local function ') < 20:
-              raise SystemExit('Unexpected function-count drop; refusing patch')
+          if text.count("local function ") < 20:
+              raise SystemExit("unexpected function-count drop")
 
-          path.write_text(text, encoding='utf-8')
+          path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Commit target update and remove temporary workflow
+      - name: Commit update and remove temporary workflow
         shell: bash
         run: |
           git config user.name "Smile B Script Polish"
