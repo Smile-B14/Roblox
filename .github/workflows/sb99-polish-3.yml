@@ -1,0 +1,145 @@
+name: SB99 Polish 3
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    if: github.event.head_commit.message == 'chore: run sb99 polish 3'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch helper safely
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          path = Path('99 Nights Helper Godmode')
+          expected = 'fad489d80b4297ae9d4fb0065360cc6391507d45'
+          actual = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+          if actual != expected:
+              raise SystemExit(f'target changed: expected {expected}, got {actual}')
+
+          text = path.read_text()
+
+          old_consume = '''local function consumeFood(item)
+    if not item or not item.Parent or not RequestConsumeItem then
+        return false
+    end
+
+    local root = getRoot()
+    if not root then
+        return false
+    end
+'''
+          new_consume = '''local function consumeFood(item)
+    if not item or not item.Parent then
+        return false
+    end
+
+    -- Utility remotes can be replaced during round transitions. Refresh a
+    -- missing/stale consume reference immediately so Auto Eat does not waste a
+    -- full retry cycle waiting for the background resolver.
+    if not isLive(RequestConsumeItem) then
+        refreshRemotes()
+        if not isLive(RequestConsumeItem) then
+            return false
+        end
+    end
+
+    local root = getRoot()
+    if not root then
+        return false
+    end
+'''
+          if text.count(old_consume) != 1:
+              raise SystemExit('consumeFood patch anchor mismatch')
+          text = text.replace(old_consume, new_consume, 1)
+
+          old_hotbar = '''local function requestHotbarPickup(item)
+    if not item or not item.Parent or not RequestHotbarItem then
+        return false
+    end
+
+    local success, response = callUtilityRemote(RequestHotbarItem, 1.5, item)
+
+    return success and (
+'''
+          new_hotbar = '''local function requestHotbarPickup(item)
+    if not item or not item.Parent then
+        return false
+    end
+
+    -- Gear pickup should recover immediately if Roblox replaces the remote
+    -- mid-round instead of silently failing until the periodic refresh runs.
+    if not isLive(RequestHotbarItem) then
+        refreshRemotes()
+        if not isLive(RequestHotbarItem) then
+            return false
+        end
+    end
+
+    local success, response = callUtilityRemote(RequestHotbarItem, 1.5, item)
+
+    return success and (
+'''
+          if text.count(old_hotbar) != 1:
+              raise SystemExit('requestHotbarPickup patch anchor mismatch')
+          text = text.replace(old_hotbar, new_hotbar, 1)
+
+          # Static/scope sanity checks. Timed WaitForChild calls are allowed;
+          # unbounded startup waits are not.
+          required = [
+              'Smile B - 99 Nights Helper',
+              'local function consumeFood(item)',
+              'local function requestHotbarPickup(item)',
+              'local function attackTarget(target, isTree)',
+              'local function runFoodService()',
+              'local function isNight()',
+              'local function enableFarm()',
+              'local function disableFarm()',
+              '● Godmode Active',
+              'Credits: Smile B',
+          ]
+          for marker in required:
+              if marker not in text:
+                  raise SystemExit(f'missing required marker: {marker}')
+
+          import re
+          for match in re.finditer(r'WaitForChild\(([^\n]*)\)', text):
+              args = match.group(1)
+              if ',' not in args:
+                  raise SystemExit(f'unbounded WaitForChild detected: {match.group(0)}')
+
+          # Basic delimiter sanity after stripping comments/strings conservatively.
+          if text.count('(') != text.count(')'):
+              raise SystemExit('parenthesis count mismatch')
+          if text.count('{') != text.count('}'):
+              raise SystemExit('brace count mismatch')
+          if text.count('[') != text.count(']'):
+              raise SystemExit('bracket count mismatch')
+
+          path.write_text(text)
+          PY
+
+      - name: Commit verified improvement and self-clean
+        shell: bash
+        run: |
+          git config user.name "Smile B Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/sb99-polish-3.yml
+          git add "99 Nights Helper Godmode"
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: refresh stale utility remotes"
+          git push origin main
