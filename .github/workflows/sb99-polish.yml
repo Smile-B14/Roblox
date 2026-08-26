@@ -1,0 +1,142 @@
+name: SB99 guarded polish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sb99-polish.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch utility remote single-flight guard
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          
+          path = Path('99 Nights Helper Godmode')
+          expected = 'fad489d80b4297ae9d4fb0065360cc6391507d45'
+          current = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+          if current != expected:
+              raise SystemExit(f'target changed: expected {expected}, got {current}')
+          
+          text = path.read_text(encoding='utf-8')
+          start_marker = 'local invokeLocks = setmetatable({}, { __mode = "k" })'
+          end_marker = '-- No Hunger spoof in the final build.'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          
+          replacement = '''local invokeLocks = setmetatable({}, { __mode = "k" })
+
+local function callUtilityRemote(remote, timeoutSeconds, ...)
+    if not isLive(remote) then
+        return false, nil
+    end
+
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(remote.FireServer, remote, ...)
+        return ok, ok and true or nil
+    end
+
+    if not remote:IsA("RemoteFunction") then
+        return false, nil
+    end
+
+    -- RemoteFunction calls are single-flight per remote instance. Roblox/Luau
+    -- cannot cancel a yielded InvokeServer, so a timed-out call intentionally
+    -- keeps this lock until its coroutine really returns. Retrying while an old
+    -- invocation is still yielded would slowly accumulate stuck coroutines.
+    -- If the game replaces the remote, refreshRemotes supplies a new Instance
+    -- with an independent lock, so normal recovery still works.
+    if invokeLocks[remote] ~= nil then
+        return false, nil
+    end
+
+    local timeout = math.max(0.25, tonumber(timeoutSeconds) or 2)
+    local args = table.pack(...)
+    local token = {}
+    local done = false
+    local ok = false
+    local result = nil
+
+    invokeLocks[remote] = token
+
+    task.spawn(function()
+        ok, result = pcall(remote.InvokeServer, remote, table.unpack(args, 1, args.n))
+        done = true
+
+        if invokeLocks[remote] == token then
+            invokeLocks[remote] = nil
+        end
+    end)
+
+    local deadline = os.clock() + timeout
+    while state.active and not done and os.clock() < deadline do
+        task.wait()
+    end
+
+    if not done then
+        -- Keep the token locked. The spawned InvokeServer is still alive and
+        -- only that invocation is allowed to release its own lock later.
+        return false, nil
+    end
+
+    return ok, result
+end
+
+'''
+          
+          updated = text[:start] + replacement + text[end:]
+          if updated == text:
+              raise SystemExit('no change produced')
+          
+          # Guardrails: preserve every major feature and avoid unbounded startup waits.
+          required = [
+              'local function attemptAutoEat()',
+              'local function attackTarget(target, isTree)',
+              'local function runFoodService()',
+              'local function isNight()',
+              'local function enableFarm()',
+              'local function disableFarm()',
+              'Smile B - 99 Nights Helper',
+              'Godmode Active',
+          ]
+          for token_text in required:
+              if token_text not in updated:
+                  raise SystemExit(f'missing required section: {token_text}')
+          if 'invokeCooldowns' in updated:
+              raise SystemExit('stale invokeCooldowns reference remains')
+          
+          # Every WaitForChild in this helper must have a finite timeout argument.
+          import re
+          for match in re.finditer(r'WaitForChild\(([^\n\)]*)\)', updated):
+              if ',' not in match.group(1):
+                  raise SystemExit(f'unbounded WaitForChild: {match.group(0)}')
+          
+          path.write_text(updated, encoding='utf-8')
+          PY
+      - name: Verify scoped diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff --exit-code -- .github/workflows/sb99-polish.yml >/dev/null || true
+          test -n "$(git diff -- '99 Nights Helper Godmode')"
+          changed="$(git diff --name-only)"
+          test "$changed" = "99 Nights Helper Godmode"
+      - name: Commit improvement
+        shell: bash
+        run: |
+          git config user.name 'Smile B Script Polish'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -- '99 Nights Helper Godmode'
+          git commit -m 'fix: prevent hung remote coroutine buildup'
+          git push origin HEAD:main
