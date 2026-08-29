@@ -1,356 +1,1732 @@
--- loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/Racetimer"))()
+--[[
+	Smile B - Universal Race Timer v3
+	Credits: Smile B
+
+	Client-side race timer for Roblox executors.
+	Designed for mouse, keyboard, and touch. No game-specific remotes are used.
+
+	Optional loader after uploading this file:
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/Smile-B14/Roblox/refs/heads/main/Racetimer"))()
+]]
+
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
-local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
 
--- // CONFIGURATION //
-local SNAP_THRESHOLD = 20
-local SAVE_FILE_NAME = "RobloxRaceBestTime.txt"
-
-local Player = Players.LocalPlayer
-local Mouse = Player:GetMouse()
-
--- State Variables
-local StartHitbox, EndHitbox = nil, nil
-local SetupPoints = {} 
-local SetupStep = 0 
-local IsRacing = false
-local RaceStartTime = 0
-local BestTime = math.huge
-local Debounce = false 
-
--- Visual Preview Variables
-local PreviewPart = nil
-local CurrentSnappedPos = nil 
-
--- // UI SETUP //
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RaceTimerProFixed"
-ScreenGui.Parent = Player:WaitForChild("PlayerGui")
-ScreenGui.ResetOnSpawn = false 
-
--- Setup Menu
-local SetupFrame = Instance.new("Frame")
-SetupFrame.Name = "SetupMenu"
-SetupFrame.Size = UDim2.new(0, 400, 0, 260)
-SetupFrame.Position = UDim2.new(0.5, -200, 0.5, -130)
-SetupFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-SetupFrame.BorderSizePixel = 2
-SetupFrame.BorderColor3 = Color3.fromRGB(0, 255, 128)
-SetupFrame.Parent = ScreenGui
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.BackgroundTransparency = 1
-Title.TextColor3 = Color3.new(1,1,1)
-Title.TextSize = 22
-Title.Font = Enum.Font.GothamBold
-Title.Text = "DEATH STOP & FILE SAVE"
-Title.Parent = SetupFrame
-
-local PasteBox = Instance.new("TextBox")
-PasteBox.Size = UDim2.new(0.9, 0, 0, 50)
-PasteBox.Position = UDim2.new(0.05, 0, 0.2, 0)
-PasteBox.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-PasteBox.TextColor3 = Color3.new(1,1,1)
-PasteBox.Text = "" 
-PasteBox.PlaceholderText = "Paste Save Code here (or leave empty for default)"
-PasteBox.TextWrapped = true
-PasteBox.Font = Enum.Font.Code
-PasteBox.TextSize = 12
-PasteBox.Parent = SetupFrame
-
-local LoadBtn = Instance.new("TextButton")
-LoadBtn.Size = UDim2.new(0.4, 0, 0, 40)
-LoadBtn.Position = UDim2.new(0.05, 0, 0.5, 0)
-LoadBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
-LoadBtn.TextColor3 = Color3.new(1,1,1)
-LoadBtn.Text = "LOAD CODE"
-LoadBtn.Font = Enum.Font.GothamBold
-LoadBtn.Parent = SetupFrame
-
-local NewBtn = Instance.new("TextButton")
-NewBtn.Size = UDim2.new(0.4, 0, 0, 40)
-NewBtn.Position = UDim2.new(0.55, 0, 0.5, 0)
-NewBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 80)
-NewBtn.TextColor3 = Color3.new(1,1,1)
-NewBtn.Text = "NEW SETUP"
-NewBtn.Font = Enum.Font.GothamBold
-NewBtn.Parent = SetupFrame
-
-local InfoTxt = Instance.new("TextLabel")
-InfoTxt.Size = UDim2.new(0.9, 0, 0, 50)
-InfoTxt.Position = UDim2.new(0.05, 0, 0.75, 0)
-InfoTxt.BackgroundTransparency = 1
-InfoTxt.TextColor3 = Color3.fromRGB(180, 180, 180)
-InfoTxt.TextSize = 14
-InfoTxt.Text = "Features: Stops on Death (Red), Record (Green).\nSaves Best Time to .txt file."
-InfoTxt.Font = Enum.Font.Gotham
-InfoTxt.Parent = SetupFrame
-
--- Timer HUD
-local RaceFrame = Instance.new("Frame")
-RaceFrame.Size = UDim2.new(0, 300, 0, 100)
-RaceFrame.Position = UDim2.new(0.5, -150, 0.85, 0)
-RaceFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-RaceFrame.BackgroundTransparency = 0.5
-RaceFrame.Visible = false
-RaceFrame.Active = true
-RaceFrame.Draggable = true 
-RaceFrame.Parent = ScreenGui
-
-local TimerLabel = Instance.new("TextLabel")
-TimerLabel.Size = UDim2.new(1, 0, 0.6, 0)
-TimerLabel.BackgroundTransparency = 1
-TimerLabel.TextColor3 = Color3.new(1,1,1)
-TimerLabel.TextSize = 36
-TimerLabel.Font = Enum.Font.GothamBold
-TimerLabel.Text = "00:00.00"
-TimerLabel.Parent = RaceFrame
-
-local BestLabel = Instance.new("TextLabel")
-BestLabel.Size = UDim2.new(1, 0, 0.3, 0)
-BestLabel.Position = UDim2.new(0, 0, 0.6, 0)
-BestLabel.BackgroundTransparency = 1
-BestLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-BestLabel.Text = "Best: --:--"
-BestLabel.Font = Enum.Font.Gotham
-BestLabel.TextSize = 18
-BestLabel.Parent = RaceFrame
-
-local Instructions = Instance.new("TextLabel")
-Instructions.Size = UDim2.new(1, 0, 0, 50)
-Instructions.Position = UDim2.new(0, 0, 0.1, 0)
-Instructions.BackgroundTransparency = 1
-Instructions.TextColor3 = Color3.new(1, 1, 0)
-Instructions.TextStrokeTransparency = 0
-Instructions.TextSize = 24
-Instructions.Font = Enum.Font.GothamBlack
-Instructions.Text = ""
-Instructions.Parent = ScreenGui
-
--- // FILE SAVING FUNCTIONS //
-
-local function FormatTime(t)
-	local m = math.floor(t / 60)
-	local s = t % 60
-	return string.format("%02d:%05.2f", m, s)
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+	return
 end
 
--- Try to load existing best time from PC
-local function LoadBestTimeFromFile()
-	local success, result = pcall(function()
-		if isfile(SAVE_FILE_NAME) then
-			return readfile(SAVE_FILE_NAME)
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local GLOBAL_KEY = "__SMILE_B_UNIVERSAL_RACE_TIMER_V3"
+
+local GlobalEnvironment = _G
+pcall(function()
+	if type(getgenv) == "function" then
+		GlobalEnvironment = getgenv()
+	end
+end)
+
+if type(GlobalEnvironment) ~= "table" then
+	GlobalEnvironment = _G
+end
+
+local PreviousApp = GlobalEnvironment[GLOBAL_KEY]
+if type(PreviousApp) == "table" and type(PreviousApp.Destroy) == "function" then
+	pcall(function()
+		PreviousApp:Destroy()
+	end)
+end
+
+local ExistingGui = PlayerGui:FindFirstChild("SmileBRaceTimerV3")
+if ExistingGui then
+	ExistingGui:Destroy()
+end
+
+local ExistingVisuals = Workspace:FindFirstChild("SmileB_RaceTimer_LocalVisuals")
+if ExistingVisuals then
+	ExistingVisuals:Destroy()
+end
+
+-- Configuration values are intentionally conservative for cross-game use.
+local CONFIG = {
+	SnapThreshold = 20,
+	MinimumGateWidth = 3,
+	TriggerThickness = 5,
+	ReleaseDistance = 9,
+	VerticalTolerance = 60,
+	MaximumCrossingStep = 600,
+	MinimumRaceTime = 0.20,
+	RayDistance = 20000,
+	PreviewRate = 1 / 30,
+	SaveDirectory = "SmileB_RaceTimer",
+	SaveFile = "SmileB_RaceTimer/data_v3.json",
+	FallbackSaveFile = "SmileB_RaceTimer_data_v3.json",
+	DefaultCode = "-74.67,2.27,-58.06|73.99,2.51,-58.06|-75.48,67.42,-3533.20|77.37,64.86,-3533.20",
+}
+
+local COLORS = {
+	Background = Color3.fromRGB(14, 17, 22),
+	Panel = Color3.fromRGB(22, 27, 34),
+	Panel2 = Color3.fromRGB(30, 36, 45),
+	Border = Color3.fromRGB(58, 68, 82),
+	Text = Color3.fromRGB(242, 245, 250),
+	Muted = Color3.fromRGB(155, 166, 181),
+	Accent = Color3.fromRGB(52, 211, 153),
+	AccentDark = Color3.fromRGB(18, 119, 82),
+	Blue = Color3.fromRGB(56, 139, 253),
+	Red = Color3.fromRGB(248, 81, 73),
+	Gold = Color3.fromRGB(255, 203, 71),
+	White = Color3.fromRGB(255, 255, 255),
+}
+
+local App = {
+	Connections = {},
+	Destroyed = false,
+}
+GlobalEnvironment[GLOBAL_KEY] = App
+
+local function TrackConnection(connection)
+	table.insert(App.Connections, connection)
+	return connection
+end
+
+local function ExecutorFunction(name)
+	local value = nil
+	pcall(function()
+		value = GlobalEnvironment[name]
+	end)
+	if type(value) == "function" then
+		return value
+	end
+	pcall(function()
+		value = _G[name]
+	end)
+	return type(value) == "function" and value or nil
+end
+
+local FileApi = {
+	isfile = ExecutorFunction("isfile"),
+	readfile = ExecutorFunction("readfile"),
+	writefile = ExecutorFunction("writefile"),
+	makefolder = ExecutorFunction("makefolder"),
+	isfolder = ExecutorFunction("isfolder"),
+	setclipboard = ExecutorFunction("setclipboard") or ExecutorFunction("toclipboard"),
+}
+FileApi.Available = FileApi.readfile ~= nil and FileApi.writefile ~= nil
+
+local SavePath = CONFIG.FallbackSaveFile
+if FileApi.Available and FileApi.makefolder then
+	local folderReady = false
+	if FileApi.isfolder then
+		local ok, exists = pcall(FileApi.isfolder, CONFIG.SaveDirectory)
+		folderReady = ok and exists == true
+	end
+	if not folderReady then
+		local makeOk = pcall(FileApi.makefolder, CONFIG.SaveDirectory)
+		if not FileApi.isfolder then
+			folderReady = makeOk
+		end
+	end
+	if FileApi.isfolder then
+		local ok, exists = pcall(FileApi.isfolder, CONFIG.SaveDirectory)
+		folderReady = ok and exists == true
+	end
+	if folderReady then
+		SavePath = CONFIG.SaveFile
+	end
+end
+
+local Database = {
+	version = 3,
+	bests = {},
+	lastCodes = {},
+	names = {},
+	settings = {
+		visuals = true,
+		ignoreY = true,
+	},
+}
+
+local function LoadDatabase()
+	if not FileApi.Available then
+		return false, "Session-only PB (file API unavailable)"
+	end
+
+	local ok, raw = pcall(function()
+		if FileApi.isfile and not FileApi.isfile(SavePath) then
+			return nil
+		end
+		return FileApi.readfile(SavePath)
+	end)
+	if not ok or not raw or raw == "" then
+		-- A missing file may throw on executors that do not provide isfile.
+		-- writefile is still usable, so this is a clean first run rather than session-only mode.
+		return true, "PB saving ready"
+	end
+
+	local decodedOk, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+	if not decodedOk or type(decoded) ~= "table" then
+		return false, "Save file was invalid; using a clean session"
+	end
+
+	if type(decoded.bests) == "table" then
+		Database.bests = decoded.bests
+	end
+	if type(decoded.lastCodes) == "table" then
+		Database.lastCodes = decoded.lastCodes
+	end
+	if type(decoded.names) == "table" then
+		Database.names = decoded.names
+	end
+	if type(decoded.settings) == "table" then
+		if type(decoded.settings.visuals) == "boolean" then
+			Database.settings.visuals = decoded.settings.visuals
+		end
+		if type(decoded.settings.ignoreY) == "boolean" then
+			Database.settings.ignoreY = decoded.settings.ignoreY
+		end
+	end
+
+	return true, "PB saving ready"
+end
+
+local function SaveDatabase()
+	if not FileApi.Available then
+		return false
+	end
+	Database.version = 3
+	local encodedOk, encoded = pcall(HttpService.JSONEncode, HttpService, Database)
+	if not encodedOk then
+		return false
+	end
+	local writeOk = pcall(FileApi.writefile, SavePath, encoded)
+	return writeOk
+end
+
+local _, PersistenceMessage = LoadDatabase()
+
+local function New(className, properties, children)
+	local object = Instance.new(className)
+	for key, value in pairs(properties or {}) do
+		object[key] = value
+	end
+	for _, child in ipairs(children or {}) do
+		child.Parent = object
+	end
+	return object
+end
+
+local function AddCorner(object, radius)
+	New("UICorner", {
+		CornerRadius = UDim.new(0, radius or 8),
+		Parent = object,
+	})
+end
+
+local function AddStroke(object, color, thickness, transparency)
+	New("UIStroke", {
+		Color = color or COLORS.Border,
+		Thickness = thickness or 1,
+		Transparency = transparency or 0,
+		Parent = object,
+	})
+end
+
+local function MakeButton(parent, text, color)
+	local button = New("TextButton", {
+		AutoButtonColor = true,
+		BackgroundColor3 = color or COLORS.Panel2,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamSemibold,
+		Text = text,
+		TextColor3 = COLORS.Text,
+		TextSize = 13,
+		Parent = parent,
+	})
+	AddCorner(button, 8)
+	AddStroke(button, COLORS.Border, 1, 0.35)
+	return button
+end
+
+local function MakeLabel(parent, properties)
+	properties = properties or {}
+	properties.BackgroundTransparency = properties.BackgroundTransparency == nil and 1 or properties.BackgroundTransparency
+	properties.BorderSizePixel = 0
+	properties.Font = properties.Font or Enum.Font.Gotham
+	properties.TextColor3 = properties.TextColor3 or COLORS.Text
+	properties.TextSize = properties.TextSize or 14
+	properties.Parent = parent
+	return New("TextLabel", properties)
+end
+
+local ScreenGui = New("ScreenGui", {
+	Name = "SmileBRaceTimerV3",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = false,
+	DisplayOrder = 999999,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	Parent = PlayerGui,
+})
+
+local WorldFolder = New("Folder", {
+	Name = "SmileB_RaceTimer_LocalVisuals",
+	Parent = Workspace,
+})
+
+local MainWindow = New("Frame", {
+	Name = "CourseMenu",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(420, 500),
+	BackgroundColor3 = COLORS.Background,
+	BorderSizePixel = 0,
+	Active = true,
+	Parent = ScreenGui,
+})
+AddCorner(MainWindow, 14)
+AddStroke(MainWindow, COLORS.Border, 1, 0.1)
+
+local MainScale = New("UIScale", {
+	Scale = 1,
+	Parent = MainWindow,
+})
+
+local Header = New("Frame", {
+	Name = "DragHandle",
+	Size = UDim2.new(1, 0, 0, 50),
+	BackgroundColor3 = COLORS.Panel,
+	BorderSizePixel = 0,
+	Active = true,
+	Parent = MainWindow,
+})
+AddCorner(Header, 14)
+
+New("Frame", {
+	Position = UDim2.new(0, 0, 1, -14),
+	Size = UDim2.new(1, 0, 0, 14),
+	BackgroundColor3 = COLORS.Panel,
+	BorderSizePixel = 0,
+	Parent = Header,
+})
+
+MakeLabel(Header, {
+	Position = UDim2.fromOffset(16, 6),
+	Size = UDim2.new(1, -110, 0, 23),
+	Font = Enum.Font.GothamBold,
+	Text = "UNIVERSAL RACE TIMER",
+	TextSize = 16,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+MakeLabel(Header, {
+	Position = UDim2.fromOffset(16, 28),
+	Size = UDim2.new(1, -110, 0, 16),
+	Text = "Credits: Smile B",
+	TextColor3 = COLORS.Accent,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local MainMinimizeButton = MakeButton(Header, "—", COLORS.Panel2)
+MainMinimizeButton.Position = UDim2.new(1, -82, 0, 9)
+MainMinimizeButton.Size = UDim2.fromOffset(32, 32)
+MainMinimizeButton.TextSize = 18
+
+local CloseButton = MakeButton(Header, "×", Color3.fromRGB(91, 38, 42))
+CloseButton.Position = UDim2.new(1, -42, 0, 9)
+CloseButton.Size = UDim2.fromOffset(32, 32)
+CloseButton.TextSize = 20
+
+local MainContent = New("Frame", {
+	Position = UDim2.fromOffset(16, 62),
+	Size = UDim2.new(1, -32, 1, -76),
+	BackgroundTransparency = 1,
+	Parent = MainWindow,
+})
+
+MakeLabel(MainContent, {
+	Position = UDim2.fromOffset(0, 0),
+	Size = UDim2.fromOffset(100, 18),
+	Text = "COURSE NAME",
+	TextColor3 = COLORS.Muted,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local CourseNameBox = New("TextBox", {
+	Position = UDim2.fromOffset(0, 22),
+	Size = UDim2.new(1, 0, 0, 40),
+	BackgroundColor3 = COLORS.Panel,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.Gotham,
+	PlaceholderText = "My course",
+	PlaceholderColor3 = COLORS.Muted,
+	Text = "My course",
+	TextColor3 = COLORS.Text,
+	TextSize = 14,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = MainContent,
+})
+AddCorner(CourseNameBox, 8)
+AddStroke(CourseNameBox, COLORS.Border, 1, 0.2)
+New("UIPadding", {
+	PaddingLeft = UDim.new(0, 12),
+	PaddingRight = UDim.new(0, 12),
+	Parent = CourseNameBox,
+})
+
+MakeLabel(MainContent, {
+	Position = UDim2.fromOffset(0, 72),
+	Size = UDim2.fromOffset(160, 18),
+	Text = "COURSE SAVE CODE",
+	TextColor3 = COLORS.Muted,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local CodeBox = New("TextBox", {
+	Position = UDim2.fromOffset(0, 94),
+	Size = UDim2.new(1, 0, 0, 82),
+	BackgroundColor3 = Color3.fromRGB(9, 12, 16),
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.Code,
+	MultiLine = true,
+	PlaceholderText = "Paste an SBR3 or old 4-point code here",
+	PlaceholderColor3 = Color3.fromRGB(103, 113, 128),
+	Text = "",
+	TextColor3 = COLORS.Text,
+	TextSize = 11,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Parent = MainContent,
+})
+AddCorner(CodeBox, 8)
+AddStroke(CodeBox, COLORS.Border, 1, 0.2)
+New("UIPadding", {
+	PaddingTop = UDim.new(0, 9),
+	PaddingBottom = UDim.new(0, 9),
+	PaddingLeft = UDim.new(0, 10),
+	PaddingRight = UDim.new(0, 10),
+	Parent = CodeBox,
+})
+
+local LoadCodeButton = MakeButton(MainContent, "LOAD CODE", COLORS.Blue)
+LoadCodeButton.Position = UDim2.fromOffset(0, 188)
+LoadCodeButton.Size = UDim2.new(0.49, 0, 0, 42)
+
+local ContinueButton = MakeButton(MainContent, "CONTINUE LAST", COLORS.AccentDark)
+ContinueButton.Position = UDim2.new(0.51, 0, 0, 188)
+ContinueButton.Size = UDim2.new(0.49, 0, 0, 42)
+
+local NewSetupButton = MakeButton(MainContent, "NEW SETUP", COLORS.AccentDark)
+NewSetupButton.Position = UDim2.fromOffset(0, 240)
+NewSetupButton.Size = UDim2.new(0.49, 0, 0, 42)
+
+local DefaultButton = MakeButton(MainContent, "OLD DEFAULT", COLORS.Panel2)
+DefaultButton.Position = UDim2.new(0.51, 0, 0, 240)
+DefaultButton.Size = UDim2.new(0.49, 0, 0, 42)
+
+local VisualToggle = MakeButton(MainContent, "GATES: ON", COLORS.Panel2)
+VisualToggle.Position = UDim2.fromOffset(0, 294)
+VisualToggle.Size = UDim2.new(0.49, 0, 0, 40)
+
+local HeightToggle = MakeButton(MainContent, "HEIGHT: IGNORE", COLORS.Panel2)
+HeightToggle.Position = UDim2.new(0.51, 0, 0, 294)
+HeightToggle.Size = UDim2.new(0.49, 0, 0, 40)
+
+local ClearBestButton = MakeButton(MainContent, "CLEAR THIS PB", Color3.fromRGB(88, 44, 48))
+ClearBestButton.Position = UDim2.fromOffset(0, 346)
+ClearBestButton.Size = UDim2.new(1, 0, 0, 38)
+
+local MenuStatus = MakeLabel(MainContent, {
+	Position = UDim2.fromOffset(0, 394),
+	Size = UDim2.new(1, 0, 0, 22),
+	Text = PersistenceMessage,
+	TextColor3 = COLORS.Muted,
+	TextSize = 11,
+	TextWrapped = true,
+})
+
+local RaceHud = New("Frame", {
+	Name = "RaceHUD",
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -24),
+	Size = UDim2.fromOffset(340, 184),
+	BackgroundColor3 = COLORS.Background,
+	BackgroundTransparency = 0.04,
+	BorderSizePixel = 0,
+	Active = true,
+	Visible = false,
+	Parent = ScreenGui,
+})
+AddCorner(RaceHud, 13)
+AddStroke(RaceHud, COLORS.Border, 1, 0.1)
+
+local HudScale = New("UIScale", {
+	Scale = 1,
+	Parent = RaceHud,
+})
+
+local HudHeader = New("Frame", {
+	Name = "DragHandle",
+	Size = UDim2.new(1, 0, 0, 38),
+	BackgroundColor3 = COLORS.Panel,
+	BorderSizePixel = 0,
+	Active = true,
+	Parent = RaceHud,
+})
+AddCorner(HudHeader, 13)
+New("Frame", {
+	Position = UDim2.new(0, 0, 1, -13),
+	Size = UDim2.new(1, 0, 0, 13),
+	BackgroundColor3 = COLORS.Panel,
+	BorderSizePixel = 0,
+	Parent = HudHeader,
+})
+
+local HudTitle = MakeLabel(HudHeader, {
+	Position = UDim2.fromOffset(12, 0),
+	Size = UDim2.new(1, -88, 1, 0),
+	Font = Enum.Font.GothamSemibold,
+	Text = "My course  •  READY",
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local HudMinimizeButton = MakeButton(HudHeader, "—", COLORS.Panel2)
+HudMinimizeButton.Position = UDim2.new(1, -70, 0, 5)
+HudMinimizeButton.Size = UDim2.fromOffset(28, 28)
+HudMinimizeButton.TextSize = 16
+
+local HudCloseButton = MakeButton(HudHeader, "×", Color3.fromRGB(91, 38, 42))
+HudCloseButton.Position = UDim2.new(1, -36, 0, 5)
+HudCloseButton.Size = UDim2.fromOffset(28, 28)
+HudCloseButton.TextSize = 17
+
+local HudBody = New("Frame", {
+	Position = UDim2.fromOffset(0, 38),
+	Size = UDim2.new(1, 0, 1, -38),
+	BackgroundTransparency = 1,
+	Parent = RaceHud,
+})
+
+local TimerLabel = MakeLabel(HudBody, {
+	Position = UDim2.fromOffset(8, 4),
+	Size = UDim2.new(1, -16, 0, 54),
+	Font = Enum.Font.GothamBold,
+	Text = "00:00.000",
+	TextColor3 = COLORS.White,
+	TextSize = 35,
+})
+
+local BestLabel = MakeLabel(HudBody, {
+	Position = UDim2.fromOffset(12, 58),
+	Size = UDim2.new(0.58, -12, 0, 24),
+	Text = "PB  --:--.---",
+	TextColor3 = COLORS.Gold,
+	TextSize = 14,
+	TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local DeltaLabel = MakeLabel(HudBody, {
+	Position = UDim2.new(0.58, 0, 0, 58),
+	Size = UDim2.new(0.42, -12, 0, 24),
+	Text = "",
+	TextColor3 = COLORS.Muted,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+local ResetButton = MakeButton(HudBody, "RESET", COLORS.Panel2)
+ResetButton.Position = UDim2.fromOffset(10, 91)
+ResetButton.Size = UDim2.new(0.235, -5, 0, 38)
+
+local CourseButton = MakeButton(HudBody, "COURSE", COLORS.Panel2)
+CourseButton.Position = UDim2.new(0.25, 5, 0, 91)
+CourseButton.Size = UDim2.new(0.235, -5, 0, 38)
+
+local CopyButton = MakeButton(HudBody, "COPY", COLORS.Panel2)
+CopyButton.Position = UDim2.new(0.5, 0, 0, 91)
+CopyButton.Size = UDim2.new(0.235, -5, 0, 38)
+
+local HudVisualButton = MakeButton(HudBody, "GATES", COLORS.Panel2)
+HudVisualButton.Position = UDim2.new(0.75, -5, 0, 91)
+HudVisualButton.Size = UDim2.new(0.25, -5, 0, 38)
+
+local PlacementBar = New("Frame", {
+	Name = "PlacementControls",
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -22),
+	Size = UDim2.fromOffset(420, 174),
+	BackgroundColor3 = COLORS.Background,
+	BorderSizePixel = 0,
+	Active = true,
+	Visible = false,
+	Parent = ScreenGui,
+})
+AddCorner(PlacementBar, 13)
+AddStroke(PlacementBar, COLORS.Border, 1, 0.1)
+
+local PlacementScale = New("UIScale", {
+	Scale = 1,
+	Parent = PlacementBar,
+})
+
+local PlacementInstruction = MakeLabel(PlacementBar, {
+	Position = UDim2.fromOffset(12, 10),
+	Size = UDim2.new(1, -24, 0, 25),
+	Font = Enum.Font.GothamBold,
+	Text = "START: place endpoint A",
+	TextColor3 = COLORS.Accent,
+	TextSize = 15,
+})
+
+local PlacementHelp = MakeLabel(PlacementBar, {
+	Position = UDim2.fromOffset(12, 36),
+	Size = UDim2.new(1, -24, 0, 34),
+	Text = "Aim with the center crosshair. PC: click world or press E.",
+	TextColor3 = COLORS.Muted,
+	TextSize = 11,
+	TextWrapped = true,
+})
+
+local PlaceAimButton = MakeButton(PlacementBar, "PLACE AIM", COLORS.Blue)
+PlaceAimButton.Position = UDim2.fromOffset(10, 78)
+PlaceAimButton.Size = UDim2.new(0.48, -10, 0, 42)
+
+local PlaceFeetButton = MakeButton(PlacementBar, "AT FEET", COLORS.AccentDark)
+PlaceFeetButton.Position = UDim2.new(0.5, 0, 0, 78)
+PlaceFeetButton.Size = UDim2.new(0.5, -10, 0, 42)
+
+local UndoButton = MakeButton(PlacementBar, "UNDO", COLORS.Panel2)
+UndoButton.Position = UDim2.fromOffset(10, 130)
+UndoButton.Size = UDim2.new(0.48, -10, 0, 34)
+
+local CancelPlacementButton = MakeButton(PlacementBar, "CANCEL", Color3.fromRGB(88, 44, 48))
+CancelPlacementButton.Position = UDim2.new(0.5, 0, 0, 130)
+CancelPlacementButton.Size = UDim2.new(0.5, -10, 0, 34)
+
+local Crosshair = New("Frame", {
+	Name = "AimCrosshair",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(28, 28),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = ScreenGui,
+})
+New("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(2, 24),
+	BackgroundColor3 = COLORS.White,
+	BorderSizePixel = 0,
+	Parent = Crosshair,
+})
+New("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(24, 2),
+	BackgroundColor3 = COLORS.White,
+	BorderSizePixel = 0,
+	Parent = Crosshair,
+})
+
+local Toast = New("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 18),
+	Size = UDim2.fromOffset(420, 44),
+	BackgroundColor3 = COLORS.Panel,
+	BackgroundTransparency = 0.05,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamSemibold,
+	Text = "",
+	TextColor3 = COLORS.Text,
+	TextSize = 13,
+	TextWrapped = true,
+	Visible = false,
+	ZIndex = 20,
+	Parent = ScreenGui,
+})
+AddCorner(Toast, 10)
+AddStroke(Toast, COLORS.Border, 1, 0.2)
+local ToastScale = New("UIScale", {Scale = 1, Parent = Toast})
+
+local ToastSerial = 0
+local function ShowToast(message, color, duration)
+	ToastSerial = ToastSerial + 1
+	local serial = ToastSerial
+	Toast.Text = message
+	Toast.TextColor3 = color or COLORS.Text
+	Toast.Visible = true
+	task.delay(duration or 2.4, function()
+		if not App.Destroyed and ToastSerial == serial then
+			Toast.Visible = false
 		end
 	end)
-	
-	if success and result and tonumber(result) then
-		BestTime = tonumber(result)
-		BestLabel.Text = "Best: " .. FormatTime(BestTime)
-		print("Loaded Best Time:", BestTime)
-	end
 end
 
--- Try to save new best time to PC
-local function SaveBestTimeToFile()
+local function UpdateResponsiveScale()
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	local viewport = camera.ViewportSize
+	local mainValue = math.clamp(math.min((viewport.X - 18) / 420, (viewport.Y - 90) / 500), 0.68, 1)
+	local compactValue = math.clamp((viewport.X - 18) / 420, 0.72, 1)
+	MainScale.Scale = mainValue
+	PlacementScale.Scale = compactValue
+	HudScale.Scale = math.clamp((viewport.X - 18) / 340, 0.76, 1)
+	ToastScale.Scale = compactValue
+end
+
+local CameraViewportConnection = nil
+local function BindCameraScale()
+	if CameraViewportConnection then
+		CameraViewportConnection:Disconnect()
+		CameraViewportConnection = nil
+	end
+	local camera = Workspace.CurrentCamera
+	if camera then
+		CameraViewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(UpdateResponsiveScale)
+	end
+	UpdateResponsiveScale()
+end
+
+TrackConnection(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(BindCameraScale))
+BindCameraScale()
+
+local function MakeDraggable(frame, handle)
+	local dragging = false
+	local dragInput = nil
+	local dragStart = nil
+	local startPosition = nil
+
+	TrackConnection(handle.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		dragging = true
+		dragStart = input.Position
+		startPosition = frame.Position
+		local endConnection
+		endConnection = input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+				if endConnection then
+					endConnection:Disconnect()
+				end
+			end
+		end)
+	end))
+
+	TrackConnection(handle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end))
+
+	TrackConnection(UserInputService.InputChanged:Connect(function(input)
+		if not dragging or input ~= dragInput or not dragStart or not startPosition then
+			return
+		end
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+
+		local camera = Workspace.CurrentCamera
+		if camera then
+			local viewport = camera.ViewportSize
+			local absolutePosition = frame.AbsolutePosition
+			local absoluteSize = frame.AbsoluteSize
+			local correctionX = 0
+			local correctionY = 0
+			if absolutePosition.X < 4 then
+				correctionX = 4 - absolutePosition.X
+			elseif absolutePosition.X + absoluteSize.X > viewport.X - 4 then
+				correctionX = (viewport.X - 4) - (absolutePosition.X + absoluteSize.X)
+			end
+			if absolutePosition.Y < 4 then
+				correctionY = 4 - absolutePosition.Y
+			elseif absolutePosition.Y + absoluteSize.Y > viewport.Y - 4 then
+				correctionY = (viewport.Y - 4) - (absolutePosition.Y + absoluteSize.Y)
+			end
+			if correctionX ~= 0 or correctionY ~= 0 then
+				frame.Position = UDim2.new(
+					frame.Position.X.Scale,
+					frame.Position.X.Offset + correctionX,
+					frame.Position.Y.Scale,
+					frame.Position.Y.Offset + correctionY
+				)
+			end
+		end
+	end))
+end
+
+MakeDraggable(MainWindow, Header)
+MakeDraggable(RaceHud, HudHeader)
+
+local ActiveCourse = nil
+local ActiveCourseCode = nil
+local ActiveCourseKey = nil
+local ActiveCourseName = "My course"
+local BestTime = math.huge
+local IsRacing = false
+local RaceStartedAt = 0
+local FrozenElapsed = 0
+local PreviousRootPosition = nil
+local StartArmed = true
+local FinishArmed = true
+local SetupActive = false
+local SetupPoints = {}
+local PreviewPart = nil
+local CurrentDeathConnection = nil
+local CurrentCharacter = nil
+local HudMinimized = false
+local MainMinimized = false
+local ClearConfirmationUntil = 0
+
+local function FormatTime(seconds)
+	seconds = math.max(0, tonumber(seconds) or 0)
+	local totalMilliseconds = math.floor(seconds * 1000 + 0.5)
+	local milliseconds = totalMilliseconds % 1000
+	local totalSeconds = math.floor(totalMilliseconds / 1000)
+	local secs = totalSeconds % 60
+	local totalMinutes = math.floor(totalSeconds / 60)
+	if totalMinutes >= 60 then
+		local hours = math.floor(totalMinutes / 60)
+		local minutes = totalMinutes % 60
+		return string.format("%02d:%02d:%02d.%03d", hours, minutes, secs, milliseconds)
+	end
+	return string.format("%02d:%02d.%03d", totalMinutes, secs, milliseconds)
+end
+
+local function Trim(text)
+	return (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function IsFiniteNumber(value)
+	return type(value) == "number" and value == value and value > -10000000 and value < 10000000
+end
+
+local function ParseVector(segment)
+	local values = string.split(Trim(segment), ",")
+	if #values ~= 3 then
+		return nil
+	end
+	local x = tonumber(Trim(values[1]))
+	local y = tonumber(Trim(values[2]))
+	local z = tonumber(Trim(values[3]))
+	if not IsFiniteNumber(x) or not IsFiniteNumber(y) or not IsFiniteNumber(z) then
+		return nil
+	end
+	return Vector3.new(x, y, z)
+end
+
+local function SerializePoints(points)
+	local segments = {"SBR3"}
+	for index = 1, 4 do
+		local point = points[index]
+		table.insert(segments, string.format("%.3f,%.3f,%.3f", point.X, point.Y, point.Z))
+	end
+	return table.concat(segments, "|")
+end
+
+local function ParseCode(code)
+	code = Trim(code)
+	if code == "" then
+		return nil, "Paste a course code first."
+	end
+
+	local segments = string.split(code, "|")
+	local offset = 0
+	if string.upper(Trim(segments[1] or "")) == "SBR3" then
+		offset = 1
+	end
+	if #segments - offset ~= 4 then
+		return nil, "Invalid code: expected exactly four points."
+	end
+
+	local points = {}
+	for index = 1, 4 do
+		local point = ParseVector(segments[index + offset])
+		if not point then
+			return nil, "Invalid coordinate in point " .. tostring(index) .. "."
+		end
+		points[index] = point
+	end
+
+	local startWidth = (Vector2.new(points[2].X, points[2].Z) - Vector2.new(points[1].X, points[1].Z)).Magnitude
+	local finishWidth = (Vector2.new(points[4].X, points[4].Z) - Vector2.new(points[3].X, points[3].Z)).Magnitude
+	if startWidth < CONFIG.MinimumGateWidth then
+		return nil, "Start gate is too short. Endpoints must be at least 3 studs apart."
+	end
+	if finishWidth < CONFIG.MinimumGateWidth then
+		return nil, "Finish gate is too short. Endpoints must be at least 3 studs apart."
+	end
+
+	return points, nil
+end
+
+local function GetCourseKey(code)
+	return tostring(game.PlaceId) .. ":" .. code
+end
+
+local function ClearWorldVisuals()
+	for _, child in ipairs(WorldFolder:GetChildren()) do
+		child:Destroy()
+	end
+	PreviewPart = nil
+end
+
+local function SetPartLocalOnly(part)
+	part.Anchored = true
+	part.CanCollide = false
+	part.CastShadow = false
 	pcall(function()
-		writefile(SAVE_FILE_NAME, tostring(BestTime))
-		print("Saved Best Time:", BestTime)
+		part.CanTouch = false
+		part.CanQuery = false
 	end)
 end
 
--- // CORE FUNCTIONS //
+local function CreateGateVisual(pointA, pointB, isStart)
+	local color = isStart and COLORS.Accent or COLORS.Red
+	local center = (pointA + pointB) / 2
+	local length = (pointB - pointA).Magnitude
+	local line = New("Part", {
+		Name = isStart and "StartGate" or "FinishGate",
+		Size = Vector3.new(0.45, 0.45, math.max(length, 0.1)),
+		CFrame = CFrame.lookAt(center, pointB),
+		Color = color,
+		Material = Enum.Material.Neon,
+		Transparency = 0.08,
+		Parent = WorldFolder,
+	})
+	SetPartLocalOnly(line)
 
-local function GetSnappedPosition(origin, currentPos)
-	local diffX = math.abs(origin.X - currentPos.X)
-	local diffZ = math.abs(origin.Z - currentPos.Z)
-	if diffX < SNAP_THRESHOLD then
-		return Vector3.new(origin.X, currentPos.Y, currentPos.Z), true
+	for _, position in ipairs({pointA, pointB}) do
+		local marker = New("Part", {
+			Name = "GateEndpoint",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.1, 1.1, 1.1),
+			Position = position,
+			Color = color,
+			Material = Enum.Material.Neon,
+			Transparency = 0.05,
+			Parent = WorldFolder,
+		})
+		SetPartLocalOnly(marker)
 	end
-	if diffZ < SNAP_THRESHOLD then
-		return Vector3.new(currentPos.X, currentPos.Y, origin.Z), true
+
+	local billboard = New("BillboardGui", {
+		Name = "GateLabel",
+		Adornee = line,
+		AlwaysOnTop = true,
+		LightInfluence = 0,
+		Size = UDim2.fromOffset(110, 30),
+		StudsOffset = Vector3.new(0, 2.4, 0),
+		Parent = line,
+	})
+	MakeLabel(billboard, {
+		Size = UDim2.fromScale(1, 1),
+		Font = Enum.Font.GothamBold,
+		Text = isStart and "START" or "FINISH",
+		TextColor3 = color,
+		TextSize = 14,
+		TextStrokeColor3 = Color3.new(0, 0, 0),
+		TextStrokeTransparency = 0.25,
+	})
+end
+
+local function RebuildWorldVisuals()
+	ClearWorldVisuals()
+	if SetupActive then
+		if #SetupPoints >= 2 then
+			CreateGateVisual(SetupPoints[1], SetupPoints[2], true)
+		end
+		if #SetupPoints >= 4 then
+			CreateGateVisual(SetupPoints[3], SetupPoints[4], false)
+		end
+	elseif ActiveCourse and Database.settings.visuals then
+		CreateGateVisual(ActiveCourse[1], ActiveCourse[2], true)
+		CreateGateVisual(ActiveCourse[3], ActiveCourse[4], false)
 	end
-	return currentPos, false
 end
 
-local function UpdatePreviewLine(p1, p2, isSnapped)
-	if not PreviewPart then
-		PreviewPart = Instance.new("Part")
-		PreviewPart.Anchored = true; PreviewPart.CanCollide = false
-		PreviewPart.Material = Enum.Material.Neon; PreviewPart.Transparency = 0.3
-		PreviewPart.Parent = Workspace
+local function UpdatePreview(pointA, pointB, snapped)
+	if not PreviewPart or not PreviewPart.Parent then
+		PreviewPart = New("Part", {
+			Name = "PlacementPreview",
+			Material = Enum.Material.Neon,
+			Transparency = 0.35,
+			Parent = WorldFolder,
+		})
+		SetPartLocalOnly(PreviewPart)
 	end
-	local center = (p1 + p2) / 2
-	local length = (p1 - p2).Magnitude
-	PreviewPart.Size = Vector3.new(0.3, 0.3, length)
-	PreviewPart.CFrame = CFrame.lookAt(center, p2)
-	PreviewPart.Color = isSnapped and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(0, 150, 255)
+	local center = (pointA + pointB) / 2
+	local length = (pointB - pointA).Magnitude
+	PreviewPart.Size = Vector3.new(0.32, 0.32, math.max(length, 0.1))
+	PreviewPart.CFrame = CFrame.lookAt(center, pointB)
+	PreviewPart.Color = snapped and COLORS.Accent or COLORS.Blue
 end
 
-local function DestroyPreview()
-	if PreviewPart then PreviewPart:Destroy(); PreviewPart = nil end
-end
-
-local function CreateGate(p1, p2, isStart)
-	local center = (p1 + p2) / 2
-	local width = (p1 - p2).Magnitude
-	local visual = Instance.new("Part")
-	visual.Anchored = true; visual.CanCollide = false
-	visual.Material = Enum.Material.Neon
-	visual.Size = Vector3.new(0.4, 0.2, width)
-	visual.CFrame = CFrame.new(center.X, math.min(p1.Y, p2.Y), center.Z) * CFrame.lookAt(p1, p2).Rotation
-	visual.Color = isStart and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
-	visual.Parent = Workspace
-	
-	local hitbox = Instance.new("Part")
-	hitbox.Name = isStart and "StartHitbox" or "EndHitbox"
-	hitbox.Anchored = true; hitbox.CanCollide = false; hitbox.Transparency = 1
-	hitbox.Size = Vector3.new(1, 100000, width)
-	local flatLook = Vector3.new(p2.X, p1.Y, p2.Z)
-	hitbox.CFrame = CFrame.new(center.X, 0, center.Z) * CFrame.lookAt(p1, flatLook).Rotation
-	hitbox.Parent = Workspace
-	return hitbox
-end
-
-local function SaveCode(points)
-	local data = {}
-	for _, v in ipairs(points) do table.insert(data, string.format("%.2f,%.2f,%.2f", v.X, v.Y, v.Z)) end
-	pcall(function() setclipboard(table.concat(data, "|")) end)
-	Instructions.Text = "Code Saved to Clipboard!"; Instructions.TextColor3 = Color3.new(0,1,0)
-	task.wait(2)
-	SetupFrame.Visible = false; RaceFrame.Visible = true; Instructions.Text = ""
-	LoadBestTimeFromFile()
-end
-
-local function ParseAndLoad(code)
-	local points = {}
-	local split = string.split(code, "|")
-	if #split < 4 then InfoTxt.Text = "Invalid Code."; InfoTxt.TextColor3 = Color3.new(1,0,0); return end
-	for _, segment in ipairs(split) do
-		local c = string.split(segment, ",")
-		table.insert(points, Vector3.new(tonumber(c[1]), tonumber(c[2]), tonumber(c[3])))
+local function RemovePreview()
+	if PreviewPart then
+		PreviewPart:Destroy()
+		PreviewPart = nil
 	end
-	StartHitbox = CreateGate(points[1], points[2], true)
-	EndHitbox = CreateGate(points[3], points[4], false)
-	SetupFrame.Visible = false; RaceFrame.Visible = true; Instructions.Text = ""
-	LoadBestTimeFromFile()
 end
 
--- // INPUT EVENTS //
+local function GetSnappedPosition(origin, position)
+	local differenceX = math.abs(origin.X - position.X)
+	local differenceZ = math.abs(origin.Z - position.Z)
+	if differenceX <= CONFIG.SnapThreshold or differenceZ <= CONFIG.SnapThreshold then
+		if differenceX <= differenceZ then
+			return Vector3.new(origin.X, position.Y, position.Z), true
+		end
+		return Vector3.new(position.X, position.Y, origin.Z), true
+	end
+	return position, false
+end
 
-NewBtn.MouseButton1Click:Connect(function()
-	SetupFrame.Visible = false; SetupStep = 1; SetupPoints = {}; Instructions.Text = "Click START Point 1"
-end)
+local function RaycastFromRay(ray)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local exclusions = {WorldFolder}
+	if LocalPlayer.Character then
+		table.insert(exclusions, LocalPlayer.Character)
+	end
+	params.FilterDescendantsInstances = exclusions
+	params.IgnoreWater = false
+	local result = Workspace:Raycast(ray.Origin, ray.Direction * CONFIG.RayDistance, params)
+	return result and result.Position or nil
+end
 
-LoadBtn.MouseButton1Click:Connect(function()
-	if PasteBox.Text ~= "" then
-		ParseAndLoad(PasteBox.Text)
+local function GetAimPoint()
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+	local viewport = camera.ViewportSize
+	return RaycastFromRay(camera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2))
+end
+
+local function GetScreenPoint(screenPosition)
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+	return RaycastFromRay(camera:ScreenPointToRay(screenPosition.X, screenPosition.Y))
+end
+
+local function GetFeetPoint()
+	local character = LocalPlayer.Character
+	local root = character and (
+		character:FindFirstChild("HumanoidRootPart")
+		or character.PrimaryPart
+		or character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("Torso")
+	)
+	if not root then
+		return nil
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {character, WorldFolder}
+	params.IgnoreWater = false
+	local result = Workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -1000, 0), params)
+	return result and result.Position or root.Position
+end
+
+local function UpdateToggleText()
+	VisualToggle.Text = Database.settings.visuals and "GATES: ON" or "GATES: OFF"
+	VisualToggle.TextColor3 = Database.settings.visuals and COLORS.Accent or COLORS.Muted
+	HeightToggle.Text = Database.settings.ignoreY and "HEIGHT: IGNORE" or "HEIGHT: ±60"
+	HeightToggle.TextColor3 = Database.settings.ignoreY and COLORS.Gold or COLORS.Accent
+	HudVisualButton.TextColor3 = Database.settings.visuals and COLORS.Accent or COLORS.Muted
+end
+
+local function SetHudState(state, color)
+	HudTitle.Text = ActiveCourseName .. "  •  " .. state
+	HudTitle.TextColor3 = color or COLORS.Text
+end
+
+local function RefreshBestLabel()
+	if BestTime < math.huge then
+		BestLabel.Text = "PB  " .. FormatTime(BestTime)
 	else
-		-- Hardcoded coordinates
-		local myCoords = "-74.67,2.27,-58.06|73.99,2.51,-58.06|-75.48,67.42,-3533.20|77.37,64.86,-3533.20"
-		PasteBox.Text = myCoords
-		ParseAndLoad(myCoords)
+		BestLabel.Text = "PB  --:--.---"
 	end
-end)
-
-RunService.RenderStepped:Connect(function()
-	if (SetupStep == 2 or SetupStep == 4) and Mouse.Hit then
-		local p1 = SetupPoints[#SetupPoints]
-		local snappedPos, isSnapped = GetSnappedPosition(p1, Mouse.Hit.Position)
-		CurrentSnappedPos = snappedPos
-		UpdatePreviewLine(p1, snappedPos, isSnapped)
-	else
-		DestroyPreview()
-	end
-end)
-
-Mouse.Button1Down:Connect(function()
-	if SetupStep == 0 or SetupStep > 4 then return end
-	local clickPos = ((SetupStep == 2 or SetupStep == 4) and CurrentSnappedPos) and CurrentSnappedPos or Mouse.Hit.Position
-	table.insert(SetupPoints, clickPos)
-	
-	local m = Instance.new("Part"); m.Anchored=true; m.CanCollide=false; m.Size=Vector3.new(1,100,1); m.Position=clickPos
-	m.Color=Color3.new(1,1,0); m.Transparency=0.5; m.Parent=Workspace; Debris:AddItem(m, 2)
-
-	if SetupStep == 1 then Instructions.Text = "Drag Line... (Green = Snapped)"; SetupStep = 2
-	elseif SetupStep == 2 then StartHitbox = CreateGate(SetupPoints[1], SetupPoints[2], true); Instructions.Text = "Click FINISH Point 1"; SetupStep = 3
-	elseif SetupStep == 3 then Instructions.Text = "Drag Line... (Green = Snapped)"; SetupStep = 4
-	elseif SetupStep == 4 then EndHitbox = CreateGate(SetupPoints[3], SetupPoints[4], false); SaveCode(SetupPoints); SetupStep = 5 end
-end)
-
-local function CheckZone(part)
-	if not part then return false end
-	local char = Player.Character
-	if not char then return false end
-	local params = OverlapParams.new(); params.FilterDescendantsInstances = {char}; params.FilterType = Enum.RaycastFilterType.Include
-	return #Workspace:GetPartsInPart(part, params) > 0
 end
 
--- // MAIN LOGIC //
+local function ResetRaceDisplay(message)
+	IsRacing = false
+	FrozenElapsed = 0
+	TimerLabel.Text = "00:00.000"
+	TimerLabel.TextColor3 = COLORS.White
+	DeltaLabel.Text = ""
+	SetHudState(message or "READY", COLORS.Accent)
+	PreviousRootPosition = nil
+end
 
-RunService.RenderStepped:Connect(function()
-	if SetupStep <= 4 and SetupStep ~= 0 then return end
-	
-	-- CHECK DEATH
-	if IsRacing then
-		local char = Player.Character
-		local hum = char and char:FindFirstChild("Humanoid")
-		
-		if not char or not hum or hum.Health <= 0 then
-			-- PLAYER DIED
-			IsRacing = false
-			TimerLabel.TextColor3 = Color3.fromRGB(255, 0, 0) -- RED for Death
-			-- Stop timer exactly where it is, do not save best time
-			Debounce = true
-			task.wait(2)
-			Debounce = false
+local function LoadCourse(points, requestedName)
+	local normalizedCode = SerializePoints(points)
+	ActiveCourse = points
+	ActiveCourseCode = normalizedCode
+	ActiveCourseKey = GetCourseKey(normalizedCode)
+
+	local savedName = Database.names[ActiveCourseKey]
+	local cleanName = Trim(requestedName)
+	if cleanName == "" then
+		cleanName = type(savedName) == "string" and Trim(savedName) or "My course"
+	end
+	if cleanName == "" then
+		cleanName = "My course"
+	end
+	if #cleanName > 28 then
+		cleanName = string.sub(cleanName, 1, 28)
+	end
+	ActiveCourseName = cleanName
+	CourseNameBox.Text = cleanName
+	Database.names[ActiveCourseKey] = cleanName
+
+	local entry = Database.bests[ActiveCourseKey]
+	if type(entry) == "number" and IsFiniteNumber(entry) and entry >= 0 then
+		BestTime = entry
+	elseif type(entry) == "table" and IsFiniteNumber(entry.best) and entry.best >= 0 then
+		BestTime = entry.best
+	else
+		BestTime = math.huge
+	end
+
+	Database.lastCodes[tostring(game.PlaceId)] = normalizedCode
+	SaveDatabase()
+	CodeBox.Text = normalizedCode
+	SetupActive = false
+	SetupPoints = {}
+	Crosshair.Visible = false
+	PlacementBar.Visible = false
+	MainWindow.Visible = false
+	RaceHud.Visible = true
+	StartArmed = true
+	FinishArmed = true
+	RefreshBestLabel()
+	ResetRaceDisplay("READY")
+	RebuildWorldVisuals()
+	ShowToast("Course loaded. Cross START, then FINISH.", COLORS.Accent, 2.7)
+end
+
+local function LoadCode(code, requestedName)
+	local points, errorMessage = ParseCode(code)
+	if not points then
+		MenuStatus.Text = errorMessage
+		MenuStatus.TextColor3 = COLORS.Red
+		ShowToast(errorMessage, COLORS.Red, 3)
+		return false
+	end
+	LoadCourse(points, requestedName)
+	return true
+end
+
+local function CopyCourseCode()
+	if not ActiveCourseCode then
+		ShowToast("No course is loaded.", COLORS.Red)
+		return
+	end
+	CodeBox.Text = ActiveCourseCode
+	if FileApi.setclipboard then
+		local ok = pcall(FileApi.setclipboard, ActiveCourseCode)
+		if ok then
+			ShowToast("Course code copied.", COLORS.Accent)
 			return
 		end
 	end
-	
-	-- START
-	if CheckZone(StartHitbox) then
-		if not Debounce then
-			Debounce = true
-			IsRacing = true
-			RaceStartTime = os.clock()
-			TimerLabel.TextColor3 = Color3.new(1,1,1) -- White
-			TimerLabel.Text = "00:00.00"
-			task.wait(1)
-			Debounce = false
-		end
+	ShowToast("Clipboard API unavailable. Open COURSE and copy the code box.", COLORS.Gold, 3.2)
+end
+
+local function PointSegmentDistance(point, endpointA, endpointB)
+	local segment = endpointB - endpointA
+	local lengthSquared = segment:Dot(segment)
+	if lengthSquared <= 0.000001 then
+		return (point - endpointA).Magnitude
 	end
-	
-	-- FINISH
-	if IsRacing and CheckZone(EndHitbox) then
-		if (os.clock() - RaceStartTime) > 0.5 then
-			IsRacing = false
-			local final = os.clock() - RaceStartTime
-			TimerLabel.Text = FormatTime(final)
-			
-			if final < BestTime then
-				-- NEW RECORD
-				BestTime = final
-				SaveBestTimeToFile() -- Save to txt
-				BestLabel.Text = "Best: " .. FormatTime(BestTime)
-				TimerLabel.TextColor3 = Color3.fromRGB(0, 255, 0) -- GREEN for Record
-			else
-				-- NORMAL FINISH
-				TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255) -- WHITE for Normal
+	local alpha = math.clamp((point - endpointA):Dot(segment) / lengthSquared, 0, 1)
+	return (point - (endpointA + segment * alpha)).Magnitude
+end
+
+local function Cross2(vectorA, vectorB)
+	return vectorA.X * vectorB.Y - vectorA.Y * vectorB.X
+end
+
+local function SegmentIntersection(movementA, movementB, gateA, gateB)
+	local movement = movementB - movementA
+	local gate = gateB - gateA
+	local denominator = Cross2(movement, gate)
+	if math.abs(denominator) < 0.000001 then
+		return nil
+	end
+	local difference = gateA - movementA
+	local movementAlpha = Cross2(difference, gate) / denominator
+	local gateAlpha = Cross2(difference, movement) / denominator
+	if movementAlpha >= 0 and movementAlpha <= 1 and gateAlpha >= 0 and gateAlpha <= 1 then
+		return movementAlpha
+	end
+	return nil
+end
+
+local function HeightAllowed(gatePointA, gatePointB, yPosition)
+	if Database.settings.ignoreY then
+		return true
+	end
+	local middleY = (gatePointA.Y + gatePointB.Y) / 2
+	return math.abs(yPosition - middleY) <= CONFIG.VerticalTolerance
+end
+
+local function SampleGate(pointA, pointB, previousPosition, currentPosition)
+	local gateA2 = Vector2.new(pointA.X, pointA.Z)
+	local gateB2 = Vector2.new(pointB.X, pointB.Z)
+	local current2 = Vector2.new(currentPosition.X, currentPosition.Z)
+	local distance = PointSegmentDistance(current2, gateA2, gateB2)
+
+	if distance <= CONFIG.TriggerThickness / 2 and HeightAllowed(pointA, pointB, currentPosition.Y) then
+		return true, distance
+	end
+
+	if previousPosition then
+		local previous2 = Vector2.new(previousPosition.X, previousPosition.Z)
+		local movementDistance = (current2 - previous2).Magnitude
+		if movementDistance > 0.001 and movementDistance <= CONFIG.MaximumCrossingStep then
+			local alpha = SegmentIntersection(previous2, current2, gateA2, gateB2)
+			if alpha then
+				local crossingY = previousPosition.Y + (currentPosition.Y - previousPosition.Y) * alpha
+				if HeightAllowed(pointA, pointB, crossingY) then
+					return true, distance
+				end
 			end
-			
-			Debounce = true
-			task.wait(2)
-			Debounce = false
 		end
 	end
-	
-	-- UPDATE TIMER
-	if IsRacing then
-		TimerLabel.Text = FormatTime(os.clock() - RaceStartTime)
+
+	return false, distance
+end
+
+local function StartRace()
+	if not ActiveCourse or IsRacing then
+		return
 	end
-end)
+	IsRacing = true
+	RaceStartedAt = os.clock()
+	FrozenElapsed = 0
+	TimerLabel.Text = "00:00.000"
+	TimerLabel.TextColor3 = COLORS.White
+	DeltaLabel.Text = ""
+	SetHudState("RACING", COLORS.Blue)
+end
+
+local function StopAsDnf(reason)
+	if not IsRacing then
+		return
+	end
+	FrozenElapsed = math.max(0, os.clock() - RaceStartedAt)
+	IsRacing = false
+	TimerLabel.Text = FormatTime(FrozenElapsed)
+	TimerLabel.TextColor3 = COLORS.Red
+	DeltaLabel.Text = "DNF"
+	DeltaLabel.TextColor3 = COLORS.Red
+	SetHudState(reason or "DNF", COLORS.Red)
+end
+
+local function FinishRace()
+	if not IsRacing then
+		return
+	end
+	local finalTime = math.max(0, os.clock() - RaceStartedAt)
+	if finalTime < CONFIG.MinimumRaceTime then
+		return
+	end
+
+	IsRacing = false
+	FrozenElapsed = finalTime
+	TimerLabel.Text = FormatTime(finalTime)
+	local previousBest = BestTime
+	local isNewBest = finalTime < previousBest
+
+	local entry = Database.bests[ActiveCourseKey]
+	if type(entry) ~= "table" then
+		entry = {}
+	end
+	entry.attempts = math.max(0, tonumber(entry.attempts) or 0) + 1
+	entry.last = finalTime
+	entry.updated = os.time()
+
+	if isNewBest then
+		BestTime = finalTime
+		entry.best = finalTime
+		TimerLabel.TextColor3 = COLORS.Accent
+		if previousBest < math.huge then
+			DeltaLabel.Text = string.format("-%0.3f", previousBest - finalTime)
+		else
+			DeltaLabel.Text = "NEW PB"
+		end
+		DeltaLabel.TextColor3 = COLORS.Accent
+		SetHudState("NEW PB", COLORS.Accent)
+		ShowToast("New personal best: " .. FormatTime(finalTime), COLORS.Accent, 3)
+	else
+		TimerLabel.TextColor3 = COLORS.White
+		DeltaLabel.Text = string.format("+%0.3f", finalTime - previousBest)
+		DeltaLabel.TextColor3 = COLORS.Red
+		SetHudState("FINISHED", COLORS.White)
+	end
+
+	Database.bests[ActiveCourseKey] = entry
+	RefreshBestLabel()
+	if not SaveDatabase() and FileApi.Available then
+		ShowToast("Finished, but the PB file could not be written.", COLORS.Gold, 3)
+	end
+end
+
+local function CancelCurrentRace()
+	if IsRacing then
+		StopAsDnf("RESET")
+	else
+		ResetRaceDisplay("READY")
+	end
+	StartArmed = false
+	FinishArmed = false
+	PreviousRootPosition = nil
+end
+
+local function RefreshPlacementInstruction()
+	local nextIndex = #SetupPoints + 1
+	local messages = {
+		"START: place endpoint A",
+		"START: place endpoint B",
+		"FINISH: place endpoint A",
+		"FINISH: place endpoint B",
+	}
+	PlacementInstruction.Text = messages[nextIndex] or "Course complete"
+	PlacementInstruction.TextColor3 = nextIndex <= 2 and COLORS.Accent or COLORS.Red
+	if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+		if nextIndex == 2 or nextIndex == 4 then
+			PlacementHelp.Text = "Green preview = snapped. Aim, then tap PLACE AIM or AT FEET."
+		else
+			PlacementHelp.Text = "Aim with the center crosshair, then tap PLACE AIM or AT FEET."
+		end
+	elseif nextIndex == 2 or nextIndex == 4 then
+		PlacementHelp.Text = "Green preview = axis snapped. Phone: aim + PLACE AIM. PC: click or E."
+	else
+		PlacementHelp.Text = "Aim with the center crosshair. PC: click world or press E."
+	end
+end
+
+local function BeginSetup()
+	if IsRacing then
+		StopAsDnf("CANCELLED")
+	end
+	SetupActive = true
+	SetupPoints = {}
+	PreviousRootPosition = nil
+	MainWindow.Visible = false
+	RaceHud.Visible = false
+	PlacementBar.Visible = true
+	Crosshair.Visible = true
+	RebuildWorldVisuals()
+	RefreshPlacementInstruction()
+	ShowToast("Set four points: two for START, then two for FINISH.", COLORS.Blue, 3)
+end
+
+local function CancelSetup()
+	SetupActive = false
+	SetupPoints = {}
+	RemovePreview()
+	Crosshair.Visible = false
+	PlacementBar.Visible = false
+	MainWindow.Visible = true
+	RebuildWorldVisuals()
+	MenuStatus.Text = PersistenceMessage
+	MenuStatus.TextColor3 = COLORS.Muted
+end
+
+local function PlaceSetupPoint(position)
+	if not SetupActive or not position then
+		ShowToast("Aim at a solid surface first.", COLORS.Red)
+		return
+	end
+
+	local nextIndex = #SetupPoints + 1
+	if nextIndex > 4 then
+		return
+	end
+
+	if nextIndex == 2 or nextIndex == 4 then
+		local origin = SetupPoints[#SetupPoints]
+		position = select(1, GetSnappedPosition(origin, position))
+		local width = (Vector2.new(position.X, position.Z) - Vector2.new(origin.X, origin.Z)).Magnitude
+		if width < CONFIG.MinimumGateWidth then
+			ShowToast("Gate is too short. Place this endpoint at least 3 studs away.", COLORS.Red, 3)
+			return
+		end
+	end
+
+	table.insert(SetupPoints, position)
+	RemovePreview()
+	RebuildWorldVisuals()
+
+	if #SetupPoints == 4 then
+		local completedPoints = SetupPoints
+		local courseName = CourseNameBox.Text
+		LoadCourse(completedPoints, courseName)
+		CopyCourseCode()
+		return
+	end
+
+	RefreshPlacementInstruction()
+end
+
+local function UndoSetupPoint()
+	if not SetupActive or #SetupPoints == 0 then
+		ShowToast("Nothing to undo.", COLORS.Muted)
+		return
+	end
+	table.remove(SetupPoints, #SetupPoints)
+	RemovePreview()
+	RebuildWorldVisuals()
+	RefreshPlacementInstruction()
+end
+
+local function OpenCourseMenu()
+	if IsRacing then
+		StopAsDnf("CANCELLED")
+	end
+	RaceHud.Visible = false
+	MainWindow.Visible = true
+	CodeBox.Text = ActiveCourseCode or CodeBox.Text
+	CourseNameBox.Text = ActiveCourseName
+	MenuStatus.Text = PersistenceMessage
+	MenuStatus.TextColor3 = COLORS.Muted
+end
+
+local function UpdateContinueButton()
+	local lastCode = Database.lastCodes[tostring(game.PlaceId)]
+	ContinueButton.Active = type(lastCode) == "string" and lastCode ~= ""
+	ContinueButton.AutoButtonColor = ContinueButton.Active
+	ContinueButton.BackgroundColor3 = ContinueButton.Active and COLORS.AccentDark or Color3.fromRGB(51, 57, 66)
+	ContinueButton.TextColor3 = ContinueButton.Active and COLORS.Text or COLORS.Muted
+end
+
+local function BindCharacter(character)
+	CurrentCharacter = character
+	PreviousRootPosition = nil
+	StartArmed = true
+	FinishArmed = true
+	if CurrentDeathConnection then
+		CurrentDeathConnection:Disconnect()
+		CurrentDeathConnection = nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+	if humanoid then
+		CurrentDeathConnection = humanoid.Died:Connect(function()
+			if CurrentCharacter == character then
+				StopAsDnf("DNF")
+				PreviousRootPosition = nil
+			end
+		end)
+	end
+end
+
+if LocalPlayer.Character then
+	task.defer(BindCharacter, LocalPlayer.Character)
+end
+
+TrackConnection(LocalPlayer.CharacterAdded:Connect(BindCharacter))
+TrackConnection(LocalPlayer.CharacterRemoving:Connect(function(character)
+	if CurrentCharacter == character then
+		StopAsDnf("DNF")
+		CurrentCharacter = nil
+		PreviousRootPosition = nil
+	end
+end))
+
+TrackConnection(RunService.Heartbeat:Connect(function()
+	if App.Destroyed or SetupActive or not ActiveCourse then
+		return
+	end
+
+	local character = LocalPlayer.Character
+	local root = character and (
+		character:FindFirstChild("HumanoidRootPart")
+		or character.PrimaryPart
+		or character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("Torso")
+	)
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or (humanoid and humanoid.Health <= 0) then
+		PreviousRootPosition = nil
+		return
+	end
+
+	local currentPosition = root.Position
+	local startHit, startDistance = SampleGate(ActiveCourse[1], ActiveCourse[2], PreviousRootPosition, currentPosition)
+	local finishHit, finishDistance = SampleGate(ActiveCourse[3], ActiveCourse[4], PreviousRootPosition, currentPosition)
+	local startedThisFrame = false
+
+	if not StartArmed and startDistance > CONFIG.ReleaseDistance then
+		StartArmed = true
+	end
+	if not FinishArmed and finishDistance > CONFIG.ReleaseDistance then
+		FinishArmed = true
+	end
+
+	if StartArmed and startHit then
+		StartArmed = false
+		if not IsRacing then
+			StartRace()
+			startedThisFrame = true
+		end
+	end
+
+	if FinishArmed and finishHit then
+		FinishArmed = false
+		if IsRacing and not startedThisFrame then
+			FinishRace()
+		end
+	end
+
+	PreviousRootPosition = currentPosition
+end))
+
+local PreviewAccumulator = 0
+TrackConnection(RunService.RenderStepped:Connect(function(deltaTime)
+	if IsRacing then
+		TimerLabel.Text = FormatTime(os.clock() - RaceStartedAt)
+	end
+
+	if not SetupActive then
+		return
+	end
+	PreviewAccumulator = PreviewAccumulator + deltaTime
+	if PreviewAccumulator < CONFIG.PreviewRate then
+		return
+	end
+	PreviewAccumulator = 0
+
+	local count = #SetupPoints
+	if count ~= 1 and count ~= 3 then
+		RemovePreview()
+		return
+	end
+	local aimPoint = GetAimPoint()
+	if not aimPoint then
+		RemovePreview()
+		return
+	end
+	local snappedPoint, snapped = GetSnappedPosition(SetupPoints[count], aimPoint)
+	UpdatePreview(SetupPoints[count], snappedPoint, snapped)
+end))
+
+local function PointerIsOverPlacementControls(position)
+	local ok, objects = pcall(function()
+		return PlayerGui:GetGuiObjectsAtPosition(position.X, position.Y)
+	end)
+	if not ok or type(objects) ~= "table" then
+		return false
+	end
+	for _, object in ipairs(objects) do
+		if object == PlacementBar or object:IsDescendantOf(PlacementBar) then
+			return true
+		end
+	end
+	return false
+end
+
+TrackConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if not SetupActive then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.Escape then
+		CancelSetup()
+		return
+	end
+	if gameProcessed then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.E then
+		PlaceSetupPoint(GetAimPoint())
+	elseif input.KeyCode == Enum.KeyCode.U or input.KeyCode == Enum.KeyCode.Backspace then
+		UndoSetupPoint()
+	elseif input.UserInputType == Enum.UserInputType.MouseButton1 and not PointerIsOverPlacementControls(input.Position) then
+		PlaceSetupPoint(GetScreenPoint(input.Position))
+	end
+	-- Touch deliberately uses PLACE AIM to avoid accidental points while moving the camera.
+end))
+
+TrackConnection(LoadCodeButton.MouseButton1Click:Connect(function()
+	LoadCode(CodeBox.Text, CourseNameBox.Text)
+end))
+
+TrackConnection(ContinueButton.MouseButton1Click:Connect(function()
+	local code = Database.lastCodes[tostring(game.PlaceId)]
+	if type(code) ~= "string" or code == "" then
+		ShowToast("No saved course for this Roblox place yet.", COLORS.Gold)
+		return
+	end
+	local key = GetCourseKey(code)
+	LoadCode(code, Database.names[key] or CourseNameBox.Text)
+end))
+
+TrackConnection(NewSetupButton.MouseButton1Click:Connect(BeginSetup))
+
+TrackConnection(DefaultButton.MouseButton1Click:Connect(function()
+	CodeBox.Text = CONFIG.DefaultCode
+	LoadCode(CONFIG.DefaultCode, CourseNameBox.Text)
+end))
+
+TrackConnection(VisualToggle.MouseButton1Click:Connect(function()
+	Database.settings.visuals = not Database.settings.visuals
+	SaveDatabase()
+	UpdateToggleText()
+	RebuildWorldVisuals()
+end))
+
+TrackConnection(HeightToggle.MouseButton1Click:Connect(function()
+	Database.settings.ignoreY = not Database.settings.ignoreY
+	SaveDatabase()
+	UpdateToggleText()
+	if Database.settings.ignoreY then
+		ShowToast("2D mode: gate height is ignored. Most reliable across vehicles and jumps.", COLORS.Gold, 3.4)
+	else
+		ShowToast("3D mode: you must cross within ±60 studs of each gate's height.", COLORS.Accent, 3.4)
+	end
+end))
+
+TrackConnection(ClearBestButton.MouseButton1Click:Connect(function()
+	if not ActiveCourseKey then
+		ShowToast("Load a course before clearing its PB.", COLORS.Gold)
+		return
+	end
+	local now = os.clock()
+	if now > ClearConfirmationUntil then
+		ClearConfirmationUntil = now + 4
+		ClearBestButton.Text = "TAP AGAIN TO CONFIRM"
+		ShowToast("Tap CLEAR again within 4 seconds.", COLORS.Gold)
+		task.delay(4, function()
+			if not App.Destroyed and os.clock() >= ClearConfirmationUntil then
+				ClearBestButton.Text = "CLEAR THIS PB"
+			end
+		end)
+		return
+	end
+	ClearConfirmationUntil = 0
+	Database.bests[ActiveCourseKey] = nil
+	BestTime = math.huge
+	SaveDatabase()
+	RefreshBestLabel()
+	ClearBestButton.Text = "CLEAR THIS PB"
+	ShowToast("PB cleared for this course only.", COLORS.Accent)
+end))
+
+TrackConnection(PlaceAimButton.MouseButton1Click:Connect(function()
+	PlaceSetupPoint(GetAimPoint())
+end))
+
+TrackConnection(PlaceFeetButton.MouseButton1Click:Connect(function()
+	PlaceSetupPoint(GetFeetPoint())
+end))
+
+TrackConnection(UndoButton.MouseButton1Click:Connect(UndoSetupPoint))
+TrackConnection(CancelPlacementButton.MouseButton1Click:Connect(CancelSetup))
+
+TrackConnection(ResetButton.MouseButton1Click:Connect(function()
+	CancelCurrentRace()
+	ShowToast("Attempt reset. Leave START and cross it again.", COLORS.Muted, 2.8)
+end))
+
+TrackConnection(CourseButton.MouseButton1Click:Connect(OpenCourseMenu))
+TrackConnection(CopyButton.MouseButton1Click:Connect(CopyCourseCode))
+
+TrackConnection(HudVisualButton.MouseButton1Click:Connect(function()
+	Database.settings.visuals = not Database.settings.visuals
+	SaveDatabase()
+	UpdateToggleText()
+	RebuildWorldVisuals()
+end))
+
+local function SetHudMinimized(minimized)
+	HudMinimized = minimized
+	HudBody.Visible = not minimized
+	RaceHud.Size = minimized and UDim2.fromOffset(260, 38) or UDim2.fromOffset(340, 184)
+	HudMinimizeButton.Text = minimized and "+" or "—"
+end
+
+TrackConnection(HudMinimizeButton.MouseButton1Click:Connect(function()
+	SetHudMinimized(not HudMinimized)
+end))
+
+TrackConnection(MainMinimizeButton.MouseButton1Click:Connect(function()
+	MainMinimized = not MainMinimized
+	MainContent.Visible = not MainMinimized
+	MainWindow.Size = MainMinimized and UDim2.fromOffset(420, 50) or UDim2.fromOffset(420, 500)
+	MainMinimizeButton.Text = MainMinimized and "+" or "—"
+end))
+
+function App:Destroy()
+	if self.Destroyed then
+		return
+	end
+	self.Destroyed = true
+	ToastSerial = ToastSerial + 1
+	if CurrentDeathConnection then
+		CurrentDeathConnection:Disconnect()
+		CurrentDeathConnection = nil
+	end
+	if CameraViewportConnection then
+		CameraViewportConnection:Disconnect()
+		CameraViewportConnection = nil
+	end
+	for _, connection in ipairs(self.Connections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	table.clear(self.Connections)
+	if WorldFolder and WorldFolder.Parent then
+		WorldFolder:Destroy()
+	end
+	if ScreenGui and ScreenGui.Parent then
+		ScreenGui:Destroy()
+	end
+	if GlobalEnvironment[GLOBAL_KEY] == self then
+		GlobalEnvironment[GLOBAL_KEY] = nil
+	end
+end
+
+TrackConnection(CloseButton.MouseButton1Click:Connect(function()
+	App:Destroy()
+end))
+
+TrackConnection(HudCloseButton.MouseButton1Click:Connect(function()
+	App:Destroy()
+end))
+
+UpdateToggleText()
+UpdateContinueButton()
+
+if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+	PlacementHelp.Text = "Aim with the center crosshair, then tap PLACE AIM or AT FEET."
+end
+
+ShowToast("Race Timer v3 loaded. Credits: Smile B", COLORS.Accent, 2.8)
