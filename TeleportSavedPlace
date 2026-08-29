@@ -1,0 +1,1442 @@
+--[[
+    Waypoint Pro
+    Modern, draggable, minimizable position manager for Roblox executors.
+
+    Features:
+      * Save your current position with a custom name
+      * Add a position manually with X/Y/Z coordinates
+      * One-tap teleport buttons
+      * Search, select, update, rename, and delete positions
+      * Persistent JSON storage when executor file APIs are available
+      * Mobile-friendly dragging and responsive scaling
+      * Duplicate-execution cleanup and respawn support
+]]
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    LocalPlayer = Players.LocalPlayer
+end
+
+local globalEnvironment = (type(getgenv) == "function" and getgenv()) or _G
+local GLOBAL_KEY = "__WAYPOINT_PRO_V1"
+
+if globalEnvironment[GLOBAL_KEY] and type(globalEnvironment[GLOBAL_KEY].Destroy) == "function" then
+    pcall(globalEnvironment[GLOBAL_KEY].Destroy)
+end
+
+local FILE_NAME = "WaypointPro_Positions.json"
+local MAX_POSITIONS = 100
+local unpackValues = table.unpack or unpack
+
+local Theme = {
+    Background = Color3.fromRGB(11, 13, 19),
+    Surface = Color3.fromRGB(18, 21, 30),
+    Surface2 = Color3.fromRGB(24, 28, 39),
+    Surface3 = Color3.fromRGB(31, 36, 49),
+    Accent = Color3.fromRGB(112, 89, 255),
+    Accent2 = Color3.fromRGB(55, 184, 255),
+    Green = Color3.fromRGB(74, 222, 128),
+    Red = Color3.fromRGB(248, 113, 113),
+    Yellow = Color3.fromRGB(250, 204, 21),
+    Text = Color3.fromRGB(245, 247, 255),
+    Muted = Color3.fromRGB(148, 156, 177),
+    Border = Color3.fromRGB(48, 54, 72),
+}
+
+local connections = {}
+local destroyed = false
+local positions = {}
+local selectedId = nil
+local storageAvailable = type(isfile) == "function"
+    and type(readfile) == "function"
+    and type(writefile) == "function"
+
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
+end
+
+local function create(className, properties)
+    local object = Instance.new(className)
+    for property, value in pairs(properties or {}) do
+        object[property] = value
+    end
+    return object
+end
+
+local function addCorner(parent, radius)
+    return create("UICorner", {
+        Parent = parent,
+        CornerRadius = UDim.new(0, radius or 10),
+    })
+end
+
+local function addStroke(parent, color, transparency, thickness)
+    return create("UIStroke", {
+        Parent = parent,
+        Color = color or Theme.Border,
+        Transparency = transparency or 0,
+        Thickness = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    })
+end
+
+local function tween(object, duration, properties)
+    local animation = TweenService:Create(
+        object,
+        TweenInfo.new(duration or 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        properties
+    )
+    animation:Play()
+    return animation
+end
+
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$") or ""
+end
+
+local function isFiniteNumber(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+        and math.abs(value) <= 10000000
+end
+
+local function formatNumber(value)
+    if math.abs(value) >= 10000 then
+        return string.format("%.0f", value)
+    end
+    return string.format("%.1f", value)
+end
+
+local function formatCoordinates(cframeData)
+    if type(cframeData) ~= "table" then
+        return "Invalid position"
+    end
+    return string.format(
+        "X %s   Y %s   Z %s",
+        formatNumber(tonumber(cframeData[1]) or 0),
+        formatNumber(tonumber(cframeData[2]) or 0),
+        formatNumber(tonumber(cframeData[3]) or 0)
+    )
+end
+
+local function generateId()
+    local ok, result = pcall(function()
+        return HttpService:GenerateGUID(false)
+    end)
+    if ok then
+        return result
+    end
+    return tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
+end
+
+local function cframeToTable(cframe)
+    return {cframe:GetComponents()}
+end
+
+local function tableToCFrame(data)
+    if type(data) ~= "table" or #data ~= 12 then
+        return nil
+    end
+
+    local clean = {}
+    for index = 1, 12 do
+        local value = tonumber(data[index])
+        if not isFiniteNumber(value) then
+            return nil
+        end
+        clean[index] = value
+    end
+
+    local ok, result = pcall(function()
+        return CFrame.new(unpackValues(clean))
+    end)
+    return ok and result or nil
+end
+
+local function getRootPart()
+    local character = LocalPlayer.Character
+    if not character then
+        return nil, nil
+    end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local root = character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChild("UpperTorso")
+        or character.PrimaryPart
+
+    if humanoid and humanoid.Health <= 0 then
+        return nil, humanoid
+    end
+    return root, humanoid
+end
+
+local function findPosition(id)
+    for index, position in ipairs(positions) do
+        if position.id == id then
+            return position, index
+        end
+    end
+    return nil, nil
+end
+
+local function cleanPositionName(name)
+    name = trim(name):gsub("[%c]", "")
+    if #name > 28 then
+        name = name:sub(1, 28)
+    end
+    return name
+end
+
+local function makeUniqueName(requestedName, ignoredId)
+    local base = cleanPositionName(requestedName)
+    if base == "" then
+        base = "Position " .. tostring(#positions + 1)
+    end
+
+    local function exists(candidate)
+        for _, position in ipairs(positions) do
+            if position.id ~= ignoredId and position.name:lower() == candidate:lower() then
+                return true
+            end
+        end
+        return false
+    end
+
+    if not exists(base) then
+        return base
+    end
+
+    local suffix = 2
+    while exists(base .. " (" .. suffix .. ")") do
+        suffix = suffix + 1
+    end
+    return base .. " (" .. suffix .. ")"
+end
+
+local function loadPositions()
+    if not storageAvailable then
+        return
+    end
+
+    local ok, decoded = pcall(function()
+        if not isfile(FILE_NAME) then
+            return nil
+        end
+        return HttpService:JSONDecode(readfile(FILE_NAME))
+    end)
+
+    if not ok or type(decoded) ~= "table" then
+        return
+    end
+
+    local source = type(decoded.positions) == "table" and decoded.positions or decoded
+    for _, item in ipairs(source) do
+        if #positions >= MAX_POSITIONS then
+            break
+        end
+
+        if type(item) == "table" and tableToCFrame(item.cframe) then
+            table.insert(positions, {
+                id = type(item.id) == "string" and item.id or generateId(),
+                name = makeUniqueName(item.name),
+                cframe = item.cframe,
+            })
+        end
+    end
+end
+
+local function savePositions()
+    if not storageAvailable then
+        return false, "File saving is not available in this executor session."
+    end
+
+    local ok, message = pcall(function()
+        local payload = {
+            version = 1,
+            positions = positions,
+        }
+        writefile(FILE_NAME, HttpService:JSONEncode(payload))
+    end)
+
+    if not ok then
+        storageAvailable = false
+        return false, tostring(message)
+    end
+    return true
+end
+
+loadPositions()
+
+local function getGuiParent()
+    if type(gethui) == "function" then
+        local ok, result = pcall(gethui)
+        if ok and result then
+            return result
+        end
+    end
+    return CoreGui
+end
+
+local ScreenGui = create("ScreenGui", {
+    Name = "WaypointProUI",
+    Parent = getGuiParent(),
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 999999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+pcall(function()
+    if syn and type(syn.protect_gui) == "function" then
+        syn.protect_gui(ScreenGui)
+    elseif type(protectgui) == "function" then
+        protectgui(ScreenGui)
+    end
+end)
+
+local Main = create("Frame", {
+    Name = "Main",
+    Parent = ScreenGui,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(430, 535),
+    BackgroundColor3 = Theme.Background,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Active = true,
+})
+addCorner(Main, 16)
+addStroke(Main, Theme.Border, 0.15, 1)
+
+local MainScale = create("UIScale", {
+    Parent = Main,
+    Scale = 1,
+})
+
+local TopBar = create("Frame", {
+    Name = "TopBar",
+    Parent = Main,
+    Size = UDim2.new(1, 0, 0, 58),
+    BackgroundColor3 = Theme.Surface2,
+    BorderSizePixel = 0,
+})
+
+create("UIGradient", {
+    Parent = TopBar,
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(36, 30, 69)),
+        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(25, 29, 43)),
+        ColorSequenceKeypoint.new(1, Theme.Surface2),
+    }),
+    Rotation = 7,
+})
+
+local AccentLine = create("Frame", {
+    Parent = TopBar,
+    Position = UDim2.new(0, 0, 1, -2),
+    Size = UDim2.new(1, 0, 0, 2),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+})
+create("UIGradient", {
+    Parent = AccentLine,
+    Color = ColorSequence.new(Theme.Accent, Theme.Accent2),
+})
+
+create("TextLabel", {
+    Parent = TopBar,
+    Position = UDim2.fromOffset(16, 9),
+    Size = UDim2.fromOffset(245, 22),
+    BackgroundTransparency = 1,
+    Text = "WAYPOINT PRO",
+    TextColor3 = Theme.Text,
+    TextSize = 17,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local HeaderStatus = create("TextLabel", {
+    Parent = TopBar,
+    Position = UDim2.fromOffset(16, 31),
+    Size = UDim2.fromOffset(300, 16),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = Theme.Muted,
+    TextSize = 10,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local DragRegion = create("Frame", {
+    Parent = TopBar,
+    Position = UDim2.fromOffset(0, 0),
+    Size = UDim2.new(1, -102, 1, 0),
+    BackgroundTransparency = 1,
+    Active = true,
+})
+
+local function topButton(text, xOffset)
+    local button = create("TextButton", {
+        Parent = TopBar,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, xOffset, 0.5, 0),
+        Size = UDim2.fromOffset(34, 34),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = Theme.Muted,
+        TextSize = 17,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+    })
+    addCorner(button, 9)
+    addStroke(button, Theme.Border, 0.25, 1)
+    connect(button.MouseEnter, function()
+        tween(button, 0.14, {BackgroundColor3 = Theme.Accent, TextColor3 = Theme.Text})
+    end)
+    connect(button.MouseLeave, function()
+        tween(button, 0.14, {BackgroundColor3 = Theme.Surface3, TextColor3 = Theme.Muted})
+    end)
+    return button
+end
+
+local MinimizeButton = topButton("–", -53)
+local CloseButton = topButton("×", -13)
+
+local QuickPanel = create("Frame", {
+    Parent = Main,
+    Position = UDim2.fromOffset(16, 70),
+    Size = UDim2.new(1, -32, 0, 94),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+})
+addCorner(QuickPanel, 12)
+addStroke(QuickPanel, Theme.Border, 0.35, 1)
+
+local NameInput = create("TextBox", {
+    Parent = QuickPanel,
+    Position = UDim2.fromOffset(10, 10),
+    Size = UDim2.new(1, -152, 0, 36),
+    BackgroundColor3 = Theme.Surface2,
+    BorderSizePixel = 0,
+    PlaceholderText = "Position name (optional)",
+    PlaceholderColor3 = Theme.Muted,
+    Text = "",
+    TextColor3 = Theme.Text,
+    TextSize = 13,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ClearTextOnFocus = false,
+})
+addCorner(NameInput, 9)
+addStroke(NameInput, Theme.Border, 0.35, 1)
+create("UIPadding", {
+    Parent = NameInput,
+    PaddingLeft = UDim.new(0, 12),
+    PaddingRight = UDim.new(0, 10),
+})
+
+local SaveHereButton = create("TextButton", {
+    Parent = QuickPanel,
+    AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, -10, 0, 10),
+    Size = UDim2.fromOffset(132, 36),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+    Text = "+  SAVE HERE",
+    TextColor3 = Theme.Text,
+    TextSize = 12,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+})
+addCorner(SaveHereButton, 9)
+create("UIGradient", {
+    Parent = SaveHereButton,
+    Color = ColorSequence.new(Theme.Accent, Color3.fromRGB(83, 112, 255)),
+    Rotation = 15,
+})
+
+local AddCoordinatesButton = create("TextButton", {
+    Parent = QuickPanel,
+    Position = UDim2.fromOffset(10, 54),
+    Size = UDim2.new(1, -20, 0, 30),
+    BackgroundColor3 = Theme.Surface2,
+    BorderSizePixel = 0,
+    Text = "+  ADD WITH X / Y / Z COORDINATES",
+    TextColor3 = Theme.Muted,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+})
+addCorner(AddCoordinatesButton, 8)
+addStroke(AddCoordinatesButton, Theme.Border, 0.45, 1)
+
+local SearchBox = create("TextBox", {
+    Parent = Main,
+    Position = UDim2.fromOffset(16, 174),
+    Size = UDim2.new(1, -104, 0, 38),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+    PlaceholderText = "Search positions...",
+    PlaceholderColor3 = Theme.Muted,
+    Text = "",
+    TextColor3 = Theme.Text,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ClearTextOnFocus = false,
+})
+addCorner(SearchBox, 10)
+addStroke(SearchBox, Theme.Border, 0.35, 1)
+create("UIPadding", {
+    Parent = SearchBox,
+    PaddingLeft = UDim.new(0, 14),
+    PaddingRight = UDim.new(0, 10),
+})
+
+local CountBadge = create("TextLabel", {
+    Parent = Main,
+    AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, -16, 0, 174),
+    Size = UDim2.fromOffset(78, 38),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+    Text = "0 / 100",
+    TextColor3 = Theme.Muted,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+})
+addCorner(CountBadge, 10)
+addStroke(CountBadge, Theme.Border, 0.35, 1)
+
+local PositionList = create("ScrollingFrame", {
+    Parent = Main,
+    Position = UDim2.fromOffset(16, 222),
+    Size = UDim2.new(1, -32, 0, 212),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = Theme.Accent,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+})
+addCorner(PositionList, 12)
+addStroke(PositionList, Theme.Border, 0.35, 1)
+
+local ListPadding = create("UIPadding", {
+    Parent = PositionList,
+    PaddingTop = UDim.new(0, 7),
+    PaddingBottom = UDim.new(0, 7),
+    PaddingLeft = UDim.new(0, 7),
+    PaddingRight = UDim.new(0, 7),
+})
+
+local ListLayout = create("UIListLayout", {
+    Parent = PositionList,
+    Padding = UDim.new(0, 7),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
+local ActionsPanel = create("Frame", {
+    Parent = Main,
+    Position = UDim2.fromOffset(16, 444),
+    Size = UDim2.new(1, -32, 0, 78),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+})
+addCorner(ActionsPanel, 12)
+addStroke(ActionsPanel, Theme.Border, 0.35, 1)
+
+local SelectedName = create("TextLabel", {
+    Parent = ActionsPanel,
+    Position = UDim2.fromOffset(12, 7),
+    Size = UDim2.new(0.46, -12, 0, 19),
+    BackgroundTransparency = 1,
+    Text = "NO POSITION SELECTED",
+    TextColor3 = Theme.Muted,
+    TextSize = 10,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextTruncate = Enum.TextTruncate.AtEnd,
+})
+
+local SelectedCoordinates = create("TextLabel", {
+    Parent = ActionsPanel,
+    AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, -12, 0, 7),
+    Size = UDim2.new(0.54, -4, 0, 19),
+    BackgroundTransparency = 1,
+    Text = "Choose a saved position",
+    TextColor3 = Theme.Muted,
+    TextSize = 10,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    TextTruncate = Enum.TextTruncate.AtEnd,
+})
+
+local function actionButton(text, x, width, color)
+    local button = create("TextButton", {
+        Parent = ActionsPanel,
+        Position = UDim2.fromOffset(x, 34),
+        Size = UDim2.fromOffset(width, 34),
+        BackgroundColor3 = color or Theme.Surface2,
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = Theme.Text,
+        TextSize = 10,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+    })
+    addCorner(button, 8)
+    addStroke(button, color or Theme.Border, color and 0.45 or 0.35, 1)
+    return button
+end
+
+local TeleportButton = actionButton("TELEPORT", 10, 118, Theme.Accent)
+local UpdateButton = actionButton("UPDATE", 135, 78)
+local RenameButton = actionButton("RENAME", 220, 78)
+local DeleteButton = actionButton("DELETE", 305, 83, Color3.fromRGB(74, 34, 43))
+DeleteButton.TextColor3 = Theme.Red
+
+local ModalDim = create("Frame", {
+    Parent = Main,
+    Position = UDim2.fromOffset(0, 58),
+    Size = UDim2.new(1, 0, 1, -58),
+    BackgroundColor3 = Color3.fromRGB(5, 6, 9),
+    BackgroundTransparency = 0.24,
+    BorderSizePixel = 0,
+    Visible = false,
+    Active = true,
+    ZIndex = 50,
+})
+
+local Toast = create("Frame", {
+    Parent = ScreenGui,
+    AnchorPoint = Vector2.new(0.5, 0),
+    Position = UDim2.new(0.5, 0, 0, -60),
+    Size = UDim2.fromOffset(350, 44),
+    BackgroundColor3 = Theme.Surface2,
+    BorderSizePixel = 0,
+    Visible = false,
+    ZIndex = 200,
+})
+addCorner(Toast, 11)
+local ToastStroke = addStroke(Toast, Theme.Accent, 0.1, 1)
+
+local ToastDot = create("Frame", {
+    Parent = Toast,
+    Position = UDim2.fromOffset(13, 17),
+    Size = UDim2.fromOffset(10, 10),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+    ZIndex = 201,
+})
+addCorner(ToastDot, 20)
+
+local ToastText = create("TextLabel", {
+    Parent = Toast,
+    Position = UDim2.fromOffset(32, 0),
+    Size = UDim2.new(1, -44, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = Theme.Text,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ZIndex = 201,
+})
+
+local toastSequence = 0
+local function notify(message, kind)
+    toastSequence = toastSequence + 1
+    local thisSequence = toastSequence
+    local color = Theme.Accent
+    if kind == "success" then
+        color = Theme.Green
+    elseif kind == "error" then
+        color = Theme.Red
+    elseif kind == "warning" then
+        color = Theme.Yellow
+    end
+
+    ToastText.Text = tostring(message)
+    ToastDot.BackgroundColor3 = color
+    ToastStroke.Color = color
+    Toast.Visible = true
+    Toast.Position = UDim2.new(0.5, 0, 0, -60)
+    tween(Toast, 0.25, {Position = UDim2.new(0.5, 0, 0, 18)})
+
+    task.delay(2.8, function()
+        if destroyed or thisSequence ~= toastSequence then
+            return
+        end
+        local animation = tween(Toast, 0.22, {Position = UDim2.new(0.5, 0, 0, -60)})
+        animation.Completed:Wait()
+        if thisSequence == toastSequence then
+            Toast.Visible = false
+        end
+    end)
+end
+
+local Mini = create("Frame", {
+    Parent = ScreenGui,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(196, 48),
+    BackgroundColor3 = Theme.Surface2,
+    BorderSizePixel = 0,
+    Visible = false,
+    Active = true,
+})
+addCorner(Mini, 14)
+addStroke(Mini, Theme.Accent, 0.1, 1)
+
+local MiniDrag = create("Frame", {
+    Parent = Mini,
+    Size = UDim2.new(1, -48, 1, 0),
+    BackgroundTransparency = 1,
+    Active = true,
+})
+
+local MiniDot = create("Frame", {
+    Parent = Mini,
+    Position = UDim2.fromOffset(13, 17),
+    Size = UDim2.fromOffset(14, 14),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+})
+addCorner(MiniDot, 20)
+create("UIGradient", {
+    Parent = MiniDot,
+    Color = ColorSequence.new(Theme.Accent, Theme.Accent2),
+})
+
+create("TextLabel", {
+    Parent = Mini,
+    Position = UDim2.fromOffset(36, 0),
+    Size = UDim2.new(1, -82, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "WAYPOINT PRO",
+    TextColor3 = Theme.Text,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local RestoreButton = create("TextButton", {
+    Parent = Mini,
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, -7, 0.5, 0),
+    Size = UDim2.fromOffset(36, 34),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+    Text = "+",
+    TextColor3 = Theme.Text,
+    TextSize = 17,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+})
+addCorner(RestoreButton, 10)
+
+local function keepOnScreen(guiObject)
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+
+    local viewport = camera.ViewportSize
+    local absolutePosition = guiObject.AbsolutePosition
+    local absoluteSize = guiObject.AbsoluteSize
+    local moveX, moveY = 0, 0
+    local margin = 8
+
+    if absolutePosition.X < margin then
+        moveX = margin - absolutePosition.X
+    elseif absolutePosition.X + absoluteSize.X > viewport.X - margin then
+        moveX = (viewport.X - margin) - (absolutePosition.X + absoluteSize.X)
+    end
+
+    if absolutePosition.Y < margin then
+        moveY = margin - absolutePosition.Y
+    elseif absolutePosition.Y + absoluteSize.Y > viewport.Y - margin then
+        moveY = (viewport.Y - margin) - (absolutePosition.Y + absoluteSize.Y)
+    end
+
+    if moveX ~= 0 or moveY ~= 0 then
+        guiObject.Position = UDim2.new(
+            guiObject.Position.X.Scale,
+            guiObject.Position.X.Offset + moveX,
+            guiObject.Position.Y.Scale,
+            guiObject.Position.Y.Offset + moveY
+        )
+    end
+end
+
+local function makeDraggable(handle, target)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPosition = nil
+
+    connect(handle.InputBegan, function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = target.Position
+
+        connect(input.Changed, function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+                keepOnScreen(target)
+            end
+        end)
+    end)
+
+    connect(handle.InputChanged, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    connect(UserInputService.InputChanged, function(input)
+        if not dragging or input ~= dragInput or not dragStart or not startPosition then
+            return
+        end
+        local delta = input.Position - dragStart
+        target.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end)
+end
+
+makeDraggable(DragRegion, Main)
+makeDraggable(MiniDrag, Mini)
+
+local function updateScale()
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+    local viewport = camera.ViewportSize
+    MainScale.Scale = math.clamp(math.min(viewport.X / 460, viewport.Y / 565), 0.56, 1)
+end
+
+updateScale()
+if workspace.CurrentCamera then
+    connect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
+end
+
+local function setButtonEnabled(button, enabled)
+    button.Active = enabled
+    button.TextTransparency = enabled and 0 or 0.55
+    button.BackgroundTransparency = enabled and 0 or 0.35
+end
+
+local function updateHeader()
+    local storageText = storageAvailable and "SAVED TO FILE" or "SESSION ONLY"
+    HeaderStatus.Text = string.format("%d POSITION%s  •  %s", #positions, #positions == 1 and "" or "S", storageText)
+    CountBadge.Text = string.format("%d / %d", #positions, MAX_POSITIONS)
+end
+
+local refreshList
+local function updateSelection()
+    local position = selectedId and findPosition(selectedId) or nil
+    if not position then
+        selectedId = nil
+        SelectedName.Text = "NO POSITION SELECTED"
+        SelectedCoordinates.Text = "Choose a saved position"
+        SelectedName.TextColor3 = Theme.Muted
+        setButtonEnabled(TeleportButton, false)
+        setButtonEnabled(UpdateButton, false)
+        setButtonEnabled(RenameButton, false)
+        setButtonEnabled(DeleteButton, false)
+        return
+    end
+
+    SelectedName.Text = position.name:upper()
+    SelectedCoordinates.Text = formatCoordinates(position.cframe)
+    SelectedName.TextColor3 = Theme.Text
+    setButtonEnabled(TeleportButton, true)
+    setButtonEnabled(UpdateButton, true)
+    setButtonEnabled(RenameButton, true)
+    setButtonEnabled(DeleteButton, true)
+end
+
+local function teleportTo(position)
+    if not position then
+        notify("Select a position first.", "warning")
+        return
+    end
+
+    local destination = tableToCFrame(position.cframe)
+    if not destination then
+        notify("This saved position is invalid.", "error")
+        return
+    end
+
+    local root, humanoid = getRootPart()
+    local character = LocalPlayer.Character
+    if not root or not character then
+        notify("Your character is not ready yet.", "error")
+        return
+    end
+
+    if humanoid then
+        humanoid.Sit = false
+    end
+
+    local ok = pcall(function()
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        if type(character.PivotTo) == "function" then
+            character:PivotTo(destination)
+        else
+            root.CFrame = destination
+        end
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end)
+
+    if ok then
+        notify("Teleported to " .. position.name, "success")
+    else
+        notify("Teleport failed in this game.", "error")
+    end
+end
+
+local function commitChanges(successMessage)
+    local saved, saveError = savePositions()
+    updateHeader()
+    updateSelection()
+    refreshList()
+
+    if saved then
+        notify(successMessage, "success")
+    elseif storageAvailable then
+        notify(successMessage, "success")
+    else
+        notify(successMessage .. " (session only)", saveError and "warning" or "success")
+    end
+end
+
+local function addPosition(name, cframe)
+    if #positions >= MAX_POSITIONS then
+        notify("The 100-position limit has been reached.", "error")
+        return false
+    end
+
+    local position = {
+        id = generateId(),
+        name = makeUniqueName(name),
+        cframe = cframeToTable(cframe),
+    }
+    table.insert(positions, position)
+    selectedId = position.id
+    NameInput.Text = ""
+    commitChanges("Saved " .. position.name)
+    return true
+end
+
+local function styleHover(button, normalColor, hoverColor)
+    connect(button.MouseEnter, function()
+        tween(button, 0.14, {BackgroundColor3 = hoverColor})
+    end)
+    connect(button.MouseLeave, function()
+        tween(button, 0.14, {BackgroundColor3 = normalColor})
+    end)
+end
+
+styleHover(AddCoordinatesButton, Theme.Surface2, Theme.Surface3)
+styleHover(UpdateButton, Theme.Surface2, Theme.Surface3)
+styleHover(RenameButton, Theme.Surface2, Theme.Surface3)
+styleHover(DeleteButton, Color3.fromRGB(74, 34, 43), Color3.fromRGB(100, 40, 50))
+
+local function closeModal()
+    ModalDim.Visible = false
+    for _, child in ipairs(ModalDim:GetChildren()) do
+        if child:IsA("GuiObject") then
+            child:Destroy()
+        end
+    end
+end
+
+local function openModal(options)
+    closeModal()
+    ModalDim.Visible = true
+
+    local fieldCount = #(options.fields or {})
+    local cardHeight = 126 + fieldCount * 50 + (options.description and 30 or 0)
+    local Card = create("Frame", {
+        Parent = ModalDim,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(360, cardHeight),
+        BackgroundColor3 = Theme.Surface2,
+        BorderSizePixel = 0,
+        ZIndex = 51,
+    })
+    addCorner(Card, 14)
+    addStroke(Card, Theme.Border, 0.05, 1)
+
+    create("TextLabel", {
+        Parent = Card,
+        Position = UDim2.fromOffset(16, 13),
+        Size = UDim2.new(1, -32, 0, 22),
+        BackgroundTransparency = 1,
+        Text = options.title or "EDIT POSITION",
+        TextColor3 = Theme.Text,
+        TextSize = 15,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 52,
+    })
+
+    local nextY = 43
+    if options.description then
+        create("TextLabel", {
+            Parent = Card,
+            Position = UDim2.fromOffset(16, nextY),
+            Size = UDim2.new(1, -32, 0, 24),
+            BackgroundTransparency = 1,
+            Text = options.description,
+            TextColor3 = Theme.Muted,
+            TextSize = 11,
+            Font = Enum.Font.GothamMedium,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextWrapped = true,
+            ZIndex = 52,
+        })
+        nextY = nextY + 32
+    end
+
+    local inputs = {}
+    for _, field in ipairs(options.fields or {}) do
+        local box = create("TextBox", {
+            Parent = Card,
+            Position = UDim2.fromOffset(16, nextY),
+            Size = UDim2.new(1, -32, 0, 40),
+            BackgroundColor3 = Theme.Surface3,
+            BorderSizePixel = 0,
+            PlaceholderText = field.placeholder or field.label or "",
+            PlaceholderColor3 = Theme.Muted,
+            Text = tostring(field.value or ""),
+            TextColor3 = Theme.Text,
+            TextSize = 12,
+            Font = Enum.Font.GothamMedium,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ClearTextOnFocus = false,
+            ZIndex = 52,
+        })
+        addCorner(box, 9)
+        addStroke(box, Theme.Border, 0.25, 1)
+        create("UIPadding", {
+            Parent = box,
+            PaddingLeft = UDim.new(0, 12),
+            PaddingRight = UDim.new(0, 10),
+        })
+        inputs[field.key] = box
+        nextY = nextY + 50
+    end
+
+    local ErrorLabel = create("TextLabel", {
+        Parent = Card,
+        Position = UDim2.new(0, 16, 1, -73),
+        Size = UDim2.new(1, -32, 0, 18),
+        BackgroundTransparency = 1,
+        Text = "",
+        TextColor3 = Theme.Red,
+        TextSize = 10,
+        Font = Enum.Font.GothamMedium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 52,
+    })
+
+    local Cancel = create("TextButton", {
+        Parent = Card,
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 16, 1, -14),
+        Size = UDim2.new(0.5, -21, 0, 38),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+        Text = "CANCEL",
+        TextColor3 = Theme.Muted,
+        TextSize = 11,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+        ZIndex = 52,
+    })
+    addCorner(Cancel, 9)
+
+    local Confirm = create("TextButton", {
+        Parent = Card,
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, -16, 1, -14),
+        Size = UDim2.new(0.5, -21, 0, 38),
+        BackgroundColor3 = options.danger and Color3.fromRGB(106, 42, 54) or Theme.Accent,
+        BorderSizePixel = 0,
+        Text = options.confirmText or "SAVE",
+        TextColor3 = options.danger and Theme.Red or Theme.Text,
+        TextSize = 11,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+        ZIndex = 52,
+    })
+    addCorner(Confirm, 9)
+
+    connect(Cancel.Activated, closeModal)
+    connect(Confirm.Activated, function()
+        local values = {}
+        for key, box in pairs(inputs) do
+            values[key] = box.Text
+        end
+
+        local ok, errorMessage = options.onConfirm(values)
+        if ok == false then
+            ErrorLabel.Text = tostring(errorMessage or "Please check the values.")
+            return
+        end
+        closeModal()
+    end)
+
+    if options.fields and options.fields[1] and inputs[options.fields[1].key] then
+        task.defer(function()
+            if inputs[options.fields[1].key].Parent then
+                inputs[options.fields[1].key]:CaptureFocus()
+            end
+        end)
+    end
+end
+
+refreshList = function()
+    for _, child in ipairs(PositionList:GetChildren()) do
+        if child:IsA("GuiObject") then
+            child:Destroy()
+        end
+    end
+
+    local query = trim(SearchBox.Text):lower()
+    local shown = 0
+
+    for index, position in ipairs(positions) do
+        if query == "" or position.name:lower():find(query, 1, true) then
+            shown = shown + 1
+            local selected = position.id == selectedId
+            local Row = create("Frame", {
+                Parent = PositionList,
+                Size = UDim2.new(1, -2, 0, 58),
+                BackgroundColor3 = selected and Color3.fromRGB(35, 34, 57) or Theme.Surface2,
+                BorderSizePixel = 0,
+                LayoutOrder = index,
+            })
+            addCorner(Row, 10)
+            addStroke(Row, selected and Theme.Accent or Theme.Border, selected and 0.05 or 0.45, 1)
+
+            local Select = create("TextButton", {
+                Parent = Row,
+                Size = UDim2.new(1, -78, 1, 0),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                Text = "",
+                AutoButtonColor = false,
+            })
+
+            create("TextLabel", {
+                Parent = Select,
+                Position = UDim2.fromOffset(12, 8),
+                Size = UDim2.new(1, -16, 0, 19),
+                BackgroundTransparency = 1,
+                Text = position.name,
+                TextColor3 = Theme.Text,
+                TextSize = 13,
+                Font = Enum.Font.GothamBold,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+
+            create("TextLabel", {
+                Parent = Select,
+                Position = UDim2.fromOffset(12, 31),
+                Size = UDim2.new(1, -16, 0, 16),
+                BackgroundTransparency = 1,
+                Text = formatCoordinates(position.cframe),
+                TextColor3 = Theme.Muted,
+                TextSize = 10,
+                Font = Enum.Font.GothamMedium,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+
+            local Go = create("TextButton", {
+                Parent = Row,
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(62, 38),
+                BackgroundColor3 = Theme.Accent,
+                BorderSizePixel = 0,
+                Text = "GO",
+                TextColor3 = Theme.Text,
+                TextSize = 11,
+                Font = Enum.Font.GothamBold,
+                AutoButtonColor = false,
+            })
+            addCorner(Go, 9)
+
+            connect(Select.Activated, function()
+                selectedId = position.id
+                updateSelection()
+                refreshList()
+            end)
+            connect(Go.Activated, function()
+                selectedId = position.id
+                updateSelection()
+                teleportTo(position)
+                refreshList()
+            end)
+        end
+    end
+
+    if shown == 0 then
+        create("TextLabel", {
+            Parent = PositionList,
+            Size = UDim2.new(1, -2, 0, 72),
+            BackgroundTransparency = 1,
+            Text = #positions == 0 and "No positions yet\nSave your current location above" or "No matching positions",
+            TextColor3 = Theme.Muted,
+            TextSize = 11,
+            Font = Enum.Font.GothamMedium,
+            TextWrapped = true,
+            LayoutOrder = 1,
+        })
+    end
+
+    updateHeader()
+end
+
+connect(SaveHereButton.Activated, function()
+    local root = getRootPart()
+    if not root then
+        notify("Your character is not ready yet.", "error")
+        return
+    end
+    addPosition(NameInput.Text, root.CFrame)
+end)
+
+connect(NameInput.FocusLost, function(enterPressed)
+    if enterPressed then
+        local root = getRootPart()
+        if not root then
+            notify("Your character is not ready yet.", "error")
+            return
+        end
+        addPosition(NameInput.Text, root.CFrame)
+    end
+end)
+
+connect(AddCoordinatesButton.Activated, function()
+    local root = getRootPart()
+    local current = root and root.Position or Vector3.new(0, 0, 0)
+    openModal({
+        title = "ADD COORDINATES",
+        description = "The current facing direction will be kept when possible.",
+        fields = {
+            {key = "name", placeholder = "Position name", value = NameInput.Text},
+            {key = "x", placeholder = "X coordinate", value = formatNumber(current.X)},
+            {key = "y", placeholder = "Y coordinate", value = formatNumber(current.Y)},
+            {key = "z", placeholder = "Z coordinate", value = formatNumber(current.Z)},
+        },
+        confirmText = "ADD POSITION",
+        onConfirm = function(values)
+            local x, y, z = tonumber(values.x), tonumber(values.y), tonumber(values.z)
+            if not isFiniteNumber(x) or not isFiniteNumber(y) or not isFiniteNumber(z) then
+                return false, "X, Y, and Z must be valid numbers."
+            end
+
+            local orientation = CFrame.new()
+            local currentRoot = getRootPart()
+            if currentRoot then
+                orientation = currentRoot.CFrame - currentRoot.Position
+            end
+            return addPosition(values.name, CFrame.new(x, y, z) * orientation)
+        end,
+    })
+end)
+
+connect(SearchBox:GetPropertyChangedSignal("Text"), refreshList)
+
+connect(TeleportButton.Activated, function()
+    teleportTo(selectedId and findPosition(selectedId) or nil)
+end)
+
+connect(UpdateButton.Activated, function()
+    local position = selectedId and findPosition(selectedId) or nil
+    if not position then
+        return
+    end
+    local root = getRootPart()
+    if not root then
+        notify("Your character is not ready yet.", "error")
+        return
+    end
+    position.cframe = cframeToTable(root.CFrame)
+    commitChanges("Updated " .. position.name)
+end)
+
+connect(RenameButton.Activated, function()
+    local position = selectedId and findPosition(selectedId) or nil
+    if not position then
+        return
+    end
+    openModal({
+        title = "RENAME POSITION",
+        fields = {
+            {key = "name", placeholder = "New position name", value = position.name},
+        },
+        confirmText = "RENAME",
+        onConfirm = function(values)
+            local requested = cleanPositionName(values.name)
+            if requested == "" then
+                return false, "Enter a position name."
+            end
+            position.name = makeUniqueName(requested, position.id)
+            commitChanges("Renamed to " .. position.name)
+            return true
+        end,
+    })
+end)
+
+connect(DeleteButton.Activated, function()
+    local position, index = selectedId and findPosition(selectedId) or nil, nil
+    if position then
+        _, index = findPosition(selectedId)
+    end
+    if not position or not index then
+        return
+    end
+
+    openModal({
+        title = "DELETE POSITION",
+        description = "Delete “" .. position.name .. "”? This cannot be undone.",
+        fields = {},
+        confirmText = "DELETE",
+        danger = true,
+        onConfirm = function()
+            table.remove(positions, index)
+            selectedId = nil
+            commitChanges("Deleted " .. position.name)
+            return true
+        end,
+    })
+end)
+
+local function minimize()
+    closeModal()
+    Main.Visible = false
+    Mini.Visible = true
+    keepOnScreen(Mini)
+end
+
+local function restore()
+    Mini.Visible = false
+    Main.Visible = true
+    keepOnScreen(Main)
+end
+
+connect(MinimizeButton.Activated, minimize)
+connect(RestoreButton.Activated, restore)
+
+local function destroyInterface()
+    if destroyed then
+        return
+    end
+    destroyed = true
+    pcall(savePositions)
+    for _, connection in ipairs(connections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+    connections = {}
+    if ScreenGui then
+        ScreenGui:Destroy()
+    end
+    if globalEnvironment[GLOBAL_KEY] then
+        globalEnvironment[GLOBAL_KEY] = nil
+    end
+end
+
+globalEnvironment[GLOBAL_KEY] = {
+    Destroy = destroyInterface,
+}
+
+connect(CloseButton.Activated, destroyInterface)
+
+connect(UserInputService.InputBegan, function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+    if input.KeyCode == Enum.KeyCode.RightControl then
+        if Main.Visible then
+            minimize()
+        else
+            restore()
+        end
+    end
+end)
+
+local coordinateTimer = 0
+connect(RunService.Heartbeat, function(deltaTime)
+    coordinateTimer = coordinateTimer + deltaTime
+    if coordinateTimer < 0.5 then
+        return
+    end
+    coordinateTimer = 0
+
+    if Main.Visible and not selectedId then
+        local root = getRootPart()
+        if root then
+            SelectedCoordinates.Text = string.format(
+                "Current: X %s  Y %s  Z %s",
+                formatNumber(root.Position.X),
+                formatNumber(root.Position.Y),
+                formatNumber(root.Position.Z)
+            )
+        else
+            SelectedCoordinates.Text = "Waiting for character..."
+        end
+    end
+end)
+
+updateHeader()
+updateSelection()
+refreshList()
+
+task.defer(function()
+    notify(storageAvailable and "Waypoint Pro loaded" or "Loaded in session-only mode", storageAvailable and "success" or "warning")
+end)
