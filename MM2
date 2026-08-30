@@ -1,0 +1,608 @@
+--!optimize 2
+--!native
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Tuning
+local ROLE_SYNC_INTERVAL = 1
+local ROLE_CACHE_GRACE_PERIOD = 3
+local KNIFE_PREDICTION_TIME = 0.035
+local GUN_PREDICTION_TIME = 0.025
+
+-- Visuals
+local PLAYER_HIGHLIGHT_NAME = "OptimizedRoleHighlight"
+local GUN_HIGHLIGHT_NAME = "OptimizedGunHighlight"
+
+local COLOR_MURDERER = Color3.fromRGB(255, 60, 60)
+local COLOR_SHERIFF = Color3.fromRGB(60, 150, 255)
+local COLOR_INNOCENT = Color3.fromRGB(240, 240, 240)
+local COLOR_GUN_OUTLINE = Color3.fromRGB(0, 255, 120)
+local COLOR_GUN_FILL = Color3.fromRGB(255, 200, 0)
+
+-- Role state
+local rolesByName = {}
+local murderer = nil
+local sheriff = nil
+local lastRoleDataAt = 0
+local playerDataRemote = nil
+
+-- Player cache. Keeping an array avoids allocating Players:GetPlayers() results in
+-- the namecall hook, which is the hottest path in this script.
+local trackedPlayers = {}
+local playerStates = {}
+local playersByName = {}
+
+local function findPlayerDataRemote()
+	if playerDataRemote and playerDataRemote.Parent then
+		return playerDataRemote
+	end
+
+	local candidate = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+	if candidate and candidate:IsA("RemoteFunction") then
+		playerDataRemote = candidate
+	else
+		playerDataRemote = nil
+	end
+
+	return playerDataRemote
+end
+
+local function disconnectAll(connections)
+	for i = 1, #connections do
+		connections[i]:Disconnect()
+	end
+	table.clear(connections)
+end
+
+local function getRoot(player)
+	local state = playerStates[player]
+	local character = player.Character
+	if not state or not character then
+		return nil
+	end
+
+	local root = state.root
+	if root and root.Parent == character then
+		return root
+	end
+
+	root = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+	state.root = root
+	return root
+end
+
+local function getHumanoid(player)
+	local state = playerStates[player]
+	local character = player.Character
+	if not state or not character then
+		return nil
+	end
+
+	local humanoid = state.humanoid
+	if humanoid and humanoid.Parent == character then
+		return humanoid
+	end
+
+	humanoid = character:FindFirstChildOfClass("Humanoid")
+	state.humanoid = humanoid
+	return humanoid
+end
+
+local function isPlayerAlive(player)
+	if not player or player.Parent ~= Players then
+		return false
+	end
+
+	local roleData = rolesByName[player.Name]
+	if type(roleData) == "table" and (roleData.Killed == true or roleData.Dead == true) then
+		return false
+	end
+
+	local humanoid = getHumanoid(player)
+	return humanoid ~= nil and humanoid.Health > 0
+end
+
+local function destroyPlayerHighlight(state)
+	local highlight = state.highlight
+	if highlight then
+		highlight:Destroy()
+		state.highlight = nil
+	end
+end
+
+local function getPlayerHighlight(player, state)
+	local character = player.Character
+	if not character then
+		return nil
+	end
+
+	local highlight = state.highlight
+	if highlight and highlight.Parent == character then
+		return highlight
+	end
+
+	if highlight then
+		highlight:Destroy()
+	end
+
+	-- Reuse an existing named highlight when the script is re-executed.
+	highlight = character:FindFirstChild(PLAYER_HIGHLIGHT_NAME)
+	if not (highlight and highlight:IsA("Highlight")) then
+		highlight = Instance.new("Highlight")
+		highlight.Name = PLAYER_HIGHLIGHT_NAME
+		highlight.FillTransparency = 1
+		highlight.OutlineTransparency = 0
+		highlight.Adornee = character
+		highlight.Parent = character
+	end
+
+	state.highlight = highlight
+	return highlight
+end
+
+local function refreshPlayerVisual(player)
+	if player == LocalPlayer then
+		return
+	end
+
+	local state = playerStates[player]
+	if not state then
+		return
+	end
+
+	local character = player.Character
+	if not character or not isPlayerAlive(player) then
+		if state.highlight then
+			state.highlight.Enabled = false
+		end
+		return
+	end
+
+	local highlight = getPlayerHighlight(player, state)
+	if not highlight then
+		return
+	end
+
+	local color = COLOR_INNOCENT
+	if player == murderer then
+		color = COLOR_MURDERER
+	elseif player == sheriff then
+		color = COLOR_SHERIFF
+	end
+
+	if highlight.OutlineColor ~= color then
+		highlight.OutlineColor = color
+	end
+	highlight.Enabled = true
+end
+
+local function refreshAllPlayerVisuals()
+	for i = 1, #trackedPlayers do
+		refreshPlayerVisual(trackedPlayers[i])
+	end
+end
+
+local function attachCharacter(player, character)
+	local state = playerStates[player]
+	if not state then
+		return
+	end
+
+	disconnectAll(state.characterConnections)
+	destroyPlayerHighlight(state)
+
+	state.character = character
+	state.root = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+	state.humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	state.characterConnections[#state.characterConnections + 1] = character.ChildAdded:Connect(function(child)
+		if child:IsA("Humanoid") then
+			state.humanoid = child
+			state.characterConnections[#state.characterConnections + 1] = child.Died:Connect(function()
+				refreshPlayerVisual(player)
+			end)
+		elseif child.Name == "HumanoidRootPart" and child:IsA("BasePart") then
+			state.root = child
+		end
+		refreshPlayerVisual(player)
+	end)
+
+	if state.humanoid then
+		state.characterConnections[#state.characterConnections + 1] = state.humanoid.Died:Connect(function()
+			refreshPlayerVisual(player)
+		end)
+	end
+
+	refreshPlayerVisual(player)
+end
+
+local function detachCharacter(player, character)
+	local state = playerStates[player]
+	if not state or state.character ~= character then
+		return
+	end
+
+	disconnectAll(state.characterConnections)
+	destroyPlayerHighlight(state)
+	state.character = nil
+	state.root = nil
+	state.humanoid = nil
+end
+
+local function trackPlayer(player)
+	if playerStates[player] then
+		return
+	end
+
+	local state = {
+		character = nil,
+		root = nil,
+		humanoid = nil,
+		highlight = nil,
+		playerConnections = {},
+		characterConnections = {},
+	}
+	playerStates[player] = state
+	playersByName[player.Name] = player
+	trackedPlayers[#trackedPlayers + 1] = player
+
+	state.playerConnections[#state.playerConnections + 1] = player.CharacterAdded:Connect(function(character)
+		attachCharacter(player, character)
+	end)
+	state.playerConnections[#state.playerConnections + 1] = player.CharacterRemoving:Connect(function(character)
+		detachCharacter(player, character)
+	end)
+
+	if player.Character then
+		attachCharacter(player, player.Character)
+	end
+end
+
+local function untrackPlayer(player)
+	local state = playerStates[player]
+	if not state then
+		return
+	end
+
+	disconnectAll(state.characterConnections)
+	disconnectAll(state.playerConnections)
+	destroyPlayerHighlight(state)
+	playerStates[player] = nil
+	playersByName[player.Name] = nil
+
+	for i = #trackedPlayers, 1, -1 do
+		if trackedPlayers[i] == player then
+			table.remove(trackedPlayers, i)
+			break
+		end
+	end
+
+	rolesByName[player.Name] = nil
+	if murderer == player then
+		murderer = nil
+	end
+	if sheriff == player then
+		sheriff = nil
+	end
+end
+
+-- Gun drop tracking. The identity check in ChildRemoved prevents an older drop
+-- from disabling the highlight on a newer one.
+local gunDrop = nil
+local gunHighlight = nil
+
+local function trackGunDrop(instance)
+	if instance.Name ~= "GunDrop" or not instance:IsA("BasePart") then
+		return
+	end
+
+	gunDrop = instance
+	if not gunHighlight or not gunHighlight.Parent then
+		gunHighlight = instance:FindFirstChild(GUN_HIGHLIGHT_NAME)
+		if not (gunHighlight and gunHighlight:IsA("Highlight")) then
+			gunHighlight = Instance.new("Highlight")
+			gunHighlight.Name = GUN_HIGHLIGHT_NAME
+			gunHighlight.FillTransparency = 0.4
+			gunHighlight.OutlineTransparency = 0
+			gunHighlight.FillColor = COLOR_GUN_FILL
+			gunHighlight.OutlineColor = COLOR_GUN_OUTLINE
+		end
+	end
+
+	gunHighlight.Adornee = instance
+	gunHighlight.Parent = instance
+	gunHighlight.Enabled = true
+end
+
+Workspace.ChildAdded:Connect(trackGunDrop)
+Workspace.ChildRemoved:Connect(function(child)
+	if child ~= gunDrop then
+		return
+	end
+
+	gunDrop = nil
+	if gunHighlight and gunHighlight.Parent then
+		gunHighlight.Enabled = false
+		gunHighlight.Adornee = nil
+	end
+
+	local replacement = Workspace:FindFirstChild("GunDrop")
+	if replacement then
+		trackGunDrop(replacement)
+	end
+end)
+
+local existingGunDrop = Workspace:FindFirstChild("GunDrop")
+if existingGunDrop then
+	trackGunDrop(existingGunDrop)
+end
+
+local function weaponRoleFallback()
+	local foundMurderer = nil
+	local foundSheriff = nil
+
+	local function inspectContainer(container)
+		if not container then
+			return false, false
+		end
+
+		local hasMurdererTool = false
+		local hasSheriffTool = false
+		local children = container:GetChildren()
+
+		for i = 1, #children do
+			local child = children[i]
+			if child:IsA("Tool") then
+				local name = string.lower(child.Name)
+				if string.find(name, "knife", 1, true) or string.find(name, "murder", 1, true) then
+					hasMurdererTool = true
+				elseif string.find(name, "gun", 1, true)
+					or string.find(name, "revolver", 1, true)
+					or string.find(name, "sheriff", 1, true) then
+					hasSheriffTool = true
+				end
+			end
+		end
+
+		return hasMurdererTool, hasSheriffTool
+	end
+
+	for i = 1, #trackedPlayers do
+		local player = trackedPlayers[i]
+		local humanoid = getHumanoid(player)
+		if humanoid and humanoid.Health > 0 then
+			local backpack = player:FindFirstChildOfClass("Backpack")
+			local character = player.Character
+			local backpackHasKnife, backpackHasGun = inspectContainer(backpack)
+			local characterHasKnife, characterHasGun = inspectContainer(character)
+
+			if not foundMurderer and (backpackHasKnife or characterHasKnife) then
+				foundMurderer = player
+			end
+
+			if not foundSheriff and (backpackHasGun or characterHasGun) then
+				foundSheriff = player
+			end
+		end
+	end
+
+	return foundMurderer, foundSheriff
+end
+
+local function rolesFromData(data, fallbackMurderer, fallbackSheriff)
+	local resolvedMurderer = fallbackMurderer
+	local resolvedSheriff = fallbackSheriff
+
+	for name, roleData in pairs(data) do
+		if type(name) == "string"
+			and type(roleData) == "table"
+			and roleData.Killed ~= true
+			and roleData.Dead ~= true then
+			local player = playersByName[name]
+			if player then
+				-- Visible inventory is the freshest signal during weapon pickups;
+				-- server role data fills in roles whose weapon is currently hidden.
+				if roleData.Role == "Murderer" and not resolvedMurderer then
+					resolvedMurderer = player
+				elseif (roleData.Role == "Sheriff" or roleData.Role == "Hero") and not resolvedSheriff then
+					resolvedSheriff = player
+				end
+			end
+		end
+	end
+
+	return resolvedMurderer, resolvedSheriff
+end
+
+local function updatePlayerData()
+	local fallbackMurderer, fallbackSheriff = weaponRoleFallback()
+	local resolvedMurderer = fallbackMurderer
+	local resolvedSheriff = fallbackSheriff
+	local remote = findPlayerDataRemote()
+	local receivedFreshData = false
+
+	if remote then
+		local success, result = pcall(remote.InvokeServer, remote)
+		if success and type(result) == "table" then
+			rolesByName = result
+			lastRoleDataAt = os.clock()
+			receivedFreshData = true
+			resolvedMurderer, resolvedSheriff = rolesFromData(result, resolvedMurderer, resolvedSheriff)
+		end
+	end
+
+	if not receivedFreshData then
+		if os.clock() - lastRoleDataAt <= ROLE_CACHE_GRACE_PERIOD then
+			resolvedMurderer, resolvedSheriff = rolesFromData(
+				rolesByName,
+				resolvedMurderer,
+				resolvedSheriff
+			)
+		else
+			rolesByName = {}
+		end
+	end
+
+	murderer = resolvedMurderer
+	sheriff = resolvedSheriff
+	refreshAllPlayerVisuals()
+end
+
+local function refreshRoleStateFromCache()
+	local resolvedMurderer, resolvedSheriff = weaponRoleFallback()
+	if os.clock() - lastRoleDataAt <= ROLE_CACHE_GRACE_PERIOD then
+		resolvedMurderer, resolvedSheriff = rolesFromData(
+			rolesByName,
+			resolvedMurderer,
+			resolvedSheriff
+		)
+	end
+
+	murderer = resolvedMurderer
+	sheriff = resolvedSheriff
+end
+
+-- The filter only needs to exclude the local character. The target is left in
+-- the query, so a direct hit on any of its descendants counts as visible.
+local raycastParams = RaycastParams.new()
+raycastParams.IgnoreWater = true
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local raycastFilter = {}
+local filteredCharacter = nil
+
+local function updateRaycastFilter()
+	local character = LocalPlayer.Character
+	if character ~= filteredCharacter then
+		filteredCharacter = character
+		table.clear(raycastFilter)
+		if character then
+			raycastFilter[1] = character
+		end
+		raycastParams.FilterDescendantsInstances = raycastFilter
+	end
+end
+
+local function isVisible(targetPart, origin)
+	if not targetPart or not targetPart.Parent then
+		return false
+	end
+
+	updateRaycastFilter()
+	if not filteredCharacter then
+		return false
+	end
+
+	local direction = targetPart.Position - origin
+	local result = Workspace:Raycast(origin, direction, raycastParams)
+	return result == nil or result.Instance:IsDescendantOf(targetPart.Parent)
+end
+
+local function getClosestLivingPlayer()
+	local localRoot = getRoot(LocalPlayer)
+	if not localRoot then
+		return nil
+	end
+
+	local origin = localRoot.Position
+	local closestPlayer = nil
+	local closestDistanceSquared = math.huge
+
+	for i = 1, #trackedPlayers do
+		local player = trackedPlayers[i]
+		if player ~= LocalPlayer and isPlayerAlive(player) then
+			local root = getRoot(player)
+			if root then
+				local offset = root.Position - origin
+				local distanceSquared = offset:Dot(offset)
+
+				-- Raycast only when this candidate can beat the current result.
+				if distanceSquared < closestDistanceSquared and isVisible(root, origin) then
+					closestDistanceSquared = distanceSquared
+					closestPlayer = player
+				end
+			end
+		end
+	end
+
+	return closestPlayer
+end
+
+local function getMurdererTarget()
+	local localRoot = getRoot(LocalPlayer)
+	if not localRoot then
+		return nil
+	end
+
+	-- Removing the sheriff first is strategically preferable, but only redirect
+	-- to them when the throw has an unobstructed path.
+	if sheriff and sheriff ~= LocalPlayer and isPlayerAlive(sheriff) then
+		local sheriffRoot = getRoot(sheriff)
+		if sheriffRoot and isVisible(sheriffRoot, localRoot.Position) then
+			return sheriff
+		end
+	end
+
+	return getClosestLivingPlayer()
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	trackPlayer(player)
+end
+Players.PlayerAdded:Connect(trackPlayer)
+Players.PlayerRemoving:Connect(untrackPlayer)
+
+-- Keep the hook's common path allocation-free. Arguments are packed only for
+-- the two remote calls that may actually be redirected.
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+	if checkcaller() then
+		return oldNamecall(self, ...)
+	end
+
+	local method = getnamecallmethod()
+	local isKnifeThrow = method == "FireServer" and self.Name == "Throw"
+	local isGunShot = method == "InvokeServer" and self.Name == "ShootGun"
+	if not isKnifeThrow and not isGunShot then
+		return oldNamecall(self, ...)
+	end
+
+	-- Weapon transfers can happen between periodic remote polls. Re-checking the
+	-- lightweight inventory fallback here makes the first throw/shot reliable.
+	refreshRoleStateFromCache()
+
+	if isKnifeThrow and LocalPlayer == murderer then
+		local target = getMurdererTarget()
+		local targetRoot = target and getRoot(target)
+		if targetRoot then
+			local args = table.pack(...)
+			args[2] = targetRoot.Position + targetRoot.AssemblyLinearVelocity * KNIFE_PREDICTION_TIME
+			return oldNamecall(self, table.unpack(args, 1, args.n))
+		end
+	elseif isGunShot and LocalPlayer == sheriff then
+		if murderer and isPlayerAlive(murderer) then
+			local targetRoot = getRoot(murderer)
+			local localRoot = getRoot(LocalPlayer)
+			if targetRoot and localRoot and isVisible(targetRoot, localRoot.Position) then
+				local args = table.pack(...)
+				args[2] = targetRoot.Position + targetRoot.AssemblyLinearVelocity * GUN_PREDICTION_TIME
+				return oldNamecall(self, table.unpack(args, 1, args.n))
+			end
+		end
+	end
+
+	return oldNamecall(self, ...)
+end)
+
+-- Role polling is isolated from character/highlight events. If InvokeServer
+-- yields, visual cleanup and respawn handling continue to run normally.
+task.spawn(function()
+	while true do
+		updatePlayerData()
+		task.wait(ROLE_SYNC_INTERVAL)
+	end
+end)
