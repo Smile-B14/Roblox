@@ -1,0 +1,693 @@
+-- ====================================================================
+--              KEYBOARD ESCAPE - GALAXY 2 | By Smile B
+-- ====================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+
+-- ====================================================================
+--                       CONFIG & WAYPOINTS
+-- ====================================================================
+
+local BASE_SPEED = 150
+local MAX_TP_ATTEMPTS = 6
+local isFarming = false
+local scriptStartTime = tick()
+
+local initialWins = nil
+local currentWins = 0
+local gainedWins = 0
+
+local coordinates = {
+    {index = 1,  x = -439.16,  y = 361.84, z = -759.70, type = "Walk"},
+    {index = 2,  x = -273.97,  y = 361.30, z = -759.51, type = "Walk"},
+    {index = 3,  x = -249.08,  y = 361.30, z = -782.82, type = "Walk"},
+    {index = 4,  x = -178.18,  y = 361.30, z = -782.11, type = "Walk"},
+    {index = 5,  x = -132.18,  y = 361.30, z = -761.64, type = "Walk"},
+    {index = 6,  x = -105.81,  y = 361.30, z = -762.85, type = "Walk"},
+    {index = 7,  x = -49.99,   y = 361.30, z = -762.29, type = "Jump"},
+    {index = 8,  x = -31.78,   y = 361.30, z = -775.21, type = "Jump"},
+    {index = 9,  x = 17.61,    y = 361.30, z = -779.58, type = "Jump"},
+    {index = 10, x = 38.49,    y = 361.30, z = -783.93, type = "Walk"},
+    {index = 11, x = 58.81,    y = 361.30, z = -779.27, type = "Walk"},
+    {index = 12, x = 94.62,    y = 361.31, z = -765.07, type = "Walk"},
+    {index = 13, x = 142.45,   y = 361.31, z = -767.74, type = "Walk"},
+    {index = 14, x = 209.88,   y = 361.31, z = -757.98, type = "Walk"},
+    {index = 15, x = 215.20,   y = 389.57, z = -756.19, type = "Jump"}, -- High jump (+28.26 studs)
+    {index = 16, x = 241.75,   y = 361.31, z = -760.01, type = "Jump"},
+    {index = 17, x = 252.95,   y = 361.31, z = -760.49, type = "Walk"},
+    {index = 18, x = 285.41,   y = 361.31, z = -760.49, type = "Jump"},
+    {index = 19, x = 295.87,   y = 389.57, z = -762.29, type = "Jump"}, -- High jump (+28.26 studs)
+    {index = 20, x = 319.97,   y = 361.31, z = -760.59, type = "Jump"},
+    {index = 21, x = 330.48,   y = 361.31, z = -759.75, type = "Walk"},
+    {index = 22, x = 365.49,   y = 361.31, z = -761.95, type = "Jump"},
+    {index = 23, x = 415.82,   y = 361.31, z = -761.29, type = "Walk"},
+    {index = 24, x = 450.25,   y = 361.31, z = -762.40, type = "Walk"},
+    {index = 25, x = 470.99,   y = 361.31, z = -765.04, type = "Walk"},
+    {index = 26, x = 505.61,   y = 361.31, z = -782.60, type = "Walk"},
+    {index = 27, x = 578.53,   y = 361.31, z = -796.60, type = "Walk"},
+    {index = 28, x = 635.05,   y = 361.31, z = -784.03, type = "Walk"},
+    {index = 29, x = 718.07,   y = 361.31, z = -770.00, type = "Walk"},
+    {index = 30, x = 791.90,   y = 361.31, z = -760.36, type = "Walk"},
+    {index = 31, x = 829.23,   y = 361.31, z = -765.33, type = "Walk"},
+    {index = 32, x = 930.63,   y = 361.31, z = -759.36, type = "Jump"}, -- Extended +10 X forward
+    {index = 33, x = 947.52,   y = 361.31, z = -759.02, type = "Walk"},
+    {index = 34, x = 1049.93,  y = 361.31, z = -757.28, type = "Jump"}, -- Extended +10 X forward
+    {index = 35, x = 1113.23,  y = 361.31, z = -760.21, type = "Walk"},
+    {index = 36, x = 1182.55,  y = 361.42, z = -762.61, type = "Walk"},
+    {index = 37, x = 1214.16,  y = 361.43, z = -761.95, type = "Walk"},
+    {index = 38, x = 1248.77,  y = 361.76, z = -760.92, type = "Jump"},
+    {index = 39, x = 1276.30,  y = 361.97, z = -747.21, type = "Walk"},
+    {index = 40, x = 1314.70,  y = 361.56, z = -710.00, type = "Jump"},
+    {index = 41, x = 1397.65,  y = 361.24, z = -714.18, type = "Walk"},
+    {index = 42, x = 1474.16,  y = 369.46, z = -757.28, type = "Jump"},
+    {index = 43, x = 1555.62,  y = 361.90, z = -753.65, type = "Jump"},
+    {index = 44, x = 1560.68,  y = 371.71, z = -733.31, type = "TP"},   -- Extended +6 Z to front
+}
+
+local spawnPos = Vector3.new(coordinates[1].x, coordinates[1].y, coordinates[1].z)
+
+-- ====================================================================
+--                  STRING / STAT HELPER FUNCTIONS
+-- ====================================================================
+
+local function formatCommas(num)
+    local formatted = tostring(math.floor(num))
+    local k
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if k == 0 then break end
+    end
+    return formatted
+end
+
+local function formatTime(seconds)
+    local hrs = math.floor(seconds / 3600)
+    local mins = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    if hrs > 0 then
+        return string.format("%02d:%02d:%02d", hrs, mins, secs)
+    else
+        return string.format("%02d:%02d", mins, secs)
+    end
+end
+
+local function parseNumber(text)
+    if not text then return 0 end
+    local clean = text:gsub(",", ""):gsub("%s+", "")
+    local numStr, suffix = clean:match("([%d%.]+)([kKmMbBtT]?)")
+    if numStr then
+        local n = tonumber(numStr) or 0
+        if suffix == "k" or suffix == "K" then
+            return math.floor(n * 1e3)
+        elseif suffix == "m" or suffix == "M" then
+            return math.floor(n * 1e6)
+        elseif suffix == "b" or suffix == "B" then
+            return math.floor(n * 1e9)
+        end
+        return math.floor(n)
+    end
+    local digits = clean:match("%d+")
+    return tonumber(digits) or 0
+end
+
+local function getGameWins()
+    local success, val = pcall(function()
+        return player.PlayerGui.SpeedGameUI.Frames.LeftFrame2.WinsFrame.WinsLabel.Text
+    end)
+    if success and val then
+        return parseNumber(val)
+    end
+    return nil
+end
+
+-- ====================================================================
+--                         COMPACT MODERN UI
+-- ====================================================================
+
+if CoreGui:FindFirstChild("Galaxy2HubUI") then
+    CoreGui.Galaxy2HubUI:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "Galaxy2HubUI"
+screenGui.ResetOnSpawn = false
+pcall(function() screenGui.Parent = CoreGui end)
+if not screenGui.Parent then screenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 250, 0, 220)
+mainFrame.Position = UDim2.new(0.05, 0, 0.35, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 14)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Thickness = 1.5
+mainStroke.Color = Color3.fromRGB(0, 210, 255)
+mainStroke.Transparency = 0.4
+mainStroke.Parent = mainFrame
+
+-- Top Bar (Header)
+local topBar = Instance.new("Frame")
+topBar.Name = "TopBar"
+topBar.Size = UDim2.new(1, 0, 0, 36)
+topBar.BackgroundColor3 = Color3.fromRGB(20, 23, 34)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 14)
+topCorner.Parent = topBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Text = "Keyboard Escape - Galaxy 2"
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 11
+titleLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
+titleLabel.Size = UDim2.new(1, -45, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.BackgroundTransparency = 1
+titleLabel.Parent = topBar
+
+local minBtn = Instance.new("TextButton")
+minBtn.Text = "—"
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 12
+minBtn.TextColor3 = Color3.fromRGB(160, 170, 195)
+minBtn.Size = UDim2.new(0, 22, 0, 22)
+minBtn.Position = UDim2.new(1, -28, 0, 7)
+minBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 45)
+minBtn.BorderSizePixel = 0
+minBtn.Parent = topBar
+
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 6)
+minCorner.Parent = minBtn
+
+local body = Instance.new("Frame")
+body.Name = "Body"
+body.Size = UDim2.new(1, -20, 1, -44)
+body.Position = UDim2.new(0, 10, 0, 42)
+body.BackgroundTransparency = 1
+body.Parent = mainFrame
+
+-- Stats Row 1 (Total In-Game Wins & Wins Gained)
+local row1 = Instance.new("Frame")
+row1.Size = UDim2.new(1, 0, 0, 42)
+row1.Position = UDim2.new(0, 0, 0, 0)
+row1.BackgroundTransparency = 1
+row1.Parent = body
+
+-- Total Wins Box
+local totalWinsCard = Instance.new("Frame")
+totalWinsCard.Size = UDim2.new(0.5, -4, 1, 0)
+totalWinsCard.Position = UDim2.new(0, 0, 0, 0)
+totalWinsCard.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+totalWinsCard.BorderSizePixel = 0
+totalWinsCard.Parent = row1
+
+local twCorner = Instance.new("UICorner")
+twCorner.CornerRadius = UDim.new(0, 10)
+twCorner.Parent = totalWinsCard
+
+local twTitle = Instance.new("TextLabel")
+twTitle.Text = "🏆 TOTAL WINS"
+twTitle.Font = Enum.Font.GothamBold
+twTitle.TextSize = 8
+twTitle.TextColor3 = Color3.fromRGB(130, 140, 165)
+twTitle.Position = UDim2.new(0, 8, 0, 5)
+twTitle.Size = UDim2.new(1, -16, 0, 12)
+twTitle.TextXAlignment = Enum.TextXAlignment.Left
+twTitle.BackgroundTransparency = 1
+twTitle.Parent = totalWinsCard
+
+local totalWinsValue = Instance.new("TextLabel")
+totalWinsValue.Text = "..."
+totalWinsValue.Font = Enum.Font.GothamBold
+totalWinsValue.TextSize = 14
+totalWinsValue.TextColor3 = Color3.fromRGB(0, 220, 255)
+totalWinsValue.Position = UDim2.new(0, 8, 0, 18)
+totalWinsValue.Size = UDim2.new(1, -16, 0, 20)
+totalWinsValue.TextXAlignment = Enum.TextXAlignment.Left
+totalWinsValue.BackgroundTransparency = 1
+totalWinsValue.Parent = totalWinsCard
+
+-- Gained Wins Box
+local gainedCard = Instance.new("Frame")
+gainedCard.Size = UDim2.new(0.5, -4, 1, 0)
+gainedCard.Position = UDim2.new(0.5, 4, 0, 0)
+gainedCard.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+gainedCard.BorderSizePixel = 0
+gainedCard.Parent = row1
+
+local gwCorner = Instance.new("UICorner")
+gwCorner.CornerRadius = UDim.new(0, 10)
+gwCorner.Parent = gainedCard
+
+local gwTitle = Instance.new("TextLabel")
+gwTitle.Text = "📈 GAINED"
+gwTitle.Font = Enum.Font.GothamBold
+gwTitle.TextSize = 8
+gwTitle.TextColor3 = Color3.fromRGB(130, 140, 165)
+gwTitle.Position = UDim2.new(0, 8, 0, 5)
+gwTitle.Size = UDim2.new(1, -16, 0, 12)
+gwTitle.TextXAlignment = Enum.TextXAlignment.Left
+gwTitle.BackgroundTransparency = 1
+gwTitle.Parent = gainedCard
+
+local gainedWinsValue = Instance.new("TextLabel")
+gainedWinsValue.Text = "+0"
+gainedWinsValue.Font = Enum.Font.GothamBold
+gainedWinsValue.TextSize = 14
+gainedWinsValue.TextColor3 = Color3.fromRGB(0, 255, 170)
+gainedWinsValue.Position = UDim2.new(0, 8, 0, 18)
+gainedWinsValue.Size = UDim2.new(1, -16, 0, 20)
+gainedWinsValue.TextXAlignment = Enum.TextXAlignment.Left
+gainedWinsValue.BackgroundTransparency = 1
+gainedWinsValue.Parent = gainedCard
+
+-- Stats Row 2 (Elapsed Time Running)
+local timeCard = Instance.new("Frame")
+timeCard.Size = UDim2.new(1, 0, 0, 36)
+timeCard.Position = UDim2.new(0, 0, 0, 48)
+timeCard.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+timeCard.BorderSizePixel = 0
+timeCard.Parent = body
+
+local tcCorner = Instance.new("UICorner")
+tcCorner.CornerRadius = UDim.new(0, 10)
+tcCorner.Parent = timeCard
+
+local timeTitle = Instance.new("TextLabel")
+timeTitle.Text = "⏱️ ELAPSED TIME"
+timeTitle.Font = Enum.Font.GothamBold
+timeTitle.TextSize = 8
+timeTitle.TextColor3 = Color3.fromRGB(130, 140, 165)
+timeTitle.Position = UDim2.new(0, 8, 0, 4)
+timeTitle.Size = UDim2.new(0.5, 0, 0, 12)
+timeTitle.TextXAlignment = Enum.TextXAlignment.Left
+timeTitle.BackgroundTransparency = 1
+timeTitle.Parent = timeCard
+
+local timeValue = Instance.new("TextLabel")
+timeValue.Text = "00:00"
+timeValue.Font = Enum.Font.GothamBold
+timeValue.TextSize = 13
+timeValue.TextColor3 = Color3.fromRGB(240, 245, 255)
+timeValue.Position = UDim2.new(0, 8, 0, 16)
+timeValue.Size = UDim2.new(1, -16, 0, 16)
+timeValue.TextXAlignment = Enum.TextXAlignment.Left
+timeValue.BackgroundTransparency = 1
+timeValue.Parent = timeCard
+
+-- Start / Stop Button
+local startBtn = Instance.new("TextButton")
+startBtn.Text = "START FARM"
+startBtn.Font = Enum.Font.GothamBold
+startBtn.TextSize = 13
+startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+startBtn.Size = UDim2.new(1, 0, 0, 40)
+startBtn.Position = UDim2.new(0, 0, 0, 90)
+startBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 110)
+startBtn.BorderSizePixel = 0
+startBtn.Parent = body
+
+local sbCorner = Instance.new("UICorner")
+sbCorner.CornerRadius = UDim.new(0, 10)
+sbCorner.Parent = startBtn
+
+local sbGradient = Instance.new("UIGradient")
+sbGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 225, 140)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 160, 220))
+})
+sbGradient.Parent = startBtn
+
+-- Credits Label
+local creditsLabel = Instance.new("TextLabel")
+creditsLabel.Text = "Credits: Smile B"
+creditsLabel.Font = Enum.Font.GothamMedium
+creditsLabel.TextSize = 10
+creditsLabel.TextColor3 = Color3.fromRGB(100, 110, 135)
+creditsLabel.Size = UDim2.new(1, 0, 0, 16)
+creditsLabel.Position = UDim2.new(0, 0, 0, 136)
+creditsLabel.TextXAlignment = Enum.TextXAlignment.Center
+creditsLabel.BackgroundTransparency = 1
+creditsLabel.Parent = body
+
+-- Dragging & Minimize
+local isDragging, dragInput, dragStart, startPos
+topBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then isDragging = false end
+        end)
+    end
+end)
+
+topBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and isDragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+local isMin = false
+minBtn.MouseButton1Click:Connect(function()
+    isMin = not isMin
+    mainFrame.Size = isMin and UDim2.new(0, 250, 0, 36) or UDim2.new(0, 250, 0, 220)
+    minBtn.Text = isMin and "+" or "—"
+end)
+
+-- Live Background Watcher for Wins & Timer
+task.spawn(function()
+    while true do
+        local current = getGameWins()
+        if current then
+            if not initialWins then
+                initialWins = current
+            end
+            currentWins = current
+            gainedWins = math.max(0, currentWins - initialWins)
+
+            totalWinsValue.Text = formatCommas(currentWins)
+            gainedWinsValue.Text = "+" .. formatCommas(gainedWins)
+        end
+
+        local elapsed = tick() - scriptStartTime
+        timeValue.Text = formatTime(elapsed)
+
+        task.wait(0.5)
+    end
+end)
+
+-- ====================================================================
+--              PHYSICAL BALLISTIC & TRAJECTORY ENGINE
+-- ====================================================================
+
+local function syncCharacter()
+    character = player.Character or player.CharacterAdded:Wait()
+    hrp = character:WaitForChild("HumanoidRootPart", 5)
+    humanoid = character:WaitForChild("Humanoid", 5)
+    if humanoid then
+        humanoid.WalkSpeed = BASE_SPEED
+        humanoid.AutoRotate = true
+    end
+end
+
+local function forceReset()
+    if humanoid then humanoid.Health = 0 end
+    player.CharacterAdded:Wait()
+    task.wait(1.2)
+    syncCharacter()
+end
+
+local function fireWinTrigger()
+    if not hrp then return end
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if part:IsA("BasePart") and (part.Position - hrp.Position).Magnitude <= 25 then
+            if typeof(firetouchinterest) == "function" then
+                pcall(function()
+                    firetouchinterest(hrp, part, 0)
+                    task.wait(0.02)
+                    firetouchinterest(hrp, part, 1)
+                end)
+            end
+        end
+    end
+end
+
+local function executeReliableJump(targetPos)
+    if not hrp or not hrp.Parent or not humanoid then return false end
+
+    local g = workspace.Gravity > 0 and workspace.Gravity or 196.2
+    local startPos = hrp.Position
+    local dx = targetPos.X - startPos.X
+    local dz = targetPos.Z - startPos.Z
+    local dy = targetPos.Y - startPos.Y
+    local horizDist = math.sqrt(dx * dx + dz * dz)
+    
+    local dirX = horizDist > 0.01 and (dx / horizDist) or 0
+    local dirZ = horizDist > 0.01 and (dz / horizDist) or 0
+
+    local vy, flightTime
+
+    if dy > 3 then
+        local extraApex = 5.0
+        local totalRise = dy + extraApex
+        vy = math.sqrt(2 * g * totalRise)
+        local tRise = vy / g
+        local tFall = math.sqrt(2 * extraApex / g)
+        flightTime = tRise + tFall
+    else
+        local baseJumpPower = 60
+        vy = baseJumpPower
+        local discriminant = (vy * vy) - (2 * g * dy)
+        if discriminant > 0 then
+            flightTime = (vy + math.sqrt(discriminant)) / g
+        else
+            flightTime = (2 * vy) / g
+        end
+    end
+
+    local requiredHorizSpeed = math.clamp(horizDist / math.max(flightTime, 0.1), 35, BASE_SPEED)
+
+    humanoid:Move(Vector3.new(dirX, 0, dirZ), false)
+    humanoid.Jump = true
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+    hrp.AssemblyLinearVelocity = Vector3.new(dirX * requiredHorizSpeed, vy, dirZ * requiredHorizSpeed)
+
+    local startTick = tick()
+    local landed = false
+
+    while isFarming and not landed do
+        local curPos = hrp.Position
+        local curFlatDist = math.sqrt((targetPos.X - curPos.X)^2 + (targetPos.Z - curPos.Z)^2)
+        local curYDiff = math.abs(targetPos.Y - curPos.Y)
+        local currentYVel = hrp.AssemblyLinearVelocity.Y
+
+        if curFlatDist > 1.2 then
+            local curDirX = (targetPos.X - curPos.X) / curFlatDist
+            local curDirZ = (targetPos.Z - curPos.Z) / curFlatDist
+            hrp.AssemblyLinearVelocity = Vector3.new(curDirX * requiredHorizSpeed, currentYVel, curDirZ * requiredHorizSpeed)
+        end
+
+        if (curFlatDist <= 4.5 and curYDiff <= 5.5 and (currentYVel <= 2 or humanoid.FloorMaterial ~= Enum.Material.Air)) or (tick() - startTick > flightTime + 0.4) then
+            landed = true
+            break
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    return isFarming
+end
+
+local function executeHumanWalk(targetPos, nextWp)
+    if not hrp or not hrp.Parent or not humanoid then return false end
+
+    local dynamicSpeed = BASE_SPEED + math.random(-4, 2)
+    local nextPos = nextWp and Vector3.new(nextWp.x, nextWp.y, nextWp.z) or nil
+
+    if nextPos and nextWp.type == "Walk" then
+        local toCur = (targetPos - hrp.Position).Unit
+        local toNext = (nextPos - targetPos).Unit
+        local dot = toCur:Dot(toNext)
+        if dot < 0.65 then
+            dynamicSpeed = 120
+        end
+    end
+
+    humanoid.WalkSpeed = dynamicSpeed
+
+    local reached = false
+    local startTime = tick()
+
+    while isFarming and not reached do
+        local curPos = hrp.Position
+        local deltaX = targetPos.X - curPos.X
+        local deltaZ = targetPos.Z - curPos.Z
+        local horizontalDist = math.sqrt(deltaX * deltaX + deltaZ * deltaZ)
+        local verticalDist = math.abs(targetPos.Y - curPos.Y)
+
+        humanoid:MoveTo(targetPos)
+
+        if horizontalDist > 0.5 then
+            local dirX = deltaX / horizontalDist
+            local dirZ = deltaZ / horizontalDist
+            local currentYVel = hrp.AssemblyLinearVelocity.Y
+            hrp.AssemblyLinearVelocity = Vector3.new(dirX * dynamicSpeed, currentYVel, dirZ * dynamicSpeed)
+        end
+
+        if horizontalDist <= 4.0 and verticalDist <= 5.0 then
+            reached = true
+            break
+        end
+
+        if tick() - startTime > 3.2 then
+            humanoid.Jump = true
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            break
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    if nextWp and nextWp.type == "Walk" and math.random(1, 10) == 1 then
+        task.wait(math.random(5, 10) / 100)
+    end
+
+    return isFarming
+end
+
+-- ====================================================================
+--                         MAIN AUTO-FARM CYCLE
+-- ====================================================================
+
+local function runFarmCycle()
+    syncCharacter()
+    if not hrp or not humanoid or humanoid.Health <= 0 then
+        forceReset()
+        return
+    end
+
+    -- Settle at spawn to initialize Stage 1 session
+    humanoid:Move(Vector3.zero, false)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    task.wait(0.5)
+
+    -- Waypoints 1 to 43 (Smooth Path Execution)
+    for i = 1, 43 do
+        if not isFarming then return end
+        
+        local wp = coordinates[i]
+        local nextWp = coordinates[i + 1]
+        local targetPos = Vector3.new(wp.x, wp.y, wp.z)
+
+        if wp.type == "Jump" then
+            executeReliableJump(targetPos)
+        else
+            executeHumanWalk(targetPos, nextWp)
+        end
+    end
+
+    -- ================================================================
+    -- WAYPOINT 44: DROP ONTO TP PAD & 1s STATIONARY WAIT (6 RETRIES)
+    -- ================================================================
+    local pt43 = Vector3.new(coordinates[43].x, coordinates[43].y, coordinates[43].z)
+    local pt44 = Vector3.new(coordinates[44].x, coordinates[44].y, coordinates[44].z)
+    local tpSucceeded = false
+
+    for attempt = 1, MAX_TP_ATTEMPTS do
+        if not isFarming then return end
+
+        executeReliableJump(pt44)
+        
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        humanoid:Move(Vector3.zero, false)
+        fireWinTrigger()
+
+        local waitStart = tick()
+        while isFarming and (tick() - waitStart < 1.0) do
+            task.wait(0.08)
+            if not hrp or not hrp.Parent then break end
+
+            local distToSpawn = (hrp.Position - spawnPos).Magnitude
+            local distFromEnd = (hrp.Position - pt44).Magnitude
+
+            if distToSpawn <= 220 or distFromEnd >= 300 then
+                tpSucceeded = true
+                break
+            end
+        end
+
+        if tpSucceeded then break end
+
+        executeHumanWalk(pt43, coordinates[44])
+        task.wait(0.1)
+    end
+
+    if tpSucceeded then
+        task.wait(0.5)
+    else
+        forceReset()
+    end
+end
+
+-- ====================================================================
+--                         EVENT HANDLERS
+-- ====================================================================
+
+local function startFarm()
+    if isFarming then return end
+    isFarming = true
+    startBtn.Text = "STOP FARM"
+    sbGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 80)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 30, 40))
+    })
+
+    task.spawn(function()
+        while isFarming do
+            runFarmCycle()
+            task.wait(0.05)
+        end
+    end)
+end
+
+local function stopFarm()
+    isFarming = false
+    startBtn.Text = "START FARM"
+    sbGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 225, 140)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 160, 220))
+    })
+    if humanoid then
+        humanoid:Move(Vector3.zero, false)
+    end
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
+startBtn.MouseButton1Click:Connect(function()
+    if isFarming then stopFarm() else startFarm() end
+end)
+
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    hrp = newChar:WaitForChild("HumanoidRootPart", 5)
+    humanoid = newChar:WaitForChild("Humanoid", 5)
+    if isFarming then
+        task.wait(0.5)
+        syncCharacter()
+    end
+end)
