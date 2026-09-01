@@ -16,66 +16,66 @@ local humanoid = character:WaitForChild("Humanoid")
 --                       CONFIG & WAYPOINTS
 -- ====================================================================
 
-local BASE_SPEED = 150
+local BASE_SPEED = 200
 local MAX_TP_ATTEMPTS = 6
 local isFarming = false
+local stopRequested = false
 local scriptStartTime = tick()
 
 local initialWins = nil
 local currentWins = 0
 local gainedWins = 0
 
+local runTrack = nil
+local jumpTrack = nil
+
 local coordinates = {
-    {index = 1,  x = -439.16,  y = 361.84, z = -759.70, type = "Walk"},
-    {index = 2,  x = -273.97,  y = 361.30, z = -759.51, type = "Walk"},
-    {index = 3,  x = -249.08,  y = 361.30, z = -782.82, type = "Walk"},
-    {index = 4,  x = -178.18,  y = 361.30, z = -782.11, type = "Walk"},
-    {index = 5,  x = -132.18,  y = 361.30, z = -761.64, type = "Walk"},
-    {index = 6,  x = -105.81,  y = 361.30, z = -762.85, type = "Walk"},
-    {index = 7,  x = -49.99,   y = 361.30, z = -762.29, type = "Jump"},
-    {index = 8,  x = -31.78,   y = 361.30, z = -775.21, type = "Jump"},
-    {index = 9,  x = 17.61,    y = 361.30, z = -779.58, type = "Jump"},
-    {index = 10, x = 38.49,    y = 361.30, z = -783.93, type = "Walk"},
-    {index = 11, x = 58.81,    y = 361.30, z = -779.27, type = "Walk"},
-    {index = 12, x = 94.62,    y = 361.31, z = -765.07, type = "Walk"},
-    {index = 13, x = 142.45,   y = 361.31, z = -767.74, type = "Walk"},
-    {index = 14, x = 209.88,   y = 361.31, z = -757.98, type = "Walk"},
-    {index = 15, x = 215.20,   y = 389.57, z = -756.19, type = "Jump"}, -- High jump (+28.26 studs)
-    {index = 16, x = 241.75,   y = 361.31, z = -760.01, type = "Jump"},
-    {index = 17, x = 252.95,   y = 361.31, z = -760.49, type = "Walk"},
-    {index = 18, x = 285.41,   y = 361.31, z = -760.49, type = "Jump"},
-    {index = 19, x = 295.87,   y = 389.57, z = -762.29, type = "Jump"}, -- High jump (+28.26 studs)
-    {index = 20, x = 319.97,   y = 361.31, z = -760.59, type = "Jump"},
-    {index = 21, x = 330.48,   y = 361.31, z = -759.75, type = "Walk"},
-    {index = 22, x = 365.49,   y = 361.31, z = -761.95, type = "Jump"},
-    {index = 23, x = 415.82,   y = 361.31, z = -761.29, type = "Walk"},
-    {index = 24, x = 450.25,   y = 361.31, z = -762.40, type = "Walk"},
-    {index = 25, x = 470.99,   y = 361.31, z = -765.04, type = "Walk"},
-    {index = 26, x = 505.61,   y = 361.31, z = -782.60, type = "Walk"},
-    {index = 27, x = 578.53,   y = 361.31, z = -796.60, type = "Walk"},
-    {index = 28, x = 635.05,   y = 361.31, z = -784.03, type = "Walk"},
-    {index = 29, x = 718.07,   y = 361.31, z = -770.00, type = "Walk"},
-    {index = 30, x = 791.90,   y = 361.31, z = -760.36, type = "Walk"},
-    {index = 31, x = 829.23,   y = 361.31, z = -765.33, type = "Walk"},
-    {index = 32, x = 930.63,   y = 361.31, z = -759.36, type = "Jump"}, -- Extended +10 X forward
-    {index = 33, x = 947.52,   y = 361.31, z = -759.02, type = "Walk"},
-    {index = 34, x = 1049.93,  y = 361.31, z = -757.28, type = "Jump"}, -- Extended +10 X forward
-    {index = 35, x = 1113.23,  y = 361.31, z = -760.21, type = "Walk"},
-    {index = 36, x = 1182.55,  y = 361.42, z = -762.61, type = "Walk"},
-    {index = 37, x = 1214.16,  y = 361.43, z = -761.95, type = "Walk"},
-    {index = 38, x = 1248.77,  y = 361.76, z = -760.92, type = "Jump"},
-    {index = 39, x = 1276.30,  y = 361.97, z = -747.21, type = "Walk"},
-    {index = 40, x = 1314.70,  y = 361.56, z = -710.00, type = "Jump"},
-    {index = 41, x = 1397.65,  y = 361.24, z = -714.18, type = "Walk"},
-    {index = 42, x = 1474.16,  y = 369.46, z = -757.28, type = "Jump"},
-    {index = 43, x = 1555.62,  y = 361.90, z = -753.65, type = "Jump"},
-    {index = 44, x = 1560.68,  y = 371.71, z = -733.31, type = "TP"},   -- Extended +6 Z to front
+    {index = 1,  x = -441.36, y = 361.90, z = -758.27, type = "Walk"}, -- Spawn
+    {index = 2,  x = -206.01, y = 361.36, z = -784.71, type = "Walk"}, -- First sprint target
+    {index = 3,  x = -109.27, y = 361.36, z = -764.51, type = "Walk"},
+    {index = 4,  x = 36.03,   y = 361.36, z = -783.40, type = "Jump"},
+    {index = 5,  x = 144.21,  y = 361.37, z = -761.48, type = "Walk"},
+    {index = 6,  x = 236.79,  y = 371.91, z = -809.25, type = "Jump"},
+    {index = 7,  x = 387.63,  y = 361.37, z = -758.26, type = "Jump"},
+    {index = 8,  x = 484.12,  y = 361.37, z = -769.78, type = "Walk"},
+    {index = 9,  x = 563.98,  y = 361.37, z = -802.08, type = "Walk"},
+    {index = 10, x = 821.61,  y = 361.37, z = -760.03, type = "Walk"},
+    {index = 11, x = 921.86,  y = 361.37, z = -761.98, type = "Jump"},
+    {index = 12, x = 944.13,  y = 361.37, z = -761.14, type = "Walk"},
+    {index = 13, x = 1079.29, y = 361.37, z = -756.50, type = "Jump"}, -- Natural pre-spiral hop
+    {index = 14, x = 1203.11, y = 361.48, z = -758.02, type = "Walk"},
+    {index = 15, x = 1249.57, y = 361.74, z = -763.48, type = "Walk"},
+    {index = 16, x = 1289.34, y = 362.17, z = -759.04, type = "Walk"},
+    -- 360 Spiral Section (Smooth Slerp Rotation, Upside Down at Y = 453)
+    {index = 17, x = 1299.02, y = 363.76, z = -758.52, type = "Walk"},
+    {index = 18, x = 1308.94, y = 368.24, z = -756.62, type = "Walk"},
+    {index = 19, x = 1318.26, y = 374.72, z = -753.58, type = "Walk"},
+    {index = 20, x = 1327.62, y = 387.71, z = -750.41, type = "Walk"},
+    {index = 21, x = 1331.51, y = 403.51, z = -746.99, type = "Walk"},
+    {index = 22, x = 1329.74, y = 421.01, z = -743.28, type = "Walk"},
+    {index = 23, x = 1322.63, y = 435.15, z = -740.20, type = "Walk"},
+    {index = 24, x = 1313.31, y = 444.76, z = -737.41, type = "Walk"},
+    {index = 25, x = 1300.20, y = 451.30, z = -734.36, type = "Walk"},
+    {index = 26, x = 1282.21, y = 453.19, z = -731.56, type = "Walk"}, -- Top of Loop (Ceiling)
+    {index = 27, x = 1268.01, y = 449.53, z = -729.35, type = "Walk"},
+    {index = 28, x = 1255.34, y = 441.12, z = -728.49, type = "Walk"},
+    {index = 29, x = 1246.44, y = 430.22, z = -725.92, type = "Walk"},
+    {index = 30, x = 1240.97, y = 413.44, z = -721.33, type = "Walk"},
+    {index = 31, x = 1242.00, y = 395.96, z = -717.07, type = "Walk"},
+    {index = 32, x = 1247.31, y = 384.22, z = -714.02, type = "Walk"},
+    {index = 33, x = 1257.90, y = 371.71, z = -711.69, type = "Walk"},
+    {index = 34, x = 1273.47, y = 364.07, z = -710.36, type = "Walk"},
+    {index = 35, x = 1301.61, y = 361.62, z = -707.55, type = "Walk"},
+    -- Exit Path to Finish
+    {index = 36, x = 1393.58, y = 361.30, z = -707.11, type = "Walk"},
+    {index = 37, x = 1547.61, y = 361.96, z = -737.51, type = "Jump"},
+    {index = 38, x = 1560.21, y = 363.27, z = -737.00, type = "TP"},
 }
 
 local spawnPos = Vector3.new(coordinates[1].x, coordinates[1].y, coordinates[1].z)
 
 -- ====================================================================
---                  STRING / STAT HELPER FUNCTIONS
+--                  STAT & STRING HELPER FUNCTIONS
 -- ====================================================================
 
 local function formatCommas(num)
@@ -206,14 +206,13 @@ body.Position = UDim2.new(0, 10, 0, 42)
 body.BackgroundTransparency = 1
 body.Parent = mainFrame
 
--- Stats Row 1 (Total In-Game Wins & Wins Gained)
+-- Stats Row 1
 local row1 = Instance.new("Frame")
 row1.Size = UDim2.new(1, 0, 0, 42)
 row1.Position = UDim2.new(0, 0, 0, 0)
 row1.BackgroundTransparency = 1
 row1.Parent = body
 
--- Total Wins Box
 local totalWinsCard = Instance.new("Frame")
 totalWinsCard.Size = UDim2.new(0.5, -4, 1, 0)
 totalWinsCard.Position = UDim2.new(0, 0, 0, 0)
@@ -247,7 +246,6 @@ totalWinsValue.TextXAlignment = Enum.TextXAlignment.Left
 totalWinsValue.BackgroundTransparency = 1
 totalWinsValue.Parent = totalWinsCard
 
--- Gained Wins Box
 local gainedCard = Instance.new("Frame")
 gainedCard.Size = UDim2.new(0.5, -4, 1, 0)
 gainedCard.Position = UDim2.new(0.5, 4, 0, 0)
@@ -281,7 +279,7 @@ gainedWinsValue.TextXAlignment = Enum.TextXAlignment.Left
 gainedWinsValue.BackgroundTransparency = 1
 gainedWinsValue.Parent = gainedCard
 
--- Stats Row 2 (Elapsed Time Running)
+-- Stats Row 2
 local timeCard = Instance.new("Frame")
 timeCard.Size = UDim2.new(1, 0, 0, 36)
 timeCard.Position = UDim2.new(0, 0, 0, 48)
@@ -338,7 +336,7 @@ sbGradient.Color = ColorSequence.new({
 })
 sbGradient.Parent = startBtn
 
--- Credits Label
+-- Credits
 local creditsLabel = Instance.new("TextLabel")
 creditsLabel.Text = "Credits: Smile B"
 creditsLabel.Font = Enum.Font.GothamMedium
@@ -409,8 +407,49 @@ task.spawn(function()
 end)
 
 -- ====================================================================
---              PHYSICAL BALLISTIC & TRAJECTORY ENGINE
+--            NATURAL ROTATION & HUMANIZED 3D MOVEMENT ENGINE
 -- ====================================================================
+
+local function setupCharacterAnimations()
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = humanoid
+    end
+
+    if runTrack then pcall(function() runTrack:Stop(0.1) end) end
+    if jumpTrack then pcall(function() jumpTrack:Stop(0.1) end) end
+
+    local runId = (humanoid.RigType == Enum.HumanoidRigType.R6) and "rbxassetid://180426354" or "rbxassetid://507767714"
+    local jumpId = (humanoid.RigType == Enum.HumanoidRigType.R6) and "rbxassetid://125750702" or "rbxassetid://507765000"
+
+    local animScript = character:FindFirstChild("Animate")
+    if animScript then
+        pcall(function()
+            if animScript:FindFirstChild("run") and animScript.run:FindFirstChild("RunAnim") then
+                runId = animScript.run.RunAnim.AnimationId
+            elseif animScript:FindFirstChild("walk") and animScript.walk:FindFirstChild("WalkAnim") then
+                runId = animScript.walk.WalkAnim.AnimationId
+            end
+            if animScript:FindFirstChild("jump") and animScript.jump:FindFirstChild("JumpAnim") then
+                jumpId = animScript.jump.JumpAnim.AnimationId
+            end
+        end)
+    end
+
+    local runAnim = Instance.new("Animation")
+    runAnim.AnimationId = runId
+    runTrack = animator:LoadAnimation(runAnim)
+    runTrack.Priority = Enum.AnimationPriority.Movement
+    runTrack.Looped = true
+
+    local jumpAnim = Instance.new("Animation")
+    jumpAnim.AnimationId = jumpId
+    jumpTrack = animator:LoadAnimation(jumpAnim)
+    jumpTrack.Priority = Enum.AnimationPriority.Action
+    jumpTrack.Looped = false
+end
 
 local function syncCharacter()
     character = player.Character or player.CharacterAdded:Wait()
@@ -420,19 +459,20 @@ local function syncCharacter()
         humanoid.WalkSpeed = BASE_SPEED
         humanoid.AutoRotate = true
     end
+    setupCharacterAnimations()
 end
 
 local function forceReset()
     if humanoid then humanoid.Health = 0 end
     player.CharacterAdded:Wait()
-    task.wait(1.2)
+    task.wait(1.0)
     syncCharacter()
 end
 
 local function fireWinTrigger()
     if not hrp then return end
     for _, part in ipairs(workspace:GetDescendants()) do
-        if part:IsA("BasePart") and (part.Position - hrp.Position).Magnitude <= 25 then
+        if part:IsA("BasePart") and (part.Position - hrp.Position).Magnitude <= 30 then
             if typeof(firetouchinterest) == "function" then
                 pcall(function()
                     firetouchinterest(hrp, part, 0)
@@ -444,7 +484,104 @@ local function fireWinTrigger()
     end
 end
 
-local function executeReliableJump(targetPos)
+-- Full Hard Stop Helper
+local function completeHardStop()
+    isFarming = false
+    stopRequested = false
+    startBtn.Text = "START FARM"
+    sbGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 225, 140)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 160, 220))
+    })
+
+    if runTrack then pcall(function() runTrack:Stop(0.1) end) end
+    if jumpTrack then pcall(function() jumpTrack:Stop(0.1) end) end
+
+    if humanoid then
+        humanoid:Move(Vector3.zero, false)
+        humanoid.WalkSpeed = 16
+        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+    end
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        local currentYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
+        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, currentYaw, 0)
+    end
+end
+
+-- Ground & 360 Spiral Runner with Human-like Smooth Slerp/Lerp Rotation
+local function executeHumanWalk(targetPos, isSpiral)
+    if not hrp or not hrp.Parent or not humanoid then return false end
+
+    local dynamicSpeed = BASE_SPEED + math.random(-3, 3) + math.sin(tick() * 3) * 2
+    humanoid.WalkSpeed = dynamicSpeed
+
+    if runTrack and not runTrack.IsPlaying then
+        runTrack:Play(0.15)
+        runTrack:AdjustSpeed(1.45)
+    end
+
+    local startPos = hrp.Position
+    local delta = targetPos - startPos
+    local dist = delta.Magnitude
+    if dist < 0.2 then return true end
+
+    local reached = false
+    local startTime = tick()
+    local maxDuration = math.max(dist / BASE_SPEED + 0.8, 1.4)
+    local threshold = isSpiral and 4.8 or 3.8
+
+    while isFarming and not reached do
+        local curPos = hrp.Position
+        local d = targetPos - curPos
+        local curDist = d.Magnitude
+
+        if curDist > 0.1 then
+            local forward = d / curDist
+            local targetCFrame
+
+            if isSpiral then
+                -- Cylindrical normal calculation: Center of loop is (X=1286, Y=407)
+                local toCenter = Vector3.new(1286 - curPos.X, 407 - curPos.Y, 0)
+                local upVec = toCenter.Magnitude > 1 and toCenter.Unit or Vector3.new(0, 1, 0)
+
+                local right = forward:Cross(upVec)
+                if right.Magnitude > 0.01 then
+                    right = right.Unit
+                    local trueUp = right:Cross(forward).Unit
+                    targetCFrame = CFrame.fromMatrix(curPos, right, trueUp, -forward)
+                else
+                    targetCFrame = CFrame.lookAt(curPos, curPos + forward)
+                end
+                
+                hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 0.35)
+            else
+                targetCFrame = CFrame.lookAt(curPos, curPos + forward)
+                hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 0.28)
+            end
+
+            hrp.AssemblyLinearVelocity = forward * dynamicSpeed
+            humanoid:Move(forward, false)
+        end
+
+        if curDist <= threshold then
+            reached = true
+            break
+        end
+
+        if tick() - startTime > maxDuration then
+            break
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    return isFarming
+end
+
+-- Ballistic Jump Controller with Smooth Takeoff Rotation & Index 13 Hop Support
+local function executeReliableJump(targetPos, isIndex13)
     if not hrp or not hrp.Parent or not humanoid then return false end
 
     local g = workspace.Gravity > 0 and workspace.Gravity or 196.2
@@ -456,34 +593,30 @@ local function executeReliableJump(targetPos)
     
     local dirX = horizDist > 0.01 and (dx / horizDist) or 0
     local dirZ = horizDist > 0.01 and (dz / horizDist) or 0
+    local moveDir = Vector3.new(dirX, 0, dirZ)
 
-    local vy, flightTime
-
-    if dy > 3 then
-        local extraApex = 5.0
-        local totalRise = dy + extraApex
-        vy = math.sqrt(2 * g * totalRise)
-        local tRise = vy / g
-        local tFall = math.sqrt(2 * extraApex / g)
-        flightTime = tRise + tFall
-    else
-        local baseJumpPower = 60
-        vy = baseJumpPower
-        local discriminant = (vy * vy) - (2 * g * dy)
-        if discriminant > 0 then
-            flightTime = (vy + math.sqrt(discriminant)) / g
-        else
-            flightTime = (2 * vy) / g
-        end
+    if horizDist > 0.1 then
+        local targetTurn = CFrame.lookAt(startPos, startPos + moveDir)
+        hrp.CFrame = hrp.CFrame:Lerp(targetTurn, 0.65)
     end
 
-    local requiredHorizSpeed = math.clamp(horizDist / math.max(flightTime, 0.1), 35, BASE_SPEED)
+    local flightTime = math.max(horizDist / BASE_SPEED, 0.45)
+    
+    local vy
+    if isIndex13 then
+        vy = math.clamp((dy + 0.5 * g * flightTime * flightTime) / flightTime, 65, 95) + math.random(-1, 1)
+    else
+        vy = math.clamp((dy + 0.5 * g * flightTime * flightTime) / flightTime, 60, 140) + math.random(-1, 1)
+    end
 
-    humanoid:Move(Vector3.new(dirX, 0, dirZ), false)
+    if runTrack and runTrack.IsPlaying then runTrack:Stop(0.1) end
+    if jumpTrack then jumpTrack:Play(0.1) end
+
+    humanoid:Move(moveDir, false)
     humanoid.Jump = true
     humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
-    hrp.AssemblyLinearVelocity = Vector3.new(dirX * requiredHorizSpeed, vy, dirZ * requiredHorizSpeed)
+    hrp.AssemblyLinearVelocity = Vector3.new(dirX * BASE_SPEED, vy, dirZ * BASE_SPEED)
 
     local startTick = tick()
     local landed = false
@@ -497,10 +630,10 @@ local function executeReliableJump(targetPos)
         if curFlatDist > 1.2 then
             local curDirX = (targetPos.X - curPos.X) / curFlatDist
             local curDirZ = (targetPos.Z - curPos.Z) / curFlatDist
-            hrp.AssemblyLinearVelocity = Vector3.new(curDirX * requiredHorizSpeed, currentYVel, curDirZ * requiredHorizSpeed)
+            hrp.AssemblyLinearVelocity = Vector3.new(curDirX * BASE_SPEED, currentYVel, curDirZ * BASE_SPEED)
         end
 
-        if (curFlatDist <= 4.5 and curYDiff <= 5.5 and (currentYVel <= 2 or humanoid.FloorMaterial ~= Enum.Material.Air)) or (tick() - startTick > flightTime + 0.4) then
+        if (curFlatDist <= 4.5 and curYDiff <= 5.5 and (currentYVel <= 2 or humanoid.FloorMaterial ~= Enum.Material.Air)) or (tick() - startTick > flightTime + 0.35) then
             landed = true
             break
         end
@@ -508,63 +641,39 @@ local function executeReliableJump(targetPos)
         RunService.Heartbeat:Wait()
     end
 
+    if jumpTrack then jumpTrack:Stop(0.15) end
+    if runTrack and not runTrack.IsPlaying then
+        runTrack:Play(0.15)
+        runTrack:AdjustSpeed(1.45)
+    end
+
     return isFarming
 end
 
-local function executeHumanWalk(targetPos, nextWp)
+-- Precision Short Touchdown onto TP Pad (37 -> 38)
+local function executeTouchdownStep(targetPos)
     if not hrp or not hrp.Parent or not humanoid then return false end
 
-    local dynamicSpeed = BASE_SPEED + math.random(-4, 2)
-    local nextPos = nextWp and Vector3.new(nextWp.x, nextWp.y, nextWp.z) or nil
-
-    if nextPos and nextWp.type == "Walk" then
-        local toCur = (targetPos - hrp.Position).Unit
-        local toNext = (nextPos - targetPos).Unit
-        local dot = toCur:Dot(toNext)
-        if dot < 0.65 then
-            dynamicSpeed = 120
-        end
-    end
-
-    humanoid.WalkSpeed = dynamicSpeed
-
-    local reached = false
     local startTime = tick()
-
-    while isFarming and not reached do
+    while isFarming and (tick() - startTime < 0.6) do
         local curPos = hrp.Position
-        local deltaX = targetPos.X - curPos.X
-        local deltaZ = targetPos.Z - curPos.Z
-        local horizontalDist = math.sqrt(deltaX * deltaX + deltaZ * deltaZ)
-        local verticalDist = math.abs(targetPos.Y - curPos.Y)
+        local delta = targetPos - curPos
+        local dist = delta.Magnitude
 
-        humanoid:MoveTo(targetPos)
-
-        if horizontalDist > 0.5 then
-            local dirX = deltaX / horizontalDist
-            local dirZ = deltaZ / horizontalDist
-            local currentYVel = hrp.AssemblyLinearVelocity.Y
-            hrp.AssemblyLinearVelocity = Vector3.new(dirX * dynamicSpeed, currentYVel, dirZ * dynamicSpeed)
+        if dist > 0.1 then
+            local dir = delta / dist
+            local targetRot = CFrame.lookAt(curPos, curPos + Vector3.new(dir.X, 0, dir.Z))
+            hrp.CFrame = hrp.CFrame:Lerp(targetRot, 0.3)
+            hrp.AssemblyLinearVelocity = dir * 120
+            humanoid:Move(dir, false)
         end
 
-        if horizontalDist <= 4.0 and verticalDist <= 5.0 then
-            reached = true
-            break
-        end
-
-        if tick() - startTime > 3.2 then
-            humanoid.Jump = true
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            break
-        end
-
+        if dist <= 3.0 then break end
         RunService.Heartbeat:Wait()
     end
 
-    if nextWp and nextWp.type == "Walk" and math.random(1, 10) == 1 then
-        task.wait(math.random(5, 10) / 100)
-    end
-
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    humanoid:Move(Vector3.zero, false)
     return isFarming
 end
 
@@ -579,49 +688,74 @@ local function runFarmCycle()
         return
     end
 
-    -- Settle at spawn to initialize Stage 1 session
+    -- If stopped far from spawn, reset character cleanly
+    if (hrp.Position - spawnPos).Magnitude > 35 then
+        forceReset()
+    end
+
+    -- Minimal 0.1s tick to ensure server registers start line
+    if runTrack then runTrack:Stop() end
     humanoid:Move(Vector3.zero, false)
     hrp.AssemblyLinearVelocity = Vector3.zero
-    task.wait(0.5)
+    task.wait(0.1)
 
-    -- Waypoints 1 to 43 (Smooth Path Execution)
-    for i = 1, 43 do
+    -- Sprints directly from Waypoint 2 to 36 (Skips point 1 spawn shuffle)
+    for i = 2, 36 do
         if not isFarming then return end
         
         local wp = coordinates[i]
-        local nextWp = coordinates[i + 1]
         local targetPos = Vector3.new(wp.x, wp.y, wp.z)
+        local isSpiral = (wp.index >= 17 and wp.index <= 35)
+        local isIndex13 = (wp.index == 13)
 
         if wp.type == "Jump" then
-            executeReliableJump(targetPos)
+            executeReliableJump(targetPos, isIndex13)
         else
-            executeHumanWalk(targetPos, nextWp)
+            executeHumanWalk(targetPos, isSpiral)
+        end
+
+        -- Safe Stop: Touches down safely on nearest flat walk point outside spiral before halting
+        if stopRequested and wp.type == "Walk" and not isSpiral then
+            completeHardStop()
+            return
         end
     end
 
     -- ================================================================
-    -- WAYPOINT 44: DROP ONTO TP PAD & 1s STATIONARY WAIT (6 RETRIES)
+    -- FINISH APPROACH (37) & TP PAD DROP (38) WITH 6 RETRIES
     -- ================================================================
-    local pt43 = Vector3.new(coordinates[43].x, coordinates[43].y, coordinates[43].z)
-    local pt44 = Vector3.new(coordinates[44].x, coordinates[44].y, coordinates[44].z)
+    local pt37 = Vector3.new(coordinates[37].x, coordinates[37].y, coordinates[37].z)
+    local pt38 = Vector3.new(coordinates[38].x, coordinates[38].y, coordinates[38].z)
+
+    if isFarming then
+        executeReliableJump(pt37, false)
+    end
+
+    if stopRequested then
+        completeHardStop()
+        return
+    end
+
     local tpSucceeded = false
 
     for attempt = 1, MAX_TP_ATTEMPTS do
         if not isFarming then return end
 
-        executeReliableJump(pt44)
-        
+        executeTouchdownStep(pt38)
+
+        if runTrack then runTrack:Stop() end
         hrp.AssemblyLinearVelocity = Vector3.zero
         humanoid:Move(Vector3.zero, false)
         fireWinTrigger()
 
+        -- Fast TP check (checks continuously without extra idle padding)
         local waitStart = tick()
         while isFarming and (tick() - waitStart < 1.0) do
             task.wait(0.08)
             if not hrp or not hrp.Parent then break end
 
             local distToSpawn = (hrp.Position - spawnPos).Magnitude
-            local distFromEnd = (hrp.Position - pt44).Magnitude
+            local distFromEnd = (hrp.Position - pt38).Magnitude
 
             if distToSpawn <= 220 or distFromEnd >= 300 then
                 tpSucceeded = true
@@ -631,12 +765,14 @@ local function runFarmCycle()
 
         if tpSucceeded then break end
 
-        executeHumanWalk(pt43, coordinates[44])
+        -- Step back to 37 and drop again if needed
+        executeTouchdownStep(pt37)
         task.wait(0.1)
     end
 
+    -- Zero useless delays on loop restart
     if tpSucceeded then
-        task.wait(0.5)
+        task.wait(0.1)
     else
         forceReset()
     end
@@ -649,6 +785,7 @@ end
 local function startFarm()
     if isFarming then return end
     isFarming = true
+    stopRequested = false
     startBtn.Text = "STOP FARM"
     sbGradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 80)),
@@ -658,28 +795,28 @@ local function startFarm()
     task.spawn(function()
         while isFarming do
             runFarmCycle()
-            task.wait(0.05)
+            task.wait(0.02)
         end
+        completeHardStop()
     end)
 end
 
-local function stopFarm()
-    isFarming = false
-    startBtn.Text = "START FARM"
-    sbGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 225, 140)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 160, 220))
-    })
-    if humanoid then
-        humanoid:Move(Vector3.zero, false)
-    end
-    if hrp then
-        hrp.AssemblyLinearVelocity = Vector3.zero
-    end
-end
-
 startBtn.MouseButton1Click:Connect(function()
-    if isFarming then stopFarm() else startFarm() end
+    if isFarming then
+        if stopRequested then
+            -- Force immediate emergency stop if clicked twice
+            completeHardStop()
+        else
+            stopRequested = true
+            startBtn.Text = "STOPPING (SAFE LANDING)..."
+            sbGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 0))
+            })
+        end
+    else
+        startFarm()
+    end
 end)
 
 player.CharacterAdded:Connect(function(newChar)
@@ -687,7 +824,7 @@ player.CharacterAdded:Connect(function(newChar)
     hrp = newChar:WaitForChild("HumanoidRootPart", 5)
     humanoid = newChar:WaitForChild("Humanoid", 5)
     if isFarming then
-        task.wait(0.5)
+        task.wait(0.3)
         syncCharacter()
     end
 end)
