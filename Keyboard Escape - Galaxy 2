@@ -5,9 +5,44 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
+local StarterGui = game:GetService("StarterGui")
 local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
+
+-- ====================================================================
+--              NATIVE GAME & WORLD VERIFICATION CHECK
+-- ====================================================================
+
+local ALLOWED_IDS = {
+    [75012837977315] = true, -- Galaxy 2 Sub-Place ID
+    ["75012837977315"] = true,
+}
+
+local function verifyGameAndWorld()
+    local isPlaceValid = ALLOWED_IDS[game.PlaceId] or ALLOWED_IDS[game.GameId]
+    local hasGameUI = pcall(function()
+        return player.PlayerGui:WaitForChild("SpeedGameUI", 3) ~= nil
+    end)
+
+    if not isPlaceValid or not hasGameUI then
+        StarterGui:SetCore("SendNotification", {
+            Title = "Wrong Game",
+            Text = "Please join Keyboard Escape (Galaxy 2) to use this script!",
+            Duration = 8,
+            Icon = "rbxassetid://10709772879" -- Warning icon
+        })
+        return false
+    end
+    return true
+end
+
+if not verifyGameAndWorld() then
+    return -- Halt execution immediately if wrong game/world
+end
+
 local character = player.Character or player.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart")
 local humanoid = character:WaitForChild("Humanoid")
@@ -73,6 +108,30 @@ local coordinates = {
 }
 
 local spawnPos = Vector3.new(coordinates[1].x, coordinates[1].y, coordinates[1].z)
+
+-- ====================================================================
+--                  BUILT-IN ANTI-AFK SYSTEM
+-- ====================================================================
+
+local function initAntiAFK()
+    player.Idled:Connect(function()
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end)
+
+    task.spawn(function()
+        while true do
+            task.wait(45)
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(math.random(10, 50), math.random(10, 50)))
+            end)
+        end
+    end)
+end
+initAntiAFK()
 
 -- ====================================================================
 --                  STAT & STRING HELPER FUNCTIONS
@@ -144,7 +203,7 @@ if not screenGui.Parent then screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 250, 0, 220)
+mainFrame.Size = UDim2.new(0, 250, 0, 225)
 mainFrame.Position = UDim2.new(0.05, 0, 0.35, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
 mainFrame.BorderSizePixel = 0
@@ -336,17 +395,37 @@ sbGradient.Color = ColorSequence.new({
 })
 sbGradient.Parent = startBtn
 
--- Credits
+-- Prominent Rainbow Credits Badge
 local creditsLabel = Instance.new("TextLabel")
-creditsLabel.Text = "Credits: Smile B"
-creditsLabel.Font = Enum.Font.GothamMedium
-creditsLabel.TextSize = 10
-creditsLabel.TextColor3 = Color3.fromRGB(100, 110, 135)
-creditsLabel.Size = UDim2.new(1, 0, 0, 16)
-creditsLabel.Position = UDim2.new(0, 0, 0, 136)
+creditsLabel.Text = "★ Credits: Smile B ★"
+creditsLabel.Font = Enum.Font.GothamBold
+creditsLabel.TextSize = 11
+creditsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+creditsLabel.Size = UDim2.new(1, 0, 0, 18)
+creditsLabel.Position = UDim2.new(0, 0, 0, 138)
 creditsLabel.TextXAlignment = Enum.TextXAlignment.Center
 creditsLabel.BackgroundTransparency = 1
 creditsLabel.Parent = body
+
+local rainbowGradient = Instance.new("UIGradient")
+rainbowGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 50, 50)),
+    ColorSequenceKeypoint.new(0.20, Color3.fromRGB(255, 170, 0)),
+    ColorSequenceKeypoint.new(0.40, Color3.fromRGB(255, 255, 0)),
+    ColorSequenceKeypoint.new(0.60, Color3.fromRGB(0, 255, 170)),
+    ColorSequenceKeypoint.new(0.80, Color3.fromRGB(0, 200, 255)),
+    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(220, 50, 255))
+})
+rainbowGradient.Parent = creditsLabel
+
+task.spawn(function()
+    local rot = 0
+    while true do
+        rot = (rot + 3) % 360
+        rainbowGradient.Rotation = rot
+        task.wait(0.03)
+    end
+end)
 
 -- Dragging & Minimize
 local isDragging, dragInput, dragStart, startPos
@@ -380,8 +459,159 @@ end)
 local isMin = false
 minBtn.MouseButton1Click:Connect(function()
     isMin = not isMin
-    mainFrame.Size = isMin and UDim2.new(0, 250, 0, 36) or UDim2.new(0, 250, 0, 220)
+    mainFrame.Size = isMin and UDim2.new(0, 250, 0, 36) or UDim2.new(0, 250, 0, 225)
     minBtn.Text = isMin and "+" or "—"
+end)
+
+-- ====================================================================
+--     6-SECOND SCRIPT LAUNCH HACKER OVERLAY (BIGGER & DARKER)
+-- ====================================================================
+
+local launchBackdrop = Instance.new("Frame")
+launchBackdrop.Name = "LaunchBackdrop"
+launchBackdrop.Size = UDim2.new(1, 0, 1, 0)
+launchBackdrop.Position = UDim2.new(0, 0, 0, 0)
+launchBackdrop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+launchBackdrop.BackgroundTransparency = 0.55
+launchBackdrop.BorderSizePixel = 0
+launchBackdrop.ZIndex = 50
+launchBackdrop.Parent = screenGui
+
+local startupModal = Instance.new("Frame")
+startupModal.Name = "StartupModal"
+startupModal.Size = UDim2.new(0, 420, 0, 160)
+startupModal.Position = UDim2.new(0.5, -210, 0.45, -80)
+startupModal.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+startupModal.BorderSizePixel = 0
+startupModal.ClipsDescendants = true
+startupModal.ZIndex = 51
+startupModal.Parent = launchBackdrop
+
+local smCorner = Instance.new("UICorner")
+smCorner.CornerRadius = UDim.new(0, 14)
+smCorner.Parent = startupModal
+
+local smStroke = Instance.new("UIStroke")
+smStroke.Thickness = 1.8
+smStroke.Color = Color3.fromRGB(0, 220, 255)
+smStroke.Transparency = 0.25
+smStroke.Parent = startupModal
+
+local smHeader = Instance.new("TextLabel")
+smHeader.Text = "⚡ GALAXY 2 • SECURITY BYPASS ENGINE"
+smHeader.Font = Enum.Font.GothamBold
+smHeader.TextSize = 12
+smHeader.TextColor3 = Color3.fromRGB(0, 220, 255)
+smHeader.Position = UDim2.new(0, 18, 0, 14)
+smHeader.Size = UDim2.new(1, -36, 0, 18)
+smHeader.TextXAlignment = Enum.TextXAlignment.Left
+smHeader.BackgroundTransparency = 1
+smHeader.ZIndex = 52
+smHeader.Parent = startupModal
+
+local smStatus = Instance.new("TextLabel")
+smStatus.Text = "⠋ Deleting Anticheat..."
+smStatus.Font = Enum.Font.Code
+smStatus.TextSize = 16
+smStatus.TextColor3 = Color3.fromRGB(240, 245, 255)
+smStatus.Position = UDim2.new(0, 18, 0, 48)
+smStatus.Size = UDim2.new(1, -36, 0, 32)
+smStatus.TextXAlignment = Enum.TextXAlignment.Left
+smStatus.BackgroundTransparency = 1
+smStatus.ZIndex = 52
+smStatus.Parent = startupModal
+
+local smBarBg = Instance.new("Frame")
+smBarBg.Size = UDim2.new(1, -36, 0, 8)
+smBarBg.Position = UDim2.new(0, 18, 0, 105)
+smBarBg.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+smBarBg.BorderSizePixel = 0
+smBarBg.ZIndex = 52
+smBarBg.Parent = startupModal
+
+local smBarBgCorner = Instance.new("UICorner")
+smBarBgCorner.CornerRadius = UDim.new(0, 4)
+smBarBgCorner.Parent = smBarBg
+
+local smProgressBar = Instance.new("Frame")
+smProgressBar.Size = UDim2.new(0, 0, 1, 0)
+smProgressBar.BackgroundColor3 = Color3.fromRGB(0, 255, 170)
+smProgressBar.BorderSizePixel = 0
+smProgressBar.ZIndex = 53
+smProgressBar.Parent = smBarBg
+
+local smBarCorner = Instance.new("UICorner")
+smBarCorner.CornerRadius = UDim.new(0, 4)
+smBarCorner.Parent = smProgressBar
+
+local smBarGradient = Instance.new("UIGradient")
+smBarGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 220, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 255, 150))
+})
+smBarGradient.Parent = smProgressBar
+
+local function playScriptLaunchSequence()
+    launchBackdrop.Visible = true
+
+    local rawLogs = {
+        "Deleting Anticheat",
+        "Bypassing afk kick",
+        "Getting best path",
+        "Avoiding ban vectors",
+        "Realistic walking active",
+        "Checking speed limits (200 SPS)",
+        "Bypassing server tick checks"
+    }
+
+    for i = #rawLogs, 2, -1 do
+        local j = math.random(i)
+        rawLogs[i], rawLogs[j] = rawLogs[j], rawLogs[i]
+    end
+
+    table.insert(rawLogs, "Smile B on top :)")
+    table.insert(rawLogs, "SYSTEM LOADED - READY TO ESCAPE")
+
+    local spinnerGlyphs = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+    local totalSteps = #rawLogs
+
+    for idx, logMsg in ipairs(rawLogs) do
+        local targetPct = idx / totalSteps
+        TweenService:Create(smProgressBar, TweenInfo.new(0.55, Enum.EasingStyle.Linear), {
+            Size = UDim2.new(targetPct, 0, 1, 0)
+        }):Play()
+
+        for s = 1, 8 do
+            local spin = spinnerGlyphs[((idx * 8 + s) % #spinnerGlyphs) + 1]
+            if idx == totalSteps then
+                smStatus.TextColor3 = Color3.fromRGB(0, 255, 170)
+                smStatus.Text = string.format("✓ %s", logMsg)
+            elseif logMsg:find("Smile B") then
+                smStatus.TextColor3 = Color3.fromRGB(255, 180, 0)
+                smStatus.Text = string.format("★ %s", logMsg)
+            else
+                smStatus.TextColor3 = Color3.fromRGB(235, 240, 255)
+                smStatus.Text = string.format("%s %s...", spin, logMsg)
+            end
+            task.wait(0.08)
+        end
+    end
+
+    task.wait(0.2)
+
+    TweenService:Create(launchBackdrop, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {
+        BackgroundTransparency = 1
+    }):Play()
+    TweenService:Create(startupModal, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {
+        BackgroundTransparency = 1
+    }):Play()
+
+    task.wait(0.45)
+    launchBackdrop.Visible = false
+end
+
+task.spawn(function()
+    playScriptLaunchSequence()
 end)
 
 -- Live Background Watcher for Wins & Timer
@@ -484,7 +714,6 @@ local function fireWinTrigger()
     end
 end
 
--- Full Hard Stop Helper
 local function completeHardStop()
     isFarming = false
     stopRequested = false
@@ -542,7 +771,6 @@ local function executeHumanWalk(targetPos, isSpiral)
             local targetCFrame
 
             if isSpiral then
-                -- Cylindrical normal calculation: Center of loop is (X=1286, Y=407)
                 local toCenter = Vector3.new(1286 - curPos.X, 407 - curPos.Y, 0)
                 local upVec = toCenter.Magnitude > 1 and toCenter.Unit or Vector3.new(0, 1, 0)
 
@@ -693,7 +921,6 @@ local function runFarmCycle()
         forceReset()
     end
 
-    -- Minimal 0.1s tick to ensure server registers start line
     if runTrack then runTrack:Stop() end
     humanoid:Move(Vector3.zero, false)
     hrp.AssemblyLinearVelocity = Vector3.zero
@@ -748,7 +975,7 @@ local function runFarmCycle()
         humanoid:Move(Vector3.zero, false)
         fireWinTrigger()
 
-        -- Fast TP check (checks continuously without extra idle padding)
+        -- Fast TP check
         local waitStart = tick()
         while isFarming and (tick() - waitStart < 1.0) do
             task.wait(0.08)
@@ -770,7 +997,6 @@ local function runFarmCycle()
         task.wait(0.1)
     end
 
-    -- Zero useless delays on loop restart
     if tpSucceeded then
         task.wait(0.1)
     else
@@ -808,7 +1034,7 @@ startBtn.MouseButton1Click:Connect(function()
             completeHardStop()
         else
             stopRequested = true
-            startBtn.Text = "STOPPING (SAFE LANDING)..."
+            startBtn.Text = "Stopping Safely..."
             sbGradient.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
                 ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 0))
