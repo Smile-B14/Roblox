@@ -1,0 +1,883 @@
+-- ==============================================================================
+-- UNIVERSAL QUICK-TP & COLLECTOR (V3 - GUARANTEED TOUCH & COIN DETECTION)
+-- ==============================================================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+-- GUI Container
+local parentGui = (RunService:IsStudio() or not pcall(function() return game:GetService("CoreGui") end)) 
+    and LocalPlayer:WaitForChild("PlayerGui") 
+    or game:GetService("CoreGui")
+
+if parentGui:FindFirstChild("UniversalQuickTPGui") then
+    parentGui.UniversalQuickTPGui:Destroy()
+end
+
+-- Camera reference
+local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
+
+-- ==============================================================================
+-- SETTINGS & STATE
+-- ==============================================================================
+local isRunning = false
+local isPicking = false
+local autoSelectFolder = true
+local loopFolderItems = true
+local tpDelay = 0.33 -- ~3 per second
+local heightOffset = 2.5
+
+local loopThread = nil
+local childAddedConnection = nil
+local activeTarget = nil
+
+local savedPresets = {
+    ["Slot 1"] = "",
+    ["Slot 2"] = "",
+    ["Slot 3"] = ""
+}
+
+pcall(function()
+    if isfile and readfile and isfile("QuickTP_Config.json") then
+        local data = HttpService:JSONDecode(readfile("QuickTP_Config.json"))
+        if type(data) == "table" then
+            for k, v in pairs(data) do savedPresets[k] = v end
+        end
+    end
+end)
+
+local function saveConfig()
+    pcall(function()
+        if writefile then
+            writefile("QuickTP_Config.json", HttpService:JSONEncode(savedPresets))
+        end
+    end)
+end
+
+-- ==============================================================================
+-- 3D VISUAL INDICATORS (HIGHLIGHT + BOX + BILLBOARD TAG)
+-- ==============================================================================
+-- 1. Highlight (AlwaysOnTop)
+local VisualHighlight = Instance.new("Highlight")
+VisualHighlight.Name = "TP_Highlight"
+VisualHighlight.FillColor = Color3.fromRGB(0, 255, 180)
+VisualHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+VisualHighlight.FillTransparency = 0.35
+VisualHighlight.OutlineTransparency = 0
+VisualHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+VisualHighlight.Adornee = nil
+VisualHighlight.Parent = Camera
+
+-- 2. SelectionBox Backup
+local VisualBox = Instance.new("SelectionBox")
+VisualBox.Name = "TP_SelectionBox"
+VisualBox.Color3 = Color3.fromRGB(0, 240, 255)
+VisualBox.LineThickness = 0.06
+VisualBox.Adornee = nil
+VisualBox.Parent = Camera
+
+-- 3. Floating 3D Label Tag
+local TargetTag = Instance.new("BillboardGui")
+TargetTag.Name = "TP_BillboardTag"
+TargetTag.Size = UDim2.new(0, 160, 0, 36)
+TargetTag.AlwaysOnTop = true
+TargetTag.ExtentsOffset = Vector3.new(0, 2.5, 0)
+TargetTag.Enabled = false
+TargetTag.Parent = Camera
+
+local TagLabel = Instance.new("TextLabel")
+TagLabel.Size = UDim2.new(1, 0, 1, 0)
+TagLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+TagLabel.BackgroundTransparency = 0.2
+TagLabel.TextColor3 = Color3.fromRGB(0, 255, 200)
+TagLabel.Font = Enum.Font.GothamBold
+TagLabel.TextSize = 12
+TagLabel.Text = "Selected"
+TagLabel.Parent = TargetTag
+Instance.new("UICorner", TagLabel).CornerRadius = UDim.new(0, 6)
+local tagStroke = Instance.new("UIStroke", TagLabel)
+tagStroke.Color = Color3.fromRGB(0, 255, 200)
+tagStroke.Thickness = 1.2
+
+local function clearVisuals()
+    VisualHighlight.Adornee = nil
+    VisualBox.Adornee = nil
+    TargetTag.Enabled = false
+    TargetTag.Adornee = nil
+end
+
+local function applyVisuals(targetInstance, displayName)
+    clearVisuals()
+    if not targetInstance then return end
+
+    local partToAdorn = nil
+    if targetInstance:IsA("BasePart") then
+        partToAdorn = targetInstance
+    elseif targetInstance:IsA("Model") then
+        partToAdorn = targetInstance.PrimaryPart or targetInstance:FindFirstChildWhichIsA("BasePart", true)
+        VisualHighlight.Adornee = targetInstance
+    elseif targetInstance:IsA("Folder") then
+        -- Folders cannot be directly adorned; find first descendant part for visual representation
+        partToAdorn = targetInstance:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    if partToAdorn then
+        VisualBox.Adornee = partToAdorn
+        TargetTag.Adornee = partToAdorn
+        TagLabel.Text = displayName or targetInstance.Name
+        TargetTag.Enabled = true
+        if not VisualHighlight.Adornee and (partToAdorn:IsA("BasePart") or partToAdorn:IsA("Model")) then
+            VisualHighlight.Adornee = partToAdorn
+        end
+    end
+end
+
+-- ==============================================================================
+-- CHARACTER & MOVEMENT HELPERS
+-- ==============================================================================
+local function getRootPart()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 4)
+end
+
+local function getInstancePath(instance)
+    if not instance or instance == game then return "" end
+    local parts = {}
+    local curr = instance
+    while curr and curr ~= game do
+        if curr == workspace then
+            table.insert(parts, 1, "workspace")
+            break
+        elseif curr.Name:match("^[%a_][%w_]*$") then
+            table.insert(parts, 1, curr.Name)
+        else
+            table.insert(parts, 1, '["' .. curr.Name:gsub('"', '\\"') .. '"]')
+        end
+        curr = curr.Parent
+    end
+    
+    local path = ""
+    for i, part in ipairs(parts) do
+        if i == 1 then
+            path = part
+        elseif part:sub(1, 1) == "[" then
+            path = path .. part
+        else
+            path = path .. "." .. part
+        end
+    end
+    return path
+end
+
+local function resolvePath(pathStr)
+    if not pathStr or pathStr:gsub("%s+", "") == "" then return nil end
+    pathStr = pathStr:gsub("^%s+", ""):gsub("%s+$", "")
+
+    if loadstring then
+        local ok, res = pcall(function()
+            return loadstring("return " .. pathStr)()
+        end)
+        if ok and typeof(res) == "Instance" then
+            return res
+        end
+    end
+
+    local clean = pathStr:gsub("^game%.Workspace", "workspace")
+                         :gsub("^game:GetService%(%\"Workspace\"%)", "workspace")
+                         :gsub("^game%.", "")
+
+    local current = (clean:sub(1, 9) == "workspace") and workspace or game
+    if clean:sub(1, 9) == "workspace" then
+        clean = clean:sub(11)
+    end
+
+    local tokens = {}
+    local pos = 1
+    local len = #clean
+    while pos <= len do
+        local c = clean:sub(pos, pos)
+        if c == "." then
+            pos = pos + 1
+        elseif c == "[" then
+            local quote = clean:sub(pos + 1, pos + 1)
+            if quote == '"' or quote == "'" then
+                local close = clean:find(quote .. "%]", pos + 2)
+                if close then
+                    table.insert(tokens, clean:sub(pos + 2, close - 1))
+                    pos = close + 2
+                else
+                    break
+                end
+            else
+                break
+            end
+        else
+            local nextDelim = clean:find("[%.%[]", pos)
+            if nextDelim then
+                table.insert(tokens, clean:sub(pos, nextDelim - 1))
+                pos = nextDelim
+            else
+                table.insert(tokens, clean:sub(pos))
+                break
+            end
+        end
+    end
+
+    for _, token in ipairs(tokens) do
+        if token ~= "" then
+            current = current:FindFirstChild(token)
+            if not current then return nil end
+        end
+    end
+    return current
+end
+
+local function teleportTo(inst)
+    local root = getRootPart()
+    if not root or not inst or not inst.Parent then return false end
+
+    local targetCF = nil
+    if inst:IsA("BasePart") then
+        targetCF = inst.CFrame
+    elseif inst:IsA("Model") then
+        targetCF = inst:GetPivot()
+    else
+        local part = inst:FindFirstChildWhichIsA("BasePart", true)
+        if part then targetCF = part.CFrame end
+    end
+
+    if targetCF then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = targetCF + Vector3.new(0, heightOffset, 0)
+        return true
+    end
+    return false
+end
+
+-- ==============================================================================
+-- ADVANCED PROXIMITY RAY-SCANNER (FINDS COINS, TRANSPARENT & CANQUERY=FALSE)
+-- ==============================================================================
+local function getObjectUnderScreenPoint(screenX, screenY)
+    Camera = workspace.CurrentCamera or Camera
+    if not Camera then return nil end
+
+    local ray = Camera:ViewportPointToRay(screenX, screenY)
+    local maxDistance = 600
+    local filter = {LocalPlayer.Character}
+
+    -- 1. Standard Raycast
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = filter
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.RespectCanCollide = false
+    local directHit = workspace:Raycast(ray.Origin, ray.Direction * maxDistance, params)
+    local endDist = directHit and (directHit.Position - ray.Origin).Magnitude or maxDistance
+
+    -- 2. Proximity check along ray (Solves CanQuery = false coins & transparent hitboxes)
+    local bestPart = nil
+    local bestProj = endDist
+    local searchRadius = 4.5
+
+    local overlap = OverlapParams.new()
+    overlap.FilterDescendantsInstances = filter
+    overlap.FilterType = Enum.RaycastFilterType.Exclude
+    overlap.RespectCanCollide = false
+
+    local step = 10
+    local steps = math.min(math.floor(endDist / step), 20)
+
+    for i = 1, steps do
+        local point = ray.Origin + ray.Direction * (i * step)
+        local nearby = workspace:GetPartBoundsInRadius(point, searchRadius, overlap)
+        for _, part in ipairs(nearby) do
+            if part:IsA("BasePart") and not part:IsDescendantOf(LocalPlayer.Character) then
+                local toPart = part.Position - ray.Origin
+                local proj = toPart:Dot(ray.Direction)
+                if proj > 1 and proj < bestProj then
+                    local perpDist = (toPart - ray.Direction * proj).Magnitude
+                    local allowed = math.max(3.0, part.Size.Magnitude * 0.6)
+                    if perpDist <= allowed then
+                        bestProj = proj
+                        bestPart = part
+                    end
+                end
+            end
+        end
+    end
+
+    if bestPart then
+        return bestPart
+    end
+
+    if directHit and directHit.Instance then
+        return directHit.Instance
+    end
+
+    -- 3. Fallback mouse target
+    local mouse = LocalPlayer:GetMouse()
+    if mouse and mouse.Target and not mouse.Target:IsDescendantOf(LocalPlayer.Character) then
+        return mouse.Target
+    end
+
+    return nil
+end
+
+-- ==============================================================================
+-- GUI CONSTRUCTION
+-- ==============================================================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "UniversalQuickTPGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = parentGui
+
+-- FULLSCREEN PICKER OVERLAY (Captures Mobile Touch and PC Clicks reliably)
+local PickerOverlay = Instance.new("TextButton")
+PickerOverlay.Name = "PickerOverlay"
+PickerOverlay.Size = UDim2.new(1, 0, 1, 0)
+PickerOverlay.Position = UDim2.new(0, 0, 0, 0)
+PickerOverlay.BackgroundTransparency = 0.75
+PickerOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+PickerOverlay.Text = ""
+PickerOverlay.Visible = false
+PickerOverlay.ZIndex = 50 -- Below Main UI (ZIndex 100), above game viewport
+PickerOverlay.Active = true
+PickerOverlay.Parent = ScreenGui
+
+local OverlayBanner = Instance.new("TextLabel")
+OverlayBanner.Size = UDim2.new(0.9, 0, 0, 48)
+OverlayBanner.Position = UDim2.new(0.05, 0, 0.04, 0)
+OverlayBanner.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
+OverlayBanner.Text = "🎯 TAP ANY OBJECT OR COIN ON SCREEN\n(Tap here to cancel)"
+OverlayBanner.TextColor3 = Color3.fromRGB(0, 255, 220)
+OverlayBanner.Font = Enum.Font.GothamBold
+OverlayBanner.TextSize = 13
+OverlayBanner.ZIndex = 55
+OverlayBanner.Parent = PickerOverlay
+Instance.new("UICorner", OverlayBanner).CornerRadius = UDim.new(0, 8)
+local bStroke = Instance.new("UIStroke", OverlayBanner)
+bStroke.Color = Color3.fromRGB(0, 240, 255)
+bStroke.Thickness = 1.5
+
+-- Draggable helper
+local function makeDraggable(frame, handle)
+    local dragging, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- Floating Mobile Button
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 52, 0, 52)
+ToggleBtn.Position = UDim2.new(0.03, 0, 0.2, 0)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+ToggleBtn.Text = "⚡ TP"
+ToggleBtn.TextColor3 = Color3.fromRGB(0, 240, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 14
+ToggleBtn.ZIndex = 110
+ToggleBtn.Active = true
+ToggleBtn.Parent = ScreenGui
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(1, 0)
+local tStroke = Instance.new("UIStroke", ToggleBtn)
+tStroke.Color = Color3.fromRGB(0, 200, 255)
+tStroke.Thickness = 1.6
+makeDraggable(ToggleBtn, ToggleBtn)
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 315, 0, 440)
+MainFrame.Position = UDim2.new(0.5, -157, 0.35, -220)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+MainFrame.BorderSizePixel = 0
+MainFrame.ZIndex = 100 -- Guaranteed above overlay
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+local mStroke = Instance.new("UIStroke", MainFrame)
+mStroke.Color = Color3.fromRGB(50, 50, 68)
+
+makeDraggable(MainFrame, MainFrame)
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- Title Bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 38)
+TitleBar.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 101
+TitleBar.Active = true
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -45, 1, 0)
+TitleText.Position = UDim2.new(0, 12, 0, 0)
+TitleText.Text = "Quick-TP Collector"
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.BackgroundTransparency = 1
+TitleText.ZIndex = 102
+TitleText.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -34, 0, 5)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(42, 42, 54)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 13
+CloseBtn.ZIndex = 102
+CloseBtn.Active = true
+CloseBtn.Parent = TitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+end)
+
+-- Scroll Area
+local Content = Instance.new("ScrollingFrame")
+Content.Size = UDim2.new(1, -16, 1, -46)
+Content.Position = UDim2.new(0, 8, 0, 42)
+Content.BackgroundTransparency = 1
+Content.ScrollBarThickness = 3
+Content.CanvasSize = UDim2.new(0, 0, 0, 470)
+Content.ZIndex = 101
+Content.Active = true
+Content.Parent = MainFrame
+
+local Layout = Instance.new("UIListLayout")
+Layout.Padding = UDim.new(0, 7)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+Layout.Parent = Content
+
+-- Status
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, 26)
+StatusLabel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+StatusLabel.Text = "Status: Idle"
+StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+StatusLabel.Font = Enum.Font.GothamMedium
+StatusLabel.TextSize = 12
+StatusLabel.ZIndex = 102
+StatusLabel.Parent = Content
+Instance.new("UICorner", StatusLabel).CornerRadius = UDim.new(0, 6)
+
+-- Path Input
+local PathBox = Instance.new("TextBox")
+PathBox.Size = UDim2.new(1, 0, 0, 36)
+PathBox.PlaceholderText = "Paste path here (e.g. workspace.Coins)"
+PathBox.Text = ""
+PathBox.ClearTextOnFocus = false
+PathBox.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+PathBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+PathBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 130)
+PathBox.Font = Enum.Font.Code
+PathBox.TextSize = 11
+PathBox.ZIndex = 102
+PathBox.Active = true
+PathBox.Parent = Content
+Instance.new("UICorner", PathBox).CornerRadius = UDim.new(0, 6)
+
+PathBox.FocusLost:Connect(function()
+    local res = resolvePath(PathBox.Text)
+    if res then
+        applyVisuals(res, res.Name)
+        StatusLabel.Text = "Target set: " .. res.Name
+    end
+end)
+
+-- Pick Target Button
+local PickBtn = Instance.new("TextButton")
+PickBtn.Size = UDim2.new(1, 0, 0, 36)
+PickBtn.BackgroundColor3 = Color3.fromRGB(38, 95, 165)
+PickBtn.Text = "🎯 Tap / Click to Pick Target"
+PickBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PickBtn.Font = Enum.Font.GothamBold
+PickBtn.TextSize = 13
+PickBtn.ZIndex = 102
+PickBtn.Active = true
+PickBtn.Parent = Content
+Instance.new("UICorner", PickBtn).CornerRadius = UDim.new(0, 6)
+
+-- Checkbox generator
+local function createCheckbox(label, initialVal, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 24)
+    frame.BackgroundTransparency = 1
+    frame.ZIndex = 102
+    frame.Active = true
+    frame.Parent = Content
+
+    local box = Instance.new("TextButton")
+    box.Size = UDim2.new(0, 20, 0, 20)
+    box.Position = UDim2.new(0, 2, 0, 2)
+    box.BackgroundColor3 = initialVal and Color3.fromRGB(0, 180, 120) or Color3.fromRGB(36, 36, 46)
+    box.Text = initialVal and "✓" or ""
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 12
+    box.ZIndex = 103
+    box.Active = true
+    box.Parent = frame
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+    local txt = Instance.new("TextLabel")
+    txt.Size = UDim2.new(1, -30, 1, 0)
+    txt.Position = UDim2.new(0, 28, 0, 0)
+    txt.BackgroundTransparency = 1
+    txt.Text = label
+    txt.TextColor3 = Color3.fromRGB(210, 210, 210)
+    txt.Font = Enum.Font.Gotham
+    txt.TextSize = 11
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.ZIndex = 103
+    txt.Parent = frame
+
+    local state = initialVal
+    local function toggle()
+        state = not state
+        box.Text = state and "✓" or ""
+        box.BackgroundColor3 = state and Color3.fromRGB(0, 180, 120) or Color3.fromRGB(36, 36, 46)
+        callback(state)
+    end
+
+    box.MouseButton1Click:Connect(toggle)
+    local clickArea = Instance.new("TextButton")
+    clickArea.Size = UDim2.new(1, 0, 1, 0)
+    clickArea.BackgroundTransparency = 1
+    clickArea.Text = ""
+    clickArea.ZIndex = 103
+    clickArea.Active = true
+    clickArea.Parent = frame
+    clickArea.MouseButton1Click:Connect(toggle)
+end
+
+createCheckbox("Auto-Select Parent Folder (Coins/Drops)", autoSelectFolder, function(v) autoSelectFolder = v end)
+createCheckbox("Loop Folder (Keep farming continuously)", loopFolderItems, function(v) loopFolderItems = v end)
+
+-- Start / Stop Button
+local ToggleTPBtn = Instance.new("TextButton")
+ToggleTPBtn.Size = UDim2.new(1, 0, 0, 42)
+ToggleTPBtn.BackgroundColor3 = Color3.fromRGB(35, 160, 85)
+ToggleTPBtn.Text = "▶ START TELEPORT"
+ToggleTPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleTPBtn.Font = Enum.Font.GothamBold
+ToggleTPBtn.TextSize = 14
+ToggleTPBtn.ZIndex = 102
+ToggleTPBtn.Active = true
+ToggleTPBtn.Parent = Content
+Instance.new("UICorner", ToggleTPBtn).CornerRadius = UDim.new(0, 8)
+
+-- Delay Setting
+local DelayFrame = Instance.new("Frame")
+DelayFrame.Size = UDim2.new(1, 0, 0, 30)
+DelayFrame.BackgroundTransparency = 1
+DelayFrame.ZIndex = 102
+DelayFrame.Active = true
+DelayFrame.Parent = Content
+
+local DelayLabel = Instance.new("TextLabel")
+DelayLabel.Size = UDim2.new(0.65, 0, 1, 0)
+DelayLabel.BackgroundTransparency = 1
+DelayLabel.Text = "Delay (Sec) [3/s = 0.33]:"
+DelayLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+DelayLabel.Font = Enum.Font.Gotham
+DelayLabel.TextSize = 11
+DelayLabel.TextXAlignment = Enum.TextXAlignment.Left
+DelayLabel.ZIndex = 103
+DelayLabel.Parent = DelayFrame
+
+local DelayInput = Instance.new("TextBox")
+DelayInput.Size = UDim2.new(0.33, 0, 1, 0)
+DelayInput.Position = UDim2.new(0.67, 0, 0, 0)
+DelayInput.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+DelayInput.Text = tostring(tpDelay)
+DelayInput.TextColor3 = Color3.fromRGB(0, 240, 255)
+DelayInput.Font = Enum.Font.GothamBold
+DelayInput.TextSize = 12
+DelayInput.ZIndex = 103
+DelayInput.Active = true
+DelayInput.Parent = DelayFrame
+Instance.new("UICorner", DelayInput).CornerRadius = UDim.new(0, 6)
+
+DelayInput.FocusLost:Connect(function()
+    local val = tonumber(DelayInput.Text)
+    if val and val >= 0.01 then
+        tpDelay = val
+    else
+        DelayInput.Text = tostring(tpDelay)
+    end
+end)
+
+-- Presets
+local PresetsHeader = Instance.new("TextLabel")
+PresetsHeader.Size = UDim2.new(1, 0, 0, 18)
+PresetsHeader.BackgroundTransparency = 1
+PresetsHeader.Text = "Presets:"
+PresetsHeader.TextColor3 = Color3.fromRGB(150, 150, 160)
+PresetsHeader.Font = Enum.Font.GothamBold
+PresetsHeader.TextSize = 11
+PresetsHeader.TextXAlignment = Enum.TextXAlignment.Left
+PresetsHeader.ZIndex = 102
+PresetsHeader.Parent = Content
+
+for slotName, _ in pairs(savedPresets) do
+    local SlotRow = Instance.new("Frame")
+    SlotRow.Size = UDim2.new(1, 0, 0, 26)
+    SlotRow.BackgroundTransparency = 1
+    SlotRow.ZIndex = 102
+    SlotRow.Active = true
+    SlotRow.Parent = Content
+
+    local LoadBtn = Instance.new("TextButton")
+    LoadBtn.Size = UDim2.new(0.68, 0, 1, 0)
+    LoadBtn.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
+    LoadBtn.Text = slotName .. ": " .. (savedPresets[slotName] ~= "" and savedPresets[slotName]:sub(1, 20) or "[Empty]")
+    LoadBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    LoadBtn.Font = Enum.Font.Gotham
+    LoadBtn.TextSize = 10
+    LoadBtn.ZIndex = 103
+    LoadBtn.Active = true
+    LoadBtn.Parent = SlotRow
+    Instance.new("UICorner", LoadBtn).CornerRadius = UDim.new(0, 5)
+
+    local SaveBtn = Instance.new("TextButton")
+    SaveBtn.Size = UDim2.new(0.28, 0, 1, 0)
+    SaveBtn.Position = UDim2.new(0.72, 0, 0, 0)
+    SaveBtn.BackgroundColor3 = Color3.fromRGB(48, 48, 65)
+    SaveBtn.Text = "Save"
+    SaveBtn.TextColor3 = Color3.fromRGB(0, 240, 255)
+    SaveBtn.Font = Enum.Font.GothamBold
+    SaveBtn.TextSize = 10
+    SaveBtn.ZIndex = 103
+    SaveBtn.Active = true
+    SaveBtn.Parent = SlotRow
+    Instance.new("UICorner", SaveBtn).CornerRadius = UDim.new(0, 5)
+
+    LoadBtn.MouseButton1Click:Connect(function()
+        if savedPresets[slotName] and savedPresets[slotName] ~= "" then
+            PathBox.Text = savedPresets[slotName]
+            local inst = resolvePath(savedPresets[slotName])
+            if inst then applyVisuals(inst, inst.Name) end
+            StatusLabel.Text = "Loaded: " .. slotName
+        end
+    end)
+
+    SaveBtn.MouseButton1Click:Connect(function()
+        if PathBox.Text ~= "" then
+            savedPresets[slotName] = PathBox.Text
+            LoadBtn.Text = slotName .. ": " .. savedPresets[slotName]:sub(1, 20)
+            saveConfig()
+            StatusLabel.Text = "Saved to " .. slotName
+        end
+    end)
+end
+
+-- ==============================================================================
+-- RELIABLE PICKER CONTROLLER
+-- ==============================================================================
+local function closePicker()
+    isPicking = false
+    PickerOverlay.Visible = false
+    PickBtn.Text = "🎯 Tap / Click to Pick Target"
+    PickBtn.BackgroundColor3 = Color3.fromRGB(38, 95, 165)
+end
+
+PickBtn.MouseButton1Click:Connect(function()
+    if isPicking then
+        closePicker()
+        return
+    end
+
+    isPicking = true
+    PickerOverlay.Visible = true
+    PickBtn.Text = "❌ Cancel Picking"
+    PickBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 30)
+    StatusLabel.Text = "Pick Mode: Tap directly on any object/coin!"
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 220, 50)
+end)
+
+OverlayBanner.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        closePicker()
+    end
+end)
+
+-- Main Picker Touch / Click Handler
+PickerOverlay.InputBegan:Connect(function(input)
+    local isTouch = (input.UserInputType == Enum.UserInputType.Touch)
+    local isClick = (input.UserInputType == Enum.UserInputType.MouseButton1)
+
+    if not isTouch and not isClick then return end
+
+    local x = input.Position.X
+    local y = input.Position.Y
+
+    local hitPart = getObjectUnderScreenPoint(x, y)
+    if hitPart then
+        local chosenTarget = hitPart
+        local labelText = hitPart.Name
+
+        if autoSelectFolder and hitPart.Parent and hitPart.Parent ~= workspace and (hitPart.Parent:IsA("Folder") or hitPart.Parent:IsA("Model")) then
+            chosenTarget = hitPart.Parent
+            labelText = "📁 " .. chosenTarget.Name
+            StatusLabel.Text = "Selected Folder: " .. chosenTarget.Name
+        else
+            labelText = "🎯 " .. chosenTarget.Name
+            StatusLabel.Text = "Selected: " .. chosenTarget.Name
+        end
+
+        PathBox.Text = getInstancePath(chosenTarget)
+        applyVisuals(chosenTarget, labelText)
+        StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 170)
+        closePicker()
+    else
+        StatusLabel.Text = "No object detected. Try tapping closer!"
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end)
+
+-- Live PC Hover Highlight
+UserInputService.InputChanged:Connect(function(input)
+    if isPicking and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local hoverPart = getObjectUnderScreenPoint(input.Position.X, input.Position.Y)
+        if hoverPart then
+            local target = (autoSelectFolder and hoverPart.Parent and hoverPart.Parent ~= workspace) and hoverPart.Parent or hoverPart
+            applyVisuals(target, target.Name)
+        end
+    end
+end)
+
+-- ==============================================================================
+-- TELEPORT & QUEUE COLLECTOR ENGINE
+-- ==============================================================================
+local function stopTeleporting()
+    isRunning = false
+    if loopThread then
+        task.cancel(loopThread)
+        loopThread = nil
+    end
+    if childAddedConnection then
+        childAddedConnection:Disconnect()
+        childAddedConnection = nil
+    end
+    ToggleTPBtn.Text = "▶ START TELEPORT"
+    ToggleTPBtn.BackgroundColor3 = Color3.fromRGB(35, 160, 85)
+    StatusLabel.Text = "Status: Idle"
+    StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+end
+
+local function startTeleporting()
+    local target = resolvePath(PathBox.Text)
+    if not target then
+        StatusLabel.Text = "Error: Invalid Path or Target"
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 70, 70)
+        return
+    end
+
+    isRunning = true
+    applyVisuals(target, target.Name)
+    ToggleTPBtn.Text = "⏹ STOP TELEPORT"
+    ToggleTPBtn.BackgroundColor3 = Color3.fromRGB(190, 45, 45)
+    StatusLabel.TextColor3 = Color3.fromRGB(0, 240, 255)
+
+    loopThread = task.spawn(function()
+        local isContainer = target:IsA("Folder") or (target:IsA("Model") and #target:GetChildren() > 0 and not target:FindFirstChildWhichIsA("Humanoid"))
+
+        if isContainer then
+            local queue = {}
+            local queuedSet = {}
+
+            local function pushChild(child)
+                if (child:IsA("BasePart") or child:IsA("Model")) and not queuedSet[child] then
+                    queuedSet[child] = true
+                    table.insert(queue, child)
+                end
+            end
+
+            for _, child in ipairs(target:GetChildren()) do
+                pushChild(child)
+            end
+
+            childAddedConnection = target.ChildAdded:Connect(function(newChild)
+                pushChild(newChild)
+                StatusLabel.Text = "New spawn! (" .. #queue .. " in queue)"
+            end)
+
+            while isRunning do
+                if #queue > 0 then
+                    local item = table.remove(queue, 1)
+                    queuedSet[item] = nil
+
+                    if item and item.Parent and target:IsAncestorOf(item) then
+                        StatusLabel.Text = "Collecting: " .. item.Name .. " (" .. #queue .. " left)"
+                        teleportTo(item)
+                        task.wait(tpDelay)
+                    end
+                else
+                    if loopFolderItems then
+                        local curChildren = target:GetChildren()
+                        if #curChildren > 0 then
+                            for _, child in ipairs(curChildren) do
+                                pushChild(child)
+                            end
+                        end
+                        task.wait(0.1)
+                    else
+                        StatusLabel.Text = "Waiting for new spawns in folder..."
+                        task.wait(0.3)
+                    end
+                end
+            end
+        else
+            while isRunning do
+                if target and target.Parent then
+                    StatusLabel.Text = "Locking to: " .. target.Name
+                    teleportTo(target)
+                else
+                    stopTeleporting()
+                    StatusLabel.Text = "Target removed/destroyed!"
+                    break
+                end
+                task.wait(tpDelay)
+            end
+        end
+    end)
+end
+
+ToggleTPBtn.MouseButton1Click:Connect(function()
+    if isRunning then
+        stopTeleporting()
+    else
+        startTeleporting()
+    end
+end)
+
+print("[Quick-TP]: Initialized V3. Proximity raycasting and tap-overlay active.")
